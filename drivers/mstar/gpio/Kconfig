@@ -1,0 +1,18 @@
+config MS_GPIO
+	tristate "GPIO driver"	
+	default y
+	help
+	
+config MS_GPIO_CEDRIC
+    tristate "GPIO driver support for Cedric"
+    depends on MS_GPIO    
+    depends on ARCH_CEDRIC 		
+
+config MS_GPIO_INFINITY
+    tristate "GPIO driver support for iNfinity"
+    depends on MS_GPIO        
+    depends on ARCH_INFINITY    
+
+config MS_SW_I2C_INFINITY
+    tristate "SW I2C via GPIO support for iNfinity"
+    depends on MS_GPIO_INFINITY

@@ -1,0 +1,6 @@
+config MT7601U
+    tristate "MT7601 USB Wireless device support"
+    depends on CFG80211 && USB
+    select WIRELESS_EXT
+    select WEXT_PRIV
+    

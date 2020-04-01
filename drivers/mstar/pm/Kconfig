@@ -1,0 +1,4 @@
+config MS_PM
+    tristate "Mstar PM driver"
+    depends on ARCH_INFINITY
+    help

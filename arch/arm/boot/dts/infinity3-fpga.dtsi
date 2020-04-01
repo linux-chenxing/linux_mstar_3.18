@@ -1,0 +1,252 @@
+/*
+ * Copyright (c) 2014 MundoReader S.L.
+ * Author: Matthias Brugger <matthias.bgg@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include <../../../drivers/mstar/include/infinity3/irqs.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include "skeleton.dtsi"
+
+/ {
+    compatible = "mstar,infinity3";
+
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        cpu@0 {
+            device_type = "cpu";
+            compatible = "arm,cortex-a7";
+            reg = <0x0>;
+            clocks = <&xtal>;
+        };
+    };
+
+    xtal: oscillator {
+        compatible = "fixed-clock";
+        #clock-cells = <0>;
+        clock-frequency = <27000000>;
+    };
+
+    aliases {
+        console = &uart0;
+        serial0 = &uart0;
+    }; 
+
+    soc {    
+        compatible = "simple-bus";   
+        interrupt-parent = <&gic>;
+        #address-cells = <1>;
+        #size-cells = <1>;
+        ranges = <0 0 0xFFFFFFFF>;
+
+
+        gic: interrupt-controller@16000000 {
+            compatible = "arm,cortex-a7-gic";
+            #interrupt-cells = <3>;
+            #address-cells = <1>;
+            #size-cells = <1>;
+            interrupt-controller;
+            reg = <0x16001000 0x1000>,
+                  <0x16002000 0x1000>;
+        };
+
+        ms_pmsleep_intr: interrupt-controller@0 {
+            compatible = "mstar,pmsleep-intr";
+            #interrupt-cells = <1>;
+            interrupt-parent=<&gic>;
+            interrupt-controller;
+        };
+
+        arch_timer {
+            compatible = "arm,cortex-a7-timer", "arm,armv7-timer";
+            interrupts = <GIC_PPI 13 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>,
+                         <GIC_PPI 14 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>,
+                         <GIC_PPI 11 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>,
+                         <GIC_PPI 10 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>;
+            clock-frequency = <27000000>;  /* arch_timer must use clock-frequency*/
+        };
+        hvsp1: hvsp1 {
+            compatible = "mstar,hvsp1";
+            //reg = <0x1F000000 0x100>;
+            //clk,chiptop,hvsp0,sc0,dnr,ldc
+            clocks = <&CLK_idclk>,<&CLK_fclk1>,<&CLK_fclk2>,<&CLK_odclk>;
+            clock-names = "CLK_idclk","CLK_fclk1","CLK_fclk2","CLK_odclk";
+            status = "ok";
+            interrupts = <GIC_SPI INT_IRQ_SC_TOP IRQ_TYPE_LEVEL_HIGH>, <GIC_SPI INT_IRQ_CMDQ IRQ_TYPE_LEVEL_HIGH>;
+        };
+
+        hvsp2: hvsp2 {
+            compatible = "mstar,hvsp2";
+            //reg = <0x1F000000 0x100>;
+            //clk,chiptop,hvsp0,sc0,dnr,ldc
+            clocks = <&CLK_idclk>,<&CLK_fclk1>,<&CLK_fclk2>,<&CLK_odclk>;
+            clock-names = "CLK_idclk","CLK_fclk1","CLK_fclk2","CLK_odclk";
+            status = "ok";
+            interrupts = <GIC_SPI INT_IRQ_SC_TOP IRQ_TYPE_LEVEL_HIGH>, <GIC_SPI INT_IRQ_CMDQ IRQ_TYPE_LEVEL_HIGH>;
+        };
+
+        hvsp3: hvsp3 {
+            compatible = "mstar,hvsp3";
+            //reg = <0x1F000000 0x100>;
+            //clk,chiptop,hvsp0,sc0,dnr,ldc
+            clocks = <&CLK_idclk>,<&CLK_fclk1>,<&CLK_fclk2>,<&CLK_odclk>;
+            clock-names = "CLK_idclk","CLK_fclk1","CLK_fclk2","CLK_odclk";
+            status = "ok";
+            interrupts = <GIC_SPI INT_IRQ_SC_TOP IRQ_TYPE_LEVEL_HIGH>, <GIC_SPI INT_IRQ_CMDQ IRQ_TYPE_LEVEL_HIGH>;
+        };
+
+        scldma1: scldma1 {
+            compatible = "mstar,scldma1";
+            //reg = <0x1F000000 0x100>;
+            //clk,chiptop,scldma
+            clocks =  <&CLK_idclk>,<&CLK_fclk1>,<&CLK_fclk2>,<&CLK_odclk>;
+            clock-names = "CLK_idclk","CLK_fclk1","CLK_fclk2","CLK_odclk";
+            status = "ok";
+            interrupts = <GIC_SPI INT_IRQ_SC_TOP IRQ_TYPE_LEVEL_HIGH>;
+        };
+        scldma2: scldma2 {
+            compatible = "mstar,scldma2";
+            //reg = <0x1F000000 0x100>;
+            //clk,chiptop,scldma
+            clocks =  <&CLK_idclk>,<&CLK_fclk1>,<&CLK_fclk2>,<&CLK_odclk>;
+            clock-names = "CLK_idclk","CLK_fclk1","CLK_fclk2","CLK_odclk";
+            status = "ok";
+            interrupts = <GIC_SPI INT_IRQ_SC_TOP IRQ_TYPE_LEVEL_HIGH>;
+        };
+        scldma3: scldma3 {
+            compatible = "mstar,scldma3";
+            //reg = <0x1F000000 0x100>;
+            //clk,chiptop,scldma
+            clocks =  <&CLK_idclk>,<&CLK_fclk1>,<&CLK_fclk2>,<&CLK_odclk>;
+            clock-names = "CLK_idclk","CLK_fclk1","CLK_fclk2","CLK_odclk";
+            status = "ok";
+            interrupts = <GIC_SPI INT_IRQ_SC_TOP IRQ_TYPE_LEVEL_HIGH>;
+        };
+        scldma4: scldma4 {
+            compatible = "mstar,scldma4";
+            //reg = <0x1F000000 0x100>;
+            //clk,chiptop,scldma
+            clocks =  <&CLK_idclk>,<&CLK_fclk1>,<&CLK_fclk2>,<&CLK_odclk>;
+            clock-names = "CLK_idclk","CLK_fclk1","CLK_fclk2","CLK_odclk";
+            status = "ok";
+            interrupts = <GIC_SPI INT_IRQ_SC_TOP IRQ_TYPE_LEVEL_HIGH>;
+        };
+
+        vip: vip {
+            compatible = "mstar,vip";
+            status = "ok";
+
+            //reg = <0x1F224000 0x200>;
+        };
+
+        pnl: pnl {
+            compatible = "mstar,pnl";
+            status = "disabled";
+
+            //Reg = <0x1F224000 0x200>;
+        };
+
+        mfe: mfe {
+            compatible = "mstar,mfe";
+            reg = <0x1F264800 0x400>;
+            interrupts=<GIC_SPI INT_IRQ_MFE IRQ_TYPE_LEVEL_HIGH>;
+            clocks = <&xtal>;
+            clock-names = "CKG_mfe";
+            status = "ok";
+        };
+
+        vhe: vhe {
+            compatible = "mstar,vhe";
+            reg = <0x1F265200 0x600>,<0x1F265000 0x200>;
+            interrupts=<GIC_SPI INT_IRQ_VHE IRQ_TYPE_LEVEL_HIGH>;
+            clocks = <&xtal>;
+            clock-names = "CKG_vhe";
+            status = "disable";
+        };
+
+        uart0: uart@1F221000 {
+            compatible = "mstar,uart";
+            reg = <0x1F221000 0x100>;
+            interrupts= <GIC_SPI INT_IRQ_UART_0 IRQ_TYPE_LEVEL_HIGH>;
+            status = "ok";
+            clocks = <&xtal>;
+        };
+
+        clks: clocks{
+            #address-cells = <1>;
+            #size-cells = <1>;
+            ranges;
+        };
+
+        emac {
+            compatible = "mstar-emac";
+            interrupts = <GIC_SPI INT_IRQ_EMAC IRQ_TYPE_LEVEL_HIGH>;
+            status = "ok";
+        };
+
+        isp: isp {
+            compatible = "isp";
+            io_phy_addr = <0x1f000000>;
+            banks = <0x1302>,<0x1303>,<0x1304>,<0x1305>,<0x1306>,<0x1307>,<0x1308>,<0x1309>;
+            interrupts = <GIC_SPI INT_IRQ_ISP IRQ_TYPE_LEVEL_HIGH>;
+            clocks = <&CLK_isp>,<&CLK_sr_mclk>,<&CLK_sr>,<&CLK_csi_mac>;
+            status = "ok";
+        };
+
+        sound {
+            compatible = "mstar,infinity-audio";
+//            reg = <0x1F000000 0x1000000>;
+            interrupts=<GIC_SPI INT_IRQ_BACH IRQ_TYPE_LEVEL_HIGH>;
+            playback-volume-level=<64>;    //0~76
+            capture-volume-level=<64>;
+            micin-gain-level=<0>;    //0~5
+            linein-gain-level=<1>;//0~6
+            lineout-gain-level=<1>;//0~2
+        };
+
+        gop{
+            compatible = "mstar,infinity-gop";
+            clocks = <&CLK_gop_psram>,<&CLK_fclk1>,<&GATE_MCM_gop>, <&GATE_SRAM_gop>;
+            status = "ok";
+        };
+
+        csi: csi {
+            compatible = "csi";
+            io_phy_addr = <0x1f000000>;
+            banks = <0x1204>;
+            interrupts=  <GIC_SPI INT_IRQ_MIPI_CSI2 IRQ_TYPE_LEVEL_HIGH>;
+            status = "ok";
+        };
+
+        flashisp {
+            compatible = "mtd-flashisp";
+            clocks = <&CLK_bdma>;
+            quadread = <0>;
+        };
+
+        rtc {
+            compatible = "mstar,infinity-rtc";
+            reg = <0x1F002400 0x100>;
+            clocks = <&xtal>;
+        };
+    };
+};
+
+&clks {
+    #include <../../../../drivers/mstar/include/infinity3/reg_clks.h>
+    #include "infinity-clks.dtsi"
+    #include "infinity-gates.dtsi"
+};
+

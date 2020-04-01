@@ -1,0 +1,71 @@
+config MS_SPINAND
+  select MTD
+  select MTD_CHAR
+  select MTD_BLKDEVS
+  select NFTL
+  select NFTL_RW
+  select MTD_OOPS
+
+  select MTD_COMPLEX_MAPPINGS
+  select MTD_BLOCK2MTD
+  select MTD_NAND_MUSEUM_IDS
+  select MTD_NAND_PLATFORM
+  select MTD_CMDLINE_PARTS
+  select MTD_UBI
+  #select MTD_UBI_WL_THRESHOLD
+  #select MTD_UBI_BEB_RESERVE
+  select SCSI_LOWLEVEL
+  select AUTOFS_FS
+
+  #select FAT_FS
+  #select MSDOS_FS
+  #select VFAT_FS
+  #select FAT_DEFAULT_CODEPAGE
+  #select FAT_DEFAULT_IOCHARSET
+
+  #select MTD_DEBUG
+  #select MTD_DEBUG_VERBOSE
+  select MTD_CONCAT
+  select MTD_PARTITIONS
+  select MTD_NAND
+  #select JFFS2_FS
+  #select JFFS2_FS_DEBUG
+  #select JFFS2_FS_WRITEBUFFER
+  tristate "SPI NAND"
+  default n
+
+---help---
+Enable compilation option for driver SPI NAND Flash.
+
+if MS_SPINAND
+menu "SPINAND_READ_MODE"
+
+choice
+	prompt "READ"
+	default AUTO_DETECT
+config NAND_SINGLE_READ
+ bool "nand-single-read"
+config NAND_DUAL_READ
+	bool "nand-dual-read"
+config NAND_QUAL_READ
+	bool "nand-qual-read"
+config AUTO_DETECT
+  bool "cis-table-determine"
+endchoice
+
+endmenu
+endif
+if MS_SPINAND
+menu "SPINAND_WRITE_MODE"
+
+choice
+	prompt "WRITE"
+	default AUTO_DETECT_WRITE
+config NAND_QUAL_WRITE
+	bool "nand-qual-write"
+config AUTO_DETECT_WRITE
+  bool "cis-table-determine"
+endchoice
+
+endmenu
+endif
