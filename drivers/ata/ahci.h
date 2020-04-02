@@ -304,7 +304,7 @@ struct ahci_port_priv {
 	unsigned int		ncq_saw_d2h:1;
 	unsigned int		ncq_saw_dmas:1;
 	unsigned int		ncq_saw_sdb:1;
-	atomic_t		intr_status;	/* interrupts to handle */
+	/*atomic_t*/u32		intr_status;	/* interrupts to handle */
 	spinlock_t		lock;		/* protects parent ata_port */
 	u32 			intr_mask;	/* interrupts to enable */
 	bool			fbs_supported;	/* set iff FBS is supported */
@@ -333,6 +333,7 @@ struct ahci_host_priv {
 	u32			em_msg_type;	/* EM message type */
 	bool			got_runtime_pm; /* Did we do pm_runtime_get? */
 	struct clk		*clks[AHCI_MAX_CLKS]; /* Optional */
+	struct clk              *clk;           /* Only for platforms supporting clk */
 	struct regulator	*target_pwr;	/* Optional */
 	/*
 	 * If platform uses PHYs. There is a 1:1 relation between the port number and
@@ -363,14 +364,14 @@ extern struct device_attribute *ahci_sdev_attrs[];
 	.sdev_attrs		= ahci_sdev_attrs
 
 extern struct ata_port_operations ahci_ops;
-extern struct ata_port_operations ahci_platform_ops;
+//extern struct ata_port_operations ahci_platform_ops;
 extern struct ata_port_operations ahci_pmp_retry_srst_ops;
 
 unsigned int ahci_dev_classify(struct ata_port *ap);
 void ahci_fill_cmd_slot(struct ahci_port_priv *pp, unsigned int tag,
 			u32 opts);
-void ahci_save_initial_config(struct device *dev,
-			      struct ahci_host_priv *hpriv);
+//void ahci_save_initial_config(struct device *dev,struct ahci_host_priv *hpriv);
+void ahci_save_initial_config(struct device *dev,struct ahci_host_priv *hpriv,unsigned int force_port_map,unsigned int mask_port_map);
 void ahci_init_controller(struct ata_host *host);
 int ahci_reset_controller(struct ata_host *host);
 
@@ -378,9 +379,7 @@ int ahci_do_softreset(struct ata_link *link, unsigned int *class,
 		      int pmp, unsigned long deadline,
 		      int (*check_ready)(struct ata_link *link));
 
-unsigned int ahci_qc_issue(struct ata_queued_cmd *qc);
 int ahci_stop_engine(struct ata_port *ap);
-void ahci_start_fis_rx(struct ata_port *ap);
 void ahci_start_engine(struct ata_port *ap);
 int ahci_check_ready(struct ata_link *link);
 int ahci_kick_engine(struct ata_port *ap);
@@ -388,10 +387,11 @@ int ahci_port_resume(struct ata_port *ap);
 void ahci_set_em_messages(struct ahci_host_priv *hpriv,
 			  struct ata_port_info *pi);
 int ahci_reset_em(struct ata_host *host);
+irqreturn_t ahci_interrupt(int irq, void *dev_instance);
+irqreturn_t ahci_hw_interrupt(int irq, void *dev_instance);
+irqreturn_t ahci_thread_fn(int irq, void *dev_instance);
 void ahci_print_info(struct ata_host *host, const char *scc_s);
-int ahci_host_activate(struct ata_host *host, int irq,
-		       struct scsi_host_template *sht);
-void ahci_error_handler(struct ata_port *ap);
+int ahci_host_activate(struct ata_host *host, int irq, unsigned int n_msis);
 
 static inline void __iomem *__ahci_port_base(struct ata_host *host,
 					     unsigned int port_no)
@@ -399,7 +399,7 @@ static inline void __iomem *__ahci_port_base(struct ata_host *host,
 	struct ahci_host_priv *hpriv = host->private_data;
 	void __iomem *mmio = hpriv->mmio;
 
-	return mmio + 0x100 + (port_no * 0x80);
+	return mmio + 0x200 + (port_no * 0x80);//0x100
 }
 
 static inline void __iomem *ahci_port_base(struct ata_port *ap)
@@ -411,5 +411,5 @@ static inline int ahci_nr_ports(u32 cap)
 {
 	return (cap & 0x1f) + 1;
 }
-
+irqreturn_t ahci_interrupt(int irq, void *dev_instance);
 #endif /* _AHCI_H */

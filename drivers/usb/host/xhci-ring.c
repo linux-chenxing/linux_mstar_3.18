@@ -69,6 +69,14 @@
 #include "xhci.h"
 #include "xhci-trace.h"
 
+#if (MP_USB_MSTAR==1) && (XHCI_FLUSHPIPE_PATCH)
+extern void Chip_Flush_Memory(void);
+extern void Chip_Read_Memory(void);
+#endif
+#if defined(CONFIG_SUSPEND) && (MP_USB_STR_PATCH==1)
+extern bool is_suspending(void);
+#endif
+
 /*
  * Returns zero if the TRB isn't in this segment, otherwise it returns the DMA
  * address of the TRB.
@@ -271,6 +279,10 @@ static inline int room_on_ring(struct xhci_hcd *xhci, struct xhci_ring *ring,
 /* Ring the host controller doorbell after placing a command on the ring */
 void xhci_ring_cmd_db(struct xhci_hcd *xhci)
 {
+#if (MP_USB_MSTAR==1) && (XHCI_FLUSHPIPE_PATCH)
+	Chip_Flush_Memory();
+#endif
+
 	if (!(xhci->cmd_ring_state & CMD_RING_STATE_RUNNING))
 		return;
 
@@ -344,6 +356,10 @@ static void ring_doorbell_for_active_rings(struct xhci_hcd *xhci,
 {
 	unsigned int stream_id;
 	struct xhci_virt_ep *ep;
+
+#if (MP_USB_MSTAR==1) && (XHCI_FLUSHPIPE_PATCH)
+	Chip_Flush_Memory();
+#endif
 
 	ep = &xhci->devs[slot_id]->eps[ep_index];
 
@@ -828,7 +844,29 @@ void xhci_stop_endpoint_command_watchdog(unsigned long arg)
 	xhci = ep->xhci;
 
 	spin_lock_irqsave(&xhci->lock, flags);
+#if defined(CONFIG_SUSPEND) && (MP_USB_STR_PATCH==1)
+	if (ep->stop_cmds_pending > 0 && (ep->ep_state & EP_HALT_PENDING))
+	{
+		ep->stop_cmd_timer_count++;
+		printk("[XHCI] stop_cmd_timer_count %d ", ep->stop_cmd_timer_count);
+		if ( is_suspending() )
+		{
+			//printk("... suspend end\n");
+			spin_unlock_irqrestore(&xhci->lock, flags);
+			return;
+		}
 
+		if ( ep->stop_cmd_timer_count < XHCI_STOP_EP_CMD_TIMEOUT )
+		{
+			//printk("...continue\n");
+			ep->stop_cmd_timer.expires = jiffies + HZ;
+			add_timer(&ep->stop_cmd_timer);
+			spin_unlock_irqrestore(&xhci->lock, flags);
+			return;
+		}
+		//printk("...end\n");
+	}
+#endif
 	ep->stop_cmds_pending--;
 	if (xhci->xhc_state & XHCI_STATE_DYING) {
 		xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
@@ -2468,12 +2506,27 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 				trb_in_td(xhci, ep_ring->deq_seg,
 					  ep_ring->dequeue, td->last_trb,
 					  event_dma, true);
+				#if (MP_USB_MSTAR==1) && defined(XHCI_TX_ERR_EVENT_PATCH)
+				if (trb_comp_code == COMP_TX_ERR) {
+					printk("Patch TRB ptr\n");
+					event_dma = xhci_trb_virt_to_dma(ep_ring->deq_seg, ep_ring->dequeue);
+					event_seg = trb_in_td(xhci, ep_ring->deq_seg, ep_ring->dequeue,
+							td->last_trb, event_dma, true);
+					if (event_seg)
+						goto GO_TX_EVENT;
+				}
+				#endif
 				return -ESHUTDOWN;
 			}
 
 			ret = skip_isoc_td(xhci, td, event, ep, &status);
 			goto cleanup;
 		}
+
+#if (MP_USB_MSTAR==1) && defined(XHCI_TX_ERR_EVENT_PATCH)
+GO_TX_EVENT:
+#endif
+
 		if (trb_comp_code == COMP_SHORT_TX)
 			ep_ring->last_td_was_short = true;
 		else
@@ -2651,7 +2704,15 @@ irqreturn_t xhci_irq(struct usb_hcd *hcd)
 	union xhci_trb *event_ring_deq;
 	dma_addr_t deq;
 
+#if (MP_USB_MSTAR==1)
+	u32 handled_events;
+#endif
+
 	spin_lock(&xhci->lock);
+
+#if (MP_USB_MSTAR==1) && (XHCI_FLUSHPIPE_PATCH)
+	Chip_Read_Memory(); //Flush Read buffer when H/W finished
+#endif
 	/* Check if the xHC generated the interrupt, or the irq is shared */
 	status = readl(&xhci->op_regs->status);
 	if (status == 0xffffffff)
@@ -2702,10 +2763,27 @@ hw_died:
 	}
 
 	event_ring_deq = xhci->event_ring->dequeue;
+#if (MP_USB_MSTAR==1)
+	//Force to update ERDP every 16 events.
+	//For some USB devices, like camera or wifi dongle.
+	//In some busy case, driver has no time to update
+	//the event ring dequeue pointer. It makes XHC to think
+	//the event ring is full.
+	handled_events = 1;
+	while (xhci_handle_event(xhci) > 0)
+	{
+		if (handled_events++ % 16 == 0)
+		{
+			xhci_set_hc_event_deq(xhci);
+			event_ring_deq = xhci->event_ring->dequeue;
+		}
+	}
+#else
 	/* FIXME this should be a delayed service routine
 	 * that clears the EHB.
 	 */
 	while (xhci_handle_event(xhci) > 0) {}
+#endif
 
 	temp_64 = xhci_read_64(xhci, &xhci->ir_set->erst_dequeue);
 	/* If necessary, update the HW's version of the event ring deq ptr. */
@@ -2911,11 +2989,16 @@ static unsigned int count_sg_trbs_needed(struct xhci_hcd *xhci, struct urb *urb)
 		unsigned int len = sg_dma_len(sg);
 
 		/* Scatter gather list entries may cross 64KB boundaries */
+
+#if (MP_USB_MSTAR==1)  //XHCI_CROSS64K_PATCH
+		running_total = 0;
+#else
 		running_total = TRB_MAX_BUFF_SIZE -
 			(sg_dma_address(sg) & (TRB_MAX_BUFF_SIZE - 1));
 		running_total &= TRB_MAX_BUFF_SIZE - 1;
 		if (running_total != 0)
 			num_trbs++;
+#endif
 
 		/* How many more 64KB chunks to transfer, how many more TRBs? */
 		while (running_total < sg_dma_len(sg) && running_total < temp) {
@@ -2959,6 +3042,12 @@ static void giveback_first_trb(struct xhci_hcd *xhci, int slot_id,
 		start_trb->field[3] |= cpu_to_le32(start_cycle);
 	else
 		start_trb->field[3] &= cpu_to_le32(~TRB_CYCLE);
+
+#if (MP_USB_MSTAR==1) && (XHCI_FLUSHPIPE_PATCH)
+	wmb();
+	Chip_Flush_Memory();
+#endif
+
 	xhci_ring_ep_doorbell(xhci, slot_id, ep_index, stream_id);
 }
 
@@ -3123,7 +3212,11 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	sg = urb->sg;
 	addr = (u64) sg_dma_address(sg);
 	this_sg_len = sg_dma_len(sg);
+#if (MP_USB_MSTAR==1)  //XHCI_CROSS64K_PATCH
+	trb_buff_len = TRB_MAX_BUFF_SIZE;
+#else
 	trb_buff_len = TRB_MAX_BUFF_SIZE - (addr & (TRB_MAX_BUFF_SIZE - 1));
+#endif
 	trb_buff_len = min_t(int, trb_buff_len, this_sg_len);
 	if (trb_buff_len > urb->transfer_buffer_length)
 		trb_buff_len = urb->transfer_buffer_length;
@@ -3162,6 +3255,8 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		if (usb_urb_dir_in(urb))
 			field |= TRB_ISP;
 
+#if (MP_USB_MSTAR==1)  //XHCI_CROSS64K_PATCH
+#else
 		if (TRB_MAX_BUFF_SIZE -
 				(addr & (TRB_MAX_BUFF_SIZE - 1)) < trb_buff_len) {
 			xhci_warn(xhci, "WARN: sg dma xfer crosses 64KB boundaries!\n");
@@ -3169,6 +3264,7 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 					(unsigned int) (addr + TRB_MAX_BUFF_SIZE) & ~(TRB_MAX_BUFF_SIZE - 1),
 					(unsigned int) addr + trb_buff_len);
 		}
+#endif
 
 		/* Set the TRB length, TD size, and interrupter fields. */
 		if (xhci->hci_version < 0x100) {
@@ -3211,8 +3307,13 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 			addr += trb_buff_len;
 		}
 
+
+#if (MP_USB_MSTAR==1)  //XHCI_CROSS64K_PATCH
+		trb_buff_len = TRB_MAX_BUFF_SIZE;
+#else
 		trb_buff_len = TRB_MAX_BUFF_SIZE -
 			(addr & (TRB_MAX_BUFF_SIZE - 1));
+#endif
 		trb_buff_len = min_t(int, trb_buff_len, this_sg_len);
 		if (running_total + trb_buff_len > urb->transfer_buffer_length)
 			trb_buff_len =
@@ -3254,9 +3355,13 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 
 	num_trbs = 0;
 	/* How much data is (potentially) left before the 64KB boundary? */
+#if (MP_USB_MSTAR==1)  //XHCI_CROSS64K_PATCH
+	running_total = 0;
+#else
 	running_total = TRB_MAX_BUFF_SIZE -
 		(urb->transfer_dma & (TRB_MAX_BUFF_SIZE - 1));
 	running_total &= TRB_MAX_BUFF_SIZE - 1;
+#endif
 
 	/* If there's some data on this 64KB chunk, or we have to send a
 	 * zero-length transfer, we need at least one TRB
@@ -3305,8 +3410,13 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 			usb_endpoint_maxp(&urb->ep->desc));
 	/* How much data is in the first TRB? */
 	addr = (u64) urb->transfer_dma;
+#if (MP_USB_MSTAR==1)  //XHCI_CROSS64K_PATCH
+	trb_buff_len = TRB_MAX_BUFF_SIZE;
+#else
 	trb_buff_len = TRB_MAX_BUFF_SIZE -
 		(urb->transfer_dma & (TRB_MAX_BUFF_SIZE - 1));
+#endif
+
 	if (trb_buff_len > urb->transfer_buffer_length)
 		trb_buff_len = urb->transfer_buffer_length;
 
@@ -3889,6 +3999,16 @@ int xhci_queue_address_device(struct xhci_hcd *xhci, struct xhci_command *cmd,
 			| (setup == SETUP_CONTEXT_ONLY ? TRB_BSR : 0), false);
 }
 
+#if (MP_USB_MSTAR==1)
+int xhci_queue_address_device_BSR (struct xhci_hcd *xhci, struct xhci_command *cmd, dma_addr_t in_ctx_ptr,
+		u32 slot_id)
+{
+	return queue_command(xhci, cmd, lower_32_bits(in_ctx_ptr),
+			upper_32_bits(in_ctx_ptr), 0,
+			TRB_TYPE(TRB_ADDR_DEV) | SLOT_ID_FOR_TRB(slot_id) | (0x1 << 9) ,
+			false);
+}
+#endif
 int xhci_queue_vendor_command(struct xhci_hcd *xhci, struct xhci_command *cmd,
 		u32 field1, u32 field2, u32 field3, u32 field4)
 {

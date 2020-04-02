@@ -76,6 +76,10 @@
 #include <asm/unaligned.h>
 #include <linux/errqueue.h>
 
+#if  defined(CONFIG_NOE_NAT_HW)
+#include "../../drivers/mstar/noe/drv/nat/hw_nat/mdrv_hwnat.h"
+#endif
+
 int sysctl_tcp_timestamps __read_mostly = 1;
 int sysctl_tcp_window_scaling __read_mostly = 1;
 int sysctl_tcp_sack __read_mostly = 1;
@@ -5092,6 +5096,22 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb,
 			 const struct tcphdr *th, unsigned int len)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
+
+#if  defined(CONFIG_NOE_NAT_HW)
+        if((FOE_MAGIC_TAG_HEAD(skb) == FOE_MAGIC_PCI) ||
+           (FOE_MAGIC_TAG_HEAD(skb) == FOE_MAGIC_WLAN) ||
+           (FOE_MAGIC_TAG_HEAD(skb) == FOE_MAGIC_GE)){
+           if(IS_SPACE_AVAILABLED_HEAD(skb))
+                FOE_MAGIC_TAG_HEAD(skb) = 0;
+        }
+        if((FOE_MAGIC_TAG_TAIL(skb) == FOE_MAGIC_PCI) ||
+           (FOE_MAGIC_TAG_TAIL(skb) == FOE_MAGIC_WLAN) ||
+           (FOE_MAGIC_TAG_TAIL(skb) == FOE_MAGIC_GE)){
+           if(IS_SPACE_AVAILABLED_TAIL(skb))
+                FOE_MAGIC_TAG_TAIL(skb) = 0;
+        }
+
+#endif
 
 	if (unlikely(sk->sk_rx_dst == NULL))
 		inet_csk(sk)->icsk_af_ops->sk_rx_dst_set(sk, skb);

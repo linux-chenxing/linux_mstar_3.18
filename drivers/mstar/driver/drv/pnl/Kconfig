@@ -1,0 +1,5 @@
+config MS_PNL
+	tristate "MStar LCD Panel TTL driver"
+	help
+    		To enable MSTAR LCD panel ttl driver function.
+

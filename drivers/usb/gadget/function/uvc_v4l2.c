@@ -24,6 +24,7 @@
 #include <media/v4l2-ioctl.h>
 
 #include "f_uvc.h"
+#include "u_uvc.h"
 #include "uvc.h"
 #include "uvc_queue.h"
 #include "uvc_video.h"
@@ -195,6 +196,7 @@ uvc_v4l2_streamon(struct file *file, void *fh, enum v4l2_buf_type type)
 	struct video_device *vdev = video_devdata(file);
 	struct uvc_device *uvc = video_get_drvdata(vdev);
 	struct uvc_video *video = &uvc->video;
+    struct f_uvc_opts *opts = to_f_uvc_opts(uvc->func.fi);
 	int ret;
 
 	if (type != video->queue.queue.type)
@@ -205,12 +207,17 @@ uvc_v4l2_streamon(struct file *file, void *fh, enum v4l2_buf_type type)
 	if (ret < 0)
 		return ret;
 
-	/*
-	 * Complete the alternate setting selection setup phase now that
-	 * userspace is ready to provide video frames.
-	 */
-	uvc_function_setup_continue(uvc);
-	uvc->state = UVC_STATE_STREAMING;
+    if (!opts->bulk_streaming_ep) {
+    /*
+     * Complete the alternate setting selection setup
+     * phase now that userspace is ready to provide video
+     * frames.
+     */
+         uvc_function_setup_continue(uvc);
+         uvc->state = UVC_STATE_STREAMING;
+     }
+     else
+         uvc->state = UVC_STATE_STREAMING;
 
 	return 0;
 }

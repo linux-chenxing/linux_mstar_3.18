@@ -1,0 +1,7 @@
+config MS_SWI2C
+
+tristate "SWI2C"
+
+help
+    MStar SWI2C driver function
+

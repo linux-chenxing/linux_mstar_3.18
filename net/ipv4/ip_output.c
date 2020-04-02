@@ -80,6 +80,10 @@
 #include <linux/netlink.h>
 #include <linux/tcp.h>
 
+#if defined(CONFIG_NOE_NAT_HW)
+#include "../../drivers/mstar/noe/drv/nat/hw_nat/mdrv_hwnat.h"
+#endif
+
 int sysctl_ip_default_ttl __read_mostly = IPDEFTTL;
 EXPORT_SYMBOL(sysctl_ip_default_ttl);
 
@@ -435,6 +439,27 @@ packet_routed:
 	/* TODO : should we use skb->sk here instead of sk ? */
 	skb->priority = sk->sk_priority;
 	skb->mark = sk->sk_mark;
+
+#if defined(CONFIG_NOE_NAT_HW)
+#if defined (CONFIG_NOE_HW_NAT_PPTP_L2TP)
+    /* only clear headeroom for TCP OR not L2TP packets */
+    if( (iph->protocol == 0x6) || (ntohs(udp_hdr(skb)->dest) != 1701) ) {
+        if (IS_SPACE_AVAILABLED(skb)){
+                FOE_MAGIC_TAG(skb) = 0;
+                FOE_AI(skb) = UN_HIT;
+        }
+    }
+#else
+        if (IS_SPACE_AVAILABLED_HEAD(skb)){
+                FOE_MAGIC_TAG_HEAD(skb) = 0;
+                FOE_AI_HEAD(skb) = UN_HIT;
+        }
+        if (IS_SPACE_AVAILABLED_TAIL(skb)){
+                FOE_MAGIC_TAG_TAIL(skb) = 0;
+                FOE_AI_TAIL(skb) = UN_HIT;
+        }
+#endif
+#endif
 
 	res = ip_local_out(skb);
 	rcu_read_unlock();

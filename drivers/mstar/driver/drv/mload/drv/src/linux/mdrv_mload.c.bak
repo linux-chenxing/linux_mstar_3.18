@@ -1,0 +1,157 @@
+#include <drv_mload.h>
+#include <mdrv_mload.h>
+#include <mload_common.h>
+#include <linux/module.h>
+
+
+MLOAD_HANDLE IspMLoadInit(MLOAD_ATTR attr){
+
+    MLOAD_HANDLE hnd=0;
+
+    DrvIsp_MLoadInit(&hnd,attr);
+    MloadWarperInit();
+
+    return hnd;
+}
+int IspMLoadDeInit(MLOAD_HANDLE handle){
+
+    DrvIsp_MLoadFreeBuffer(handle);
+
+    return 0;
+}
+
+int IspMLoadTableSet(MLOAD_HANDLE handle, IspMloadID_e id,void *table)
+{
+
+    DrvIsp_MLoadTableSet(handle,id,table);
+    return 0;
+}
+
+int IspMLoadTableGet(MLOAD_HANDLE handle, IspMloadID_e id,void *table)
+{
+    return 0;
+}
+
+int IspMLoadApply(MLOAD_HANDLE handle)
+{
+    DrvIsp_MLoadApply(handle);
+
+    return 0;
+}
+
+int SclMLoadApply(MLOAD_HANDLE handle)
+{
+    DrvScl_MLoadApply(handle);
+
+    return 0;
+}
+
+void IspMloadUTSet(MLOAD_HANDLE handle)
+{
+    int i = 0;
+    u16 *buf;
+MLOAD_DEBUG("4\n");
+    buf = MloadMallocNonCache(4208*8,16);
+	MLOAD_DEBUG("5\n");
+    //memset(buf,0x0B,4208*8);
+	//memset(buf+12,0x0B,6);
+	
+	for(i=0; i<4208*4;i++)
+		*((u8 *)buf+i)=i;
+	
+MLOAD_DEBUG("6 buf=0x%x\n",(int)buf);
+    //IspMLoadTableSet(handle,MLOAD_ID_PIPE0_ALSC,buf);
+	//MLOAD_DEBUG("7\n");
+    //IspMLoadTableSet(handle,MLOAD_ID_PIPE0_FPN,buf);
+    //IspMLoadTableSet(handle,MLOAD_ID_DPC,buf);
+    IspMLoadTableSet(handle,MLOAD_ID_PIPE0_GMA16TO16,buf);
+    //IspMLoadTableSet(handle,MLOAD_ID_GMA10TO10,buf);
+	MLOAD_DEBUG("8\n");
+	
+    IspMLoadApply(handle);
+MLOAD_DEBUG("9\n");
+
+    //IspMLoadTableSet(handle,SCL_MLOAD_ID_RGB12TO12_PRE,buf);
+	//MLOAD_DEBUG("10\n");
+    //SclMLoadApply(handle);
+MLOAD_DEBUG("11\n");
+    return;
+}
+
+void IspMloadUT(MHAL_CMDQ_CmdqInterface_t *cmdq,FrameSyncMode mode)
+{
+    short *buf;
+    MLOAD_HANDLE handle;
+    MLOAD_ATTR attr;
+
+    attr.mode = mode;
+    attr.pCmqInterface_t = cmdq;
+
+
+    MLOAD_DEBUG("!!!!!!!!!!!!!!!!!! MloadUT !!!!!!!!!!!!!!!!!!!!!!!!\n");
+
+    handle = IspMLoadInit(attr);
+	
+	MLOAD_DEBUG("1\n");
+    MloadRegW(cmdq,mode,0x150A,0x05,0x0003); //gamma16to16 enable
+
+	MloadRegW(cmdq,mode,0x1502,0x01,0x0001); //Mask VIF
+	    
+	    MloadSleep(3000);
+	
+    IspMloadUTSet(handle);
+    MLOAD_DEBUG("2\n");
+
+
+
+
+    MLOAD_DEBUG("3\n");
+    MloadSleep(3000);
+
+    //buf = MloadMalloc(4208*8);
+    //MLOAD_DEBUG("!!!!!! MLOAD_ID_PIPE0_ALSC buf:0x%x\n",(int)buf);
+    //DrvIsp_MLoadDump(handle,MLOAD_ID_PIPE0_ALSC,buf);
+
+    //buf = MloadMalloc(2816*2);
+    //MLOAD_DEBUG("!!!!!! MLOAD_ID_PIPE0_FPN buf:0x%x\n",(int)buf);
+    //DrvIsp_MLoadDump(handle,MLOAD_ID_PIPE0_FPN,buf);
+
+
+    //buf = MloadMalloc(1024*4);
+    //MLOAD_DEBUG("!!!!!! MLOAD_ID_DPC buf:0x%x\n",(int)buf);
+    //DrvIsp_MLoadDump(handle,MLOAD_ID_DPC,buf);
+
+
+    buf = MloadMalloc(256*8);
+    MLOAD_DEBUG("!!!!!! MLOAD_ID_PIPE0_GMA16TO16 buf:0x%x\n",(int)buf);
+    DrvIsp_MLoadDump(handle,MLOAD_ID_PIPE0_GMA16TO16,buf);
+
+
+    //buf = MloadMalloc(256*8);
+    //MLOAD_DEBUG("!!!!!! MLOAD_ID_GMA10TO10 buf:0x%x\n",(int)buf);
+    //DrvIsp_MLoadDump(handle,MLOAD_ID_GMA10TO10,buf);
+
+
+
+    //buf = MloadMalloc(256*8);
+   // MLOAD_DEBUG("!!!!!! SCL_MLOAD_ID_RGB10TO12 buf:0x%x\n",(int)buf);
+    //DrvScl_MLoadDump(handle,SCL_MLOAD_ID_RGB12TO12_PRE,buf);
+
+
+
+    MLOAD_DEBUG("!!!!!!!!!!!!!!!!!! Finish !!!!!!!!!!!!!!!!!!!!!!!!\n");
+
+    //(*(volatile U16*)(0x1f000000 + (0x1312 * 0x200) + (0x01 * 4))) = 0x0000; //UnMask VIF
+
+
+    return;
+}
+
+
+
+EXPORT_SYMBOL(IspMLoadInit);
+EXPORT_SYMBOL(IspMLoadDeInit);
+EXPORT_SYMBOL(IspMLoadTableSet);
+EXPORT_SYMBOL(IspMLoadApply);
+EXPORT_SYMBOL(SclMLoadApply);
+EXPORT_SYMBOL(IspMloadUT);

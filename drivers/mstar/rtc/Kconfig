@@ -1,0 +1,18 @@
+config MS_RTC
+	bool "MS_RTC"
+	default n
+	help
+
+config RTC_INNER
+	select RTC_CLASS
+	tristate "Mstar RTC driver"
+	depends on MS_RTC
+	default y
+	help
+
+config RTC_IT7C4337
+	select RTC_CLASS
+	tristate "IT7C4337 RTC driver"
+	depends on MS_RTC
+	default n
+	help

@@ -248,8 +248,9 @@ SUBARCH := $(shell uname -m | sed -e s/i.86/x86/ -e s/x86_64/x86/ \
 # "make" in the configured kernel build directory always uses that.
 # Default value for CROSS_COMPILE is not to prefix executables
 # Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
-ARCH		?= $(SUBARCH)
-CROSS_COMPILE	?= $(CONFIG_CROSS_COMPILE:"%"=%)
+ARCH           ?= $(SUBARCH)
+CROSS_COMPILE  ?= $(CONFIG_CROSS_COMPILE:"%"=%)
+
 
 # Architecture as present in compile.h
 UTS_MACHINE 	:= $(ARCH)
@@ -609,7 +610,7 @@ all: vmlinux
 
 include $(srctree)/arch/$(SRCARCH)/Makefile
 
-KBUILD_CFLAGS	+= $(call cc-option,-fno-delete-null-pointer-checks,)
+KBUILD_CFLAGS	+= $(call cc-option,-fno-delete-null-pointer-checks,) -Werror
 
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS	+= -Os $(call cc-disable-warning,maybe-uninitialized,)
@@ -765,7 +766,8 @@ KBUILD_CFLAGS   += $(call cc-option,-Werror=implicit-int)
 KBUILD_CFLAGS   += $(call cc-option,-Werror=strict-prototypes)
 
 # Prohibit date/time macros, which would make the build non-deterministic
-KBUILD_CFLAGS   += $(call cc-option,-Werror=date-time)
+#later than GCC 4.9 may build failed
+#KBUILD_CFLAGS   += $(call cc-option,-Werror=date-time)
 
 # use the deterministic mode of AR if available
 KBUILD_ARFLAGS := $(call ar-option,D)
@@ -940,9 +942,54 @@ define filechk_kernel.release
 	echo "$(KERNELVERSION)$$($(CONFIG_SHELL) $(srctree)/scripts/setlocalversion $(srctree))"
 endef
 
+MS_KERNEL_TYPE :=
+ifneq ($(CONFIG_MS_KERNEL_TYPE),"")
+    MS_KERNEL_TYPE=--lib_type $(CONFIG_MS_KERNEL_TYPE)
+endif
+MS_PLATFORM_ID :=
+ifneq ($(CONFIG_ARCH_CEDRIC),)
+MS_PLATFORM_ID := C3
+endif
+ifneq ($(CONFIG_ARCH_INFINITY),)
+MS_PLATFORM_ID := I1
+endif
+ifneq ($(CONFIG_ARCH_INFINITY3),)
+MS_PLATFORM_ID := I3
+endif
+ifneq ($(CONFIG_ARCH_INFINITY2),)
+MS_PLATFORM_ID := I2
+endif
+ifneq ($(CONFIG_ARCH_CHICAGO),)
+MS_PLATFORM_ID := C4
+endif
+
+
+COMMITNUMBER := g$(shell git log --format=%h -n 1 2> /dev/null)
+BRANCH_ID := $(shell git rev-parse --abbrev-ref HEAD 2> /dev/null | sed -e 's/\//_/g')
+
+ifeq ($(COMMITNUMBER),g)
+file := gitInformation.txt
+gitLog := $(shell strings ${file})
+gitTemp := $(subst \#, ,$(gitLog))
+COMMITNUMBER := g$(word 1, $(gitTemp))
+BRANCH_ID := g$(word 2, $(gitTemp))
+endif
+
 # Store (new) KERNELRELEASE string in include/config/kernel.release
 include/config/kernel.release: include/config/auto.conf FORCE
 	$(call filechk,kernel.release)
+#	@python scripts/ms_gen_mvxv_h.py drivers/mstar/include/ms_version.h --comp_id KL_LX318 \
+#		--changelist G$$(git describe --match CL* --tags --long | cut -b 12-18 |  awk '{print toupper($$0)}')
+ifeq ($(MS_PLATFORM_ID),)
+	@echo "ERROR!! MS_PLATOFRM_ID is empty!!"; /bin/false
+else
+	@echo '  MVXV'
+	@echo '  changelist ${COMMITNUMBER}'
+	@echo '  BRANCHID   ${BRANCH_ID} '
+	@python scripts/ms_gen_mvxv_h.py drivers/mstar/include/ms_version.h --comp_id KL_LX318 \
+        --changelist $(COMMITNUMBER) --chip_id $(MS_PLATFORM_ID) --branch $(BRANCH_ID) $(MS_KERNEL_TYPE)
+endif
+
 
 
 # Things we need to do before we recursively start building the kernel
@@ -1092,6 +1139,9 @@ all: modules
 # A module can be listed more than once in obj-m resulting in
 # duplicate lines in modules.order files.  Those are removed
 # using awk while concatenating to the final file.
+ifdef CONFIG_XIP_KERNEL
+  MODULE_PACK_OPTIONS += "-x"
+endif
 
 PHONY += modules
 modules: $(vmlinux-dirs) $(if $(KBUILD_BUILTIN),vmlinux) modules.builtin
@@ -1099,6 +1149,11 @@ modules: $(vmlinux-dirs) $(if $(KBUILD_BUILTIN),vmlinux) modules.builtin
 	@$(kecho) '  Building modules, stage 2.';
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modpost
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.fwinst obj=firmware __fw_modbuild
+ifndef CONFIG_XIP_KERNEL
+	@if [ -e "./ms_pack_modules.sh" ]; then \
+            ./ms_pack_modules.sh ${MODULE_PACK_OPTIONS}; \
+        fi
+endif
 
 modules.builtin: $(vmlinux-dirs:%=%/modules.builtin)
 	$(Q)$(AWK) '!x[$$0]++' $^ > $(objtree)/modules.builtin

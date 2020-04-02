@@ -31,7 +31,6 @@
  *  http://www.sata-io.org/
  *
  */
-
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
 #include <linux/export.h>
@@ -47,6 +46,9 @@
 #include <linux/libata.h>
 
 #include "libata.h"
+
+//extern int sata_mstar_scr_read(struct ata_link *link, unsigned int sc_reg, u32 *val);
+//extern int sata_mstar_scr_write(struct ata_link *link, unsigned int sc_reg_in, u32 val);
 
 enum {
 	/* speed down verdicts */
@@ -560,6 +562,7 @@ static void ata_eh_unload(struct ata_port *ap)
 	 */
 	ata_for_each_link(link, ap, PMP_FIRST) {
 		sata_scr_write(link, SCR_CONTROL, link->saved_scontrol & 0xff0);
+                //sata_mstar_scr_write(link, SCR_CONTROL, link->saved_scontrol & 0xff0);
 		ata_for_each_dev(dev, link, ALL)
 			ata_dev_disable(dev);
 	}
@@ -1181,8 +1184,10 @@ int sata_async_notification(struct ata_port *ap)
 		return 0;
 
 	rc = sata_scr_read(&ap->link, SCR_NOTIFICATION, &sntf);
+	//rc = sata_mstar_scr_read(&ap->link, SCR_NOTIFICATION, &sntf);
 	if (rc == 0)
 		sata_scr_write(&ap->link, SCR_NOTIFICATION, sntf);
+		//sata_mstar_scr_write(&ap->link, SCR_NOTIFICATION, sntf);
 
 	if (!sata_pmp_attached(ap) || rc) {
 		/* PMP is not attached or SNTF is not available */
@@ -2132,6 +2137,7 @@ static void ata_eh_link_autopsy(struct ata_link *link)
 
 	/* obtain and analyze SError */
 	rc = sata_scr_read(link, SCR_ERROR, &serror);
+	//rc = sata_mstar_scr_read(link, SCR_ERROR, &serror);
 	if (rc == 0) {
 		ehc->i.serror |= serror;
 		ata_eh_analyze_serror(link);
@@ -2206,8 +2212,10 @@ static void ata_eh_link_autopsy(struct ata_link *link)
 	}
 
 	/* propagate timeout to host link */
-	if ((all_err_mask & AC_ERR_TIMEOUT) && !ata_is_host_link(link))
+	if ((all_err_mask & AC_ERR_TIMEOUT) && !ata_is_host_link(link)) {
+        DPRINTK("%d AC_ERR_TIMEOUT\n", __LINE__);
 		ap->link.eh_context.i.err_mask |= AC_ERR_TIMEOUT;
+        }
 
 	/* record error and consider speeding down */
 	dev = ehc->i.dev;
@@ -2403,8 +2411,9 @@ static void ata_eh_link_report(struct ata_link *link)
 	struct ata_port *ap = link->ap;
 	struct ata_eh_context *ehc = &link->eh_context;
 	const char *frozen, *desc;
-	char tries_buf[6] = "";
+	char tries_buf[6];
 	int tag, nr_failed = 0;
+
 
 	if (ehc->i.flags & ATA_EHI_QUIET)
 		return;
@@ -2434,8 +2443,9 @@ static void ata_eh_link_report(struct ata_link *link)
 	if (ap->pflags & ATA_PFLAG_FROZEN)
 		frozen = " frozen";
 
+	memset(tries_buf, 0, sizeof(tries_buf));
 	if (ap->eh_tries < ATA_EH_MAX_TRIES)
-		snprintf(tries_buf, sizeof(tries_buf), " t%d",
+		snprintf(tries_buf, sizeof(tries_buf) - 1, " t%d",
 			 ap->eh_tries);
 
 	if (ehc->i.dev) {
@@ -2843,8 +2853,10 @@ int ata_eh_reset(struct ata_link *link, int classify,
 
 	/* record current link speed */
 	if (sata_scr_read(link, SCR_STATUS, &sstatus) == 0)
+        //if (sata_mstar_scr_read(link, SCR_STATUS, &sstatus) == 0)
 		link->sata_spd = (sstatus >> 4) & 0xf;
 	if (slave && sata_scr_read(slave, SCR_STATUS, &sstatus) == 0)
+        //if (slave && sata_mstar_scr_read(slave, SCR_STATUS, &sstatus) == 0)
 		slave->sata_spd = (sstatus >> 4) & 0xf;
 
 	/* thaw the port */
@@ -2949,6 +2961,7 @@ int ata_eh_reset(struct ata_link *link, int classify,
 	/* if SCR isn't accessible on a fan-out port, PMP needs to be reset */
 	if (!ata_is_host_link(link) &&
 	    sata_scr_read(link, SCR_STATUS, &sstatus))
+        //sata_mstar_scr_read(link, SCR_STATUS, &sstatus))
 		rc = -ERESTART;
 
 	if (try >= max_tries) {
@@ -3446,6 +3459,7 @@ static int ata_eh_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 		}
 	}
 
+	link->lpm_policy = policy;
 	if (ap) {
 		rc = ap->ops->set_lpm(link, policy, hints);
 		if (!rc && ap->slave_link)
@@ -3470,7 +3484,6 @@ static int ata_eh_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 	 * Low level driver acked the transition.  Issue DIPM command
 	 * with the new policy set.
 	 */
-	link->lpm_policy = policy;
 	if (ap && ap->slave_link)
 		ap->slave_link->lpm_policy = policy;
 

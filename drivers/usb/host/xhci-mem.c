@@ -28,6 +28,13 @@
 
 #include "xhci.h"
 #include "xhci-trace.h"
+#if (MP_USB_MSTAR==1)
+#include "xhci-mstar.h"
+#endif
+
+#if (MP_USB_MSTAR==1) && (XHCI_FLUSHPIPE_PATCH)
+extern void Chip_Flush_Memory(void);
+#endif
 
 /*
  * Allocates a generic ring segment from the ring pool, sets the dma address,
@@ -53,6 +60,9 @@ static struct xhci_segment *xhci_segment_alloc(struct xhci_hcd *xhci,
 		return NULL;
 	}
 
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	dma = BUS2PA(dma);
+#endif
 	memset(seg->trbs, 0, TRB_SEGMENT_SIZE);
 	/* If the cycle state is 0, set the cycle bit to 1 for all the TRBs */
 	if (cycle_state == 0) {
@@ -68,6 +78,9 @@ static struct xhci_segment *xhci_segment_alloc(struct xhci_hcd *xhci,
 static void xhci_segment_free(struct xhci_hcd *xhci, struct xhci_segment *seg)
 {
 	if (seg->trbs) {
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+		seg->dma = PA2BUS(seg->dma);
+#endif
 		dma_pool_free(xhci->segment_pool, seg->trbs, seg->dma);
 		seg->trbs = NULL;
 	}
@@ -522,6 +535,11 @@ static struct xhci_container_ctx *xhci_alloc_container_ctx(struct xhci_hcd *xhci
 		kfree(ctx);
 		return NULL;
 	}
+
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	ctx->dma = BUS2PA(ctx->dma);
+#endif
+
 	memset(ctx->bytes, 0, ctx->size);
 	return ctx;
 }
@@ -531,6 +549,10 @@ static void xhci_free_container_ctx(struct xhci_hcd *xhci,
 {
 	if (!ctx)
 		return;
+
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	ctx->dma = PA2BUS(ctx->dma);
+#endif
 	dma_pool_free(xhci->device_pool, ctx->bytes, ctx->dma);
 	kfree(ctx);
 }
@@ -577,6 +599,9 @@ static void xhci_free_stream_ctx(struct xhci_hcd *xhci,
 	struct device *dev = xhci_to_hcd(xhci)->self.controller;
 	size_t size = sizeof(struct xhci_stream_ctx) * num_stream_ctxs;
 
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	dma = PA2BUS(dma);
+#endif
 	if (size > MEDIUM_STREAM_ARRAY_SIZE)
 		dma_free_coherent(dev, size,
 				stream_ctx, dma);
@@ -602,6 +627,25 @@ static struct xhci_stream_ctx *xhci_alloc_stream_ctx(struct xhci_hcd *xhci,
 		unsigned int num_stream_ctxs, dma_addr_t *dma,
 		gfp_t mem_flags)
 {
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	struct device *dev = xhci_to_hcd(xhci)->self.controller;
+	size_t size = sizeof(struct xhci_stream_ctx) * num_stream_ctxs;
+	struct xhci_stream_ctx *pRet;
+
+	if (size > MEDIUM_STREAM_ARRAY_SIZE)
+		pRet = dma_alloc_coherent(dev, size,
+				dma, mem_flags);
+	else if (size <= SMALL_STREAM_ARRAY_SIZE)
+		pRet = dma_pool_alloc(xhci->small_streams_pool,
+				mem_flags, dma);
+	else
+		pRet = dma_pool_alloc(xhci->medium_streams_pool,
+				mem_flags, dma);
+
+	*dma = BUS2PA(*dma);
+
+	return pRet;
+#else
 	struct device *dev = xhci_to_hcd(xhci)->self.controller;
 	size_t size = sizeof(struct xhci_stream_ctx) * num_stream_ctxs;
 
@@ -614,6 +658,7 @@ static struct xhci_stream_ctx *xhci_alloc_stream_ctx(struct xhci_hcd *xhci,
 	else
 		return dma_pool_alloc(xhci->medium_streams_pool,
 				mem_flags, dma);
+#endif
 }
 
 struct xhci_ring *xhci_dma_to_transfer_ring(
@@ -1663,6 +1708,10 @@ static int scratchpad_alloc(struct xhci_hcd *xhci, gfp_t flags)
 	if (!xhci->scratchpad->sp_array)
 		goto fail_sp2;
 
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	xhci->scratchpad->sp_dma = BUS2PA(xhci->scratchpad->sp_dma);
+#endif
+
 	xhci->scratchpad->sp_buffers = kzalloc(sizeof(void *) * num_sp, flags);
 	if (!xhci->scratchpad->sp_buffers)
 		goto fail_sp3;
@@ -1681,6 +1730,9 @@ static int scratchpad_alloc(struct xhci_hcd *xhci, gfp_t flags)
 		if (!buf)
 			goto fail_sp5;
 
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+		dma = BUS2PA(dma);
+#endif
 		xhci->scratchpad->sp_array[i] = dma;
 		xhci->scratchpad->sp_buffers[i] = buf;
 		xhci->scratchpad->sp_dma_buffers[i] = dma;
@@ -1690,6 +1742,9 @@ static int scratchpad_alloc(struct xhci_hcd *xhci, gfp_t flags)
 
  fail_sp5:
 	for (i = i - 1; i >= 0; i--) {
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+		xhci->scratchpad->sp_dma_buffers[i] = PA2BUS(xhci->scratchpad->sp_dma_buffers[i]);
+#endif
 		dma_free_coherent(dev, xhci->page_size,
 				    xhci->scratchpad->sp_buffers[i],
 				    xhci->scratchpad->sp_dma_buffers[i]);
@@ -1700,6 +1755,9 @@ static int scratchpad_alloc(struct xhci_hcd *xhci, gfp_t flags)
 	kfree(xhci->scratchpad->sp_buffers);
 
  fail_sp3:
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	xhci->scratchpad->sp_dma = PA2BUS(xhci->scratchpad->sp_dma);
+#endif
 	dma_free_coherent(dev, num_sp * sizeof(u64),
 			    xhci->scratchpad->sp_array,
 			    xhci->scratchpad->sp_dma);
@@ -1724,12 +1782,18 @@ static void scratchpad_free(struct xhci_hcd *xhci)
 	num_sp = HCS_MAX_SCRATCHPAD(xhci->hcs_params2);
 
 	for (i = 0; i < num_sp; i++) {
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+		xhci->scratchpad->sp_dma_buffers[i] = PA2BUS(xhci->scratchpad->sp_dma_buffers[i]);
+#endif
 		dma_free_coherent(dev, xhci->page_size,
 				    xhci->scratchpad->sp_buffers[i],
 				    xhci->scratchpad->sp_dma_buffers[i]);
 	}
 	kfree(xhci->scratchpad->sp_dma_buffers);
 	kfree(xhci->scratchpad->sp_buffers);
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	xhci->scratchpad->sp_dma = PA2BUS(xhci->scratchpad->sp_dma);
+#endif
 	dma_free_coherent(dev, num_sp * sizeof(u64),
 			    xhci->scratchpad->sp_array,
 			    xhci->scratchpad->sp_dma);
@@ -1801,8 +1865,16 @@ void xhci_mem_cleanup(struct xhci_hcd *xhci)
 	/* Free the Event Ring Segment Table and the actual Event Ring */
 	size = sizeof(struct xhci_erst_entry)*(xhci->erst.num_entries);
 	if (xhci->erst.entries)
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	{
+		xhci->erst.erst_dma_addr = PA2BUS(xhci->erst.erst_dma_addr);
+#endif
 		dma_free_coherent(dev, size,
 				xhci->erst.entries, xhci->erst.erst_dma_addr);
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	}
+#endif
+
 	xhci->erst.entries = NULL;
 	xhci_dbg_trace(xhci, trace_xhci_dbg_init, "Freed ERST");
 	if (xhci->event_ring)
@@ -1855,8 +1927,15 @@ void xhci_mem_cleanup(struct xhci_hcd *xhci)
 			"Freed medium stream array pool");
 
 	if (xhci->dcbaa)
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	{
+		xhci->dcbaa->dma = PA2BUS(xhci->dcbaa->dma);
+#endif
 		dma_free_coherent(dev, sizeof(*xhci->dcbaa),
 				xhci->dcbaa, xhci->dcbaa->dma);
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	}
+#endif
 	xhci->dcbaa = NULL;
 
 	scratchpad_free(xhci);
@@ -2047,7 +2126,11 @@ static int xhci_check_trb_in_td_math(struct xhci_hcd *xhci, gfp_t mem_flags)
 	return 0;
 }
 
+#if (MP_USB_MSTAR)
+void xhci_set_hc_event_deq(struct xhci_hcd *xhci)
+#else
 static void xhci_set_hc_event_deq(struct xhci_hcd *xhci)
+#endif
 {
 	u64 temp;
 	dma_addr_t deq;
@@ -2093,9 +2176,15 @@ static void xhci_add_in_port(struct xhci_hcd *xhci, unsigned int num_ports,
 			"Ext Cap %p, port offset = %u, "
 			"count = %u, revision = 0x%x",
 			addr, port_offset, port_count, major_revision);
+#if (MP_USB_MSTAR==1) && defined(CONFIG_MSTAR_XUSB_PCIE_PLATFORM)
+	#ifdef XHCI_2PORTS
+	if (major_revision == 0x03)
+		--port_count;
+	#endif
+#endif
 	/* Port count includes the current port offset */
 	if (port_offset == 0 || (port_offset + port_count - 1) > num_ports)
-		/* WTF? "Valid values are ‘1’ to MaxPorts" */
+		/* WTF? "Valid values are ????to MaxPorts" */
 		return;
 
 	/* cache usb2 port capabilities */
@@ -2368,6 +2457,11 @@ int xhci_mem_init(struct xhci_hcd *xhci, gfp_t flags)
 			GFP_KERNEL);
 	if (!xhci->dcbaa)
 		goto fail;
+
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	dma = BUS2PA(dma);
+#endif
+
 	memset(xhci->dcbaa, 0, sizeof *(xhci->dcbaa));
 	xhci->dcbaa->dma = dma;
 	xhci_dbg_trace(xhci, trace_xhci_dbg_init,
@@ -2383,11 +2477,23 @@ int xhci_mem_init(struct xhci_hcd *xhci, gfp_t flags)
 	 * TRB_SEGMENT_SIZE alignment, so we pick the greater alignment need.
 	 */
 	xhci->segment_pool = dma_pool_create("xHCI ring segments", dev,
-			TRB_SEGMENT_SIZE, TRB_SEGMENT_SIZE, xhci->page_size);
+			TRB_SEGMENT_SIZE,
+#if 0 //(MP_USB_MSTAR==1) && (_USB_128_ALIGMENT)
+			128,
+#else
+			TRB_SEGMENT_SIZE,
+#endif
+			xhci->page_size);
 
 	/* See Table 46 and Note on Figure 55 */
 	xhci->device_pool = dma_pool_create("xHCI input/output contexts", dev,
-			2112, 64, xhci->page_size);
+			2112,
+#if (MP_USB_MSTAR==1) && (_USB_128_ALIGMENT)
+			128,
+#else
+			64,
+#endif
+			xhci->page_size);
 	if (!xhci->segment_pool || !xhci->device_pool)
 		goto fail;
 
@@ -2396,10 +2502,22 @@ int xhci_mem_init(struct xhci_hcd *xhci, gfp_t flags)
 	 */
 	xhci->small_streams_pool =
 		dma_pool_create("xHCI 256 byte stream ctx arrays",
-			dev, SMALL_STREAM_ARRAY_SIZE, 16, 0);
+			dev, SMALL_STREAM_ARRAY_SIZE,
+#if (MP_USB_MSTAR==1) && (_USB_128_ALIGMENT)
+			128,
+#else
+			16,
+#endif
+			0);
 	xhci->medium_streams_pool =
 		dma_pool_create("xHCI 1KB stream ctx arrays",
-			dev, MEDIUM_STREAM_ARRAY_SIZE, 16, 0);
+			dev, MEDIUM_STREAM_ARRAY_SIZE,
+#if (MP_USB_MSTAR==1) && (_USB_128_ALIGMENT)
+			128,
+#else
+			16,
+#endif
+			0);
 	/* Any stream context array bigger than MEDIUM_STREAM_ARRAY_SIZE
 	 * will be allocated with dma_alloc_coherent()
 	 */
@@ -2464,6 +2582,10 @@ int xhci_mem_init(struct xhci_hcd *xhci, gfp_t flags)
 			GFP_KERNEL);
 	if (!xhci->erst.entries)
 		goto fail;
+
+#if (MP_USB_MSTAR==1) && (XHCI_PA_PATCH)
+	dma = BUS2PA(dma);
+#endif
 	xhci_dbg_trace(xhci, trace_xhci_dbg_init,
 			"// Allocated event ring segment table at 0x%llx",
 			(unsigned long long)dma);
@@ -2485,6 +2607,11 @@ int xhci_mem_init(struct xhci_hcd *xhci, gfp_t flags)
 		entry->rsvd = 0;
 		seg = seg->next;
 	}
+
+#if (MP_USB_MSTAR==1) && (XHCI_FLUSHPIPE_PATCH)
+	Chip_Flush_Memory();
+#endif
+
 
 	/* set ERST count with the number of entries in the segment table */
 	val = readl(&xhci->ir_set->erst_size);

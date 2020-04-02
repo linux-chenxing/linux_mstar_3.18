@@ -93,6 +93,8 @@ struct irq_chip gic_arch_extn = {
 	.irq_set_wake	= NULL,
 };
 
+EXPORT_SYMBOL(gic_arch_extn);
+
 #ifndef MAX_GIC_NR
 #define MAX_GIC_NR	1
 #endif
@@ -192,9 +194,13 @@ static int gic_set_type(struct irq_data *d, unsigned int type)
 	/* Interrupt configuration for SGIs can't be changed */
 	if (gicirq < 16)
 		return -EINVAL;
-
+#if !(defined(CONFIG_ARCH_INFINITY) || defined(CONFIG_ARCH_INFINITY3))
 	if (type != IRQ_TYPE_LEVEL_HIGH && type != IRQ_TYPE_EDGE_RISING)
 		return -EINVAL;
+#else
+    if (gicirq < 64 && type != IRQ_TYPE_LEVEL_HIGH)
+        return -EINVAL;
+#endif
 
 	raw_spin_lock(&irq_controller_lock);
 
@@ -346,9 +352,10 @@ static u8 gic_get_cpumask(struct gic_chip_data *gic)
 			break;
 	}
 
+#if !(defined(CONFIG_ARCH_INFINITY) || defined(CONFIG_ARCH_INFINITY3))
 	if (!mask)
 		pr_crit("GIC CPU mask not found - kernel will fail to boot.\n");
-
+#endif
 	return mask;
 }
 
@@ -369,13 +376,16 @@ static void gic_cpu_if_up(void)
 
 static void __init gic_dist_init(struct gic_chip_data *gic)
 {
+#ifndef CONFIG_MS_DUAL_OS_SUPPORT
 	unsigned int i;
 	u32 cpumask;
+#endif
 	unsigned int gic_irqs = gic->gic_irqs;
 	void __iomem *base = gic_data_dist_base(gic);
 
 	writel_relaxed(GICD_DISABLE, base + GIC_DIST_CTRL);
 
+#ifndef CONFIG_MS_DUAL_OS_SUPPORT
 	/*
 	 * Set all global interrupts to this CPU only.
 	 */
@@ -384,6 +394,7 @@ static void __init gic_dist_init(struct gic_chip_data *gic)
 	cpumask |= cpumask << 16;
 	for (i = 32; i < gic_irqs; i += 4)
 		writel_relaxed(cpumask, base + GIC_DIST_TARGET + i * 4 / 4);
+#endif
 
 	gic_dist_config(base, gic_irqs, NULL);
 
@@ -1040,6 +1051,7 @@ gic_of_init(struct device_node *node, struct device_node *parent)
 	gic_cnt++;
 	return 0;
 }
+
 IRQCHIP_DECLARE(gic_400, "arm,gic-400", gic_of_init);
 IRQCHIP_DECLARE(cortex_a15_gic, "arm,cortex-a15-gic", gic_of_init);
 IRQCHIP_DECLARE(cortex_a9_gic, "arm,cortex-a9-gic", gic_of_init);

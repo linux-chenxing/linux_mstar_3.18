@@ -36,6 +36,11 @@ struct outer_cache_fns {
 
 	/* This is an ARM L2C thing */
 	void (*write_sec)(unsigned long, unsigned);
+
+#ifdef CONFIG_MS_L2X0_PATCH
+	void (*flush_MIU_pipe)(void);
+#endif
+
 };
 
 extern struct outer_cache_fns outer_cache;
@@ -115,12 +120,43 @@ static inline void outer_resume(void)
 #else
 
 static inline void outer_inv_range(phys_addr_t start, phys_addr_t end)
-{ }
+{
+#ifdef CONFIG_MS_L2X0_PATCH
+	if(outer_cache.flush_MIU_pipe)
+	{
+		outer_cache.flush_MIU_pipe();
+	}
+#endif
+}
 static inline void outer_clean_range(phys_addr_t start, phys_addr_t end)
-{ }
+{
+#ifdef CONFIG_MS_L2X0_PATCH
+	if(outer_cache.flush_MIU_pipe)
+	{
+		outer_cache.flush_MIU_pipe();
+	}
+#endif
+}
 static inline void outer_flush_range(phys_addr_t start, phys_addr_t end)
-{ }
-static inline void outer_flush_all(void) { }
+{
+#ifdef CONFIG_MS_L2X0_PATCH
+	if(outer_cache.flush_MIU_pipe)
+	{
+		outer_cache.flush_MIU_pipe();
+	}
+#endif
+//CONFIG_MS_L2X0_PATCH == 1 for inner L2 cpu, need to add mstar flush piple
+}
+static inline void outer_flush_all(void)
+{
+#ifdef CONFIG_MS_L2X0_PATCH
+	if(outer_cache.flush_MIU_pipe)
+	{
+		outer_cache.flush_MIU_pipe();
+	}
+#endif
+//CONFIG_MS_L2X0_PATCH == 1 for inner L2 cpu, need to add mstar flush piple
+}
 static inline void outer_disable(void) { }
 static inline void outer_resume(void) { }
 

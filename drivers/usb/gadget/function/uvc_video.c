@@ -21,6 +21,7 @@
 
 #include "uvc.h"
 #include "uvc_queue.h"
+#include "u_uvc.h"
 
 /* --------------------------------------------------------------------------
  * Video codecs
@@ -105,6 +106,7 @@ uvc_video_encode_isoc(struct usb_request *req, struct uvc_video *video,
 	int len = video->req_size;
 	int ret;
 
+    printk("[ %s req_size %d ]\n",__func__,len);
 	/* Add the header. */
 	ret = uvc_video_encode_header(video, buf, mem, len);
 	mem += ret;
@@ -122,6 +124,7 @@ uvc_video_encode_isoc(struct usb_request *req, struct uvc_video *video,
 		uvcg_queue_next_buffer(&video->queue, buf);
 		video->fid ^= UVC_STREAM_FID;
 	}
+    printk("[ %s bufaddr %x buf->bytesused %d video->queue.buf_used %d req->length %d ]\n",__func__,(int)buf,buf->bytesused,video->queue.buf_used,req->length);
 }
 
 /* --------------------------------------------------------------------------
@@ -167,6 +170,7 @@ uvc_video_complete(struct usb_ep *ep, struct usb_request *req)
 	unsigned long flags;
 	int ret;
 
+//    printk("[ %s ]\n",__func__);
 	switch (req->status) {
 	case 0:
 		break;
@@ -191,6 +195,7 @@ uvc_video_complete(struct usb_ep *ep, struct usb_request *req)
 	}
 
 	video->encode(req, video, buf);
+ //   printk("[ %s encode eq :%s ]\n",__func__,video->ep->name);
 
 	if ((ret = usb_ep_queue(ep, req, GFP_ATOMIC)) < 0) {
 		printk(KERN_INFO "Failed to queue request (%d).\n", ret);
@@ -236,13 +241,18 @@ uvc_video_alloc_requests(struct uvc_video *video)
 {
 	unsigned int req_size;
 	unsigned int i;
+    struct uvc_device *uvc = video_to_uvc(video);
+    struct f_uvc_opts *opts = to_f_uvc_opts(uvc->func.fi);
 	int ret = -ENOMEM;
 
 	BUG_ON(video->req_size);
 
-	req_size = video->ep->maxpacket
-		 * max_t(unsigned int, video->ep->maxburst, 1)
-		 * (video->ep->mult + 1);
+    if (!opts->bulk_streaming_ep)
+           req_size = video->ep->maxpacket
+                * max_t(unsigned int, video->ep->maxburst, 1)
+                * (video->ep->mult + 1);
+    else
+           req_size = video->ep->maxpacket;
 
 	for (i = 0; i < UVC_NUM_REQUESTS; ++i) {
 		video->req_buffer[i] = kmalloc(req_size, GFP_KERNEL);
@@ -292,6 +302,7 @@ int uvcg_video_pump(struct uvc_video *video)
 	 * handler ???
 	 */
 
+//    printk("[ %s start ]\n",__func__);
 	while (1) {
 		/* Retrieve the first available USB request, protected by the
 		 * request lock.
@@ -299,6 +310,7 @@ int uvcg_video_pump(struct uvc_video *video)
 		spin_lock_irqsave(&video->req_lock, flags);
 		if (list_empty(&video->req_free)) {
 			spin_unlock_irqrestore(&video->req_lock, flags);
+//    printk("[ %s empty ]\n",__func__);
 			return 0;
 		}
 		req = list_first_entry(&video->req_free, struct usb_request,
@@ -312,15 +324,18 @@ int uvcg_video_pump(struct uvc_video *video)
 		spin_lock_irqsave(&queue->irqlock, flags);
 		buf = uvcg_queue_head(queue);
 		if (buf == NULL) {
+//    printk("[ %s fuck buf ]\n",__func__);
 			spin_unlock_irqrestore(&queue->irqlock, flags);
 			break;
 		}
 
 		video->encode(req, video, buf);
+//        printk("[ %s encode eq :%s ]\n",__func__,video->ep->name);
 
 		/* Queue the USB request */
 		ret = usb_ep_queue(video->ep, req, GFP_ATOMIC);
 		if (ret < 0) {
+//    printk("[ %s fuck ret %d ]\n",__func__,ret);
 			printk(KERN_INFO "Failed to queue request (%d)\n", ret);
 			usb_ep_set_halt(video->ep);
 			spin_unlock_irqrestore(&queue->irqlock, flags);
@@ -333,6 +348,7 @@ int uvcg_video_pump(struct uvc_video *video)
 	spin_lock_irqsave(&video->req_lock, flags);
 	list_add_tail(&req->list, &video->req_free);
 	spin_unlock_irqrestore(&video->req_lock, flags);
+//    printk("[ %s end ]\n",__func__);
 	return 0;
 }
 
@@ -380,6 +396,9 @@ int uvcg_video_enable(struct uvc_video *video, int enable)
  */
 int uvcg_video_init(struct uvc_video *video)
 {
+    struct uvc_device *uvc = video_to_uvc(video); 
+    struct f_uvc_opts *opts = to_f_uvc_opts(uvc->func.fi);
+
 	INIT_LIST_HEAD(&video->req_free);
 	spin_lock_init(&video->req_lock);
 
@@ -388,6 +407,12 @@ int uvcg_video_init(struct uvc_video *video)
 	video->width = 320;
 	video->height = 240;
 	video->imagesize = 320 * 240 * 2;
+	video->width = 640;
+	video->height = 480;
+	video->imagesize = 640 * 480 * 2;
+
+    if (opts->bulk_streaming_ep)
+          video->max_payload_size = video->imagesize;
 
 	/* Initialize the video buffers queue. */
 	uvcg_queue_init(&video->queue, V4L2_BUF_TYPE_VIDEO_OUTPUT);

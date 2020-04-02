@@ -1,0 +1,205 @@
+source "drivers/mstar/irqchip/Kconfig"
+source "drivers/mstar/clocksource/Kconfig"
+source "drivers/mstar/msys/Kconfig"
+source "drivers/mstar/serial/Kconfig"
+source "drivers/mstar/clk/Kconfig"
+
+
+if (ARCH_INFINITY) || (ARCH_INFINITY2) || (ARCH_INFINITY3)
+source "drivers/mstar/isp/Kconfig"
+endif
+
+if (ARCH_CEDRIC) || (ARCH_INFINITY) || (ARCH_INFINITY3)
+source "drivers/mstar/unfd/Kconfig"
+endif
+
+if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/emmc/Kconfig"
+endif
+
+if (ARCH_INFINITY) || (ARCH_INFINITY3) ||(ARCH_INFINITY2)
+source "drivers/mstar/sdmmc/Kconfig"
+endif
+
+if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY) || (ARCH_INFINITY3) ||(ARCH_INFINITY2)
+source "drivers/mstar/sound/Kconfig"
+endif
+
+
+if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY)
+source "drivers/mstar/usb/Kconfig"
+endif
+
+if (ARCH_CEDRIC)
+source "drivers/mstar/sca/Kconfig"
+endif
+
+if (ARCH_CEDRIC) || (ARCH_INFINITY) || (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/dip/Kconfig"
+endif
+
+if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY) || (ARCH_INFINITY3)
+source "drivers/mstar/fb/Kconfig"
+endif
+
+if (ARCH_INFINITY3)
+source "drivers/mstar/fb1/Kconfig"
+endif
+
+if (ARCH_INFINITY3)
+source "drivers/mstar/fb2/Kconfig"
+endif
+
+if (ARCH_INFINITY2)
+source "drivers/mstar/driver/drv/pnl/Kconfig"
+endif
+
+if (ARCH_INFINITY2)
+source "drivers/mstar/driver/drv/mipi_dsi/Kconfig"
+endif
+
+#if (ARCH_INFINITY2)
+#source "drivers/mstar/driver/drv/mload/Kconfig"
+#endif
+
+#if (ARCH_INFINITY2)
+#source "drivers/mstar/gop/drv/Kconfig"
+#endif
+
+#if (ARCH_INFINITY2)
+#source "drivers/mstar/cover/drv/Kconfig"
+#endif
+
+#if (ARCH_INFINITY2)
+#source "drivers/mstar/rgn/MI_HAL/Kconfig"
+#endif
+
+#if (ARCH_INFINITY)|| (ARCH_INFINITY3)|| (ARCH_INFINITY2)
+#source "drivers/mstar/scl/Kconfig"
+#source "drivers/mstar/driver/drv/scl/Kconfig"
+#endif
+
+if (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/driver/drv/mgwin/Kconfig"
+endif
+
+if (ARCH_INFINITY)  || (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/emac/Kconfig"
+endif
+
+
+if (ARCH_CEDRIC) || (ARCH_INFINITY)|| (ARCH_INFINITY3)
+source "drivers/mstar/ir/Kconfig"
+endif
+
+if (ARCH_CEDRIC) || (ARCH_INFINITY) || (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/i2c/Kconfig"
+endif
+
+if (ARCH_CEDRIC) || (ARCH_INFINITY) || (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/i2c_sw/Kconfig"
+endif
+
+if (ARCH_CEDRIC) || (ARCH_INFINITY) || (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/gpio/Kconfig"
+endif
+
+if (ARCH_INFINITY)|| (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/watchdog/Kconfig"
+endif
+
+if (ARCH_INFINITY)|| (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/sar/Kconfig"
+endif
+
+if (ARCH_INFINITY)|| (ARCH_INFINITY3)
+source "drivers/mstar/ircut/Kconfig"
+endif
+
+if (ARCH_INFINITY) || (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/rtc/Kconfig"
+endif
+
+if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY) || (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/flash_isp/Kconfig"
+endif
+
+if (ARCH_INFINITY)|| (ARCH_INFINITY3)
+source "drivers/mstar/xpm/Kconfig"
+endif
+
+if (ARCH_INFINITY)|| (ARCH_INFINITY3)
+source "drivers/mstar/crypto/Kconfig"
+endif
+
+if (ARCH_INFINITY) || (ARCH_INFINITY3)
+source "drivers/mstar/cpufreq/Kconfig"
+endif
+
+if (ARCH_INFINITY)|| (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/pwm/Kconfig"
+endif
+
+if (ARCH_INFINITY)|| (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/spinand/Kconfig"
+endif
+
+if (ARCH_INFINITY)|| (ARCH_INFINITY3) || (ARCH_INFINITY2)
+source "drivers/mstar/spi/Kconfig"
+endif
+
+if (ARCH_INFINITY) || (ARCH_INFINITY3)
+source "drivers/mstar/pm/Kconfig"
+endif
+
+if (ARCH_INFINITY2)
+source "drivers/mstar/ive/Kconfig"
+endif
+
+if (ARCH_INFINITY3)
+source "drivers/mstar/notify/Kconfig"
+endif
+
+if (ARCH_INFINITY2)
+source "drivers/mstar/noe/Kconfig"
+endif
+
+if (ARCH_INFINITY2)
+source "drivers/mstar/gmac/Kconfig"
+endif
+
+#if (ARCH_INFINITY2)
+#source "drivers/mstar/vif/Kconfig"
+#endif
+
+if (ARCH_INFINITY2)
+source "drivers/mstar/mma_heap/Kconfig"
+endif
+
+if (ARCH_INFINITY2)
+source "drivers/mstar/miu/Kconfig"
+endif
+
+if (ARCH_INFINITY2)
+source "drivers/mstar/sata_host/Kconfig"
+endif
+
+if (ARCH_INFINITY2)
+source "drivers/mstar/warp/Kconfig"
+endif
+
+if (ARCH_INFINITY2)
+source "drivers/mstar/ceva_linkdrv/Kconfig"
+endif
+
+if (ARCH_INFINITY2)
+source "drivers/mstar/isrcb/Kconfig"
+endif
+
+menuconfig CAM_DRIVERS
+    bool "MStar Cam drivers"
+    depends on MSTAR_DRIVERS
+    default n
+if ( CAM_DRIVERS )
+source "drivers/mstar/camdriver/Kconfig"
+endif

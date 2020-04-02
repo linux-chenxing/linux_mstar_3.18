@@ -1,0 +1,91 @@
+/*
+ * Copyright (c) 2014 MundoReader S.L.
+ * Author: Matthias Brugger <matthias.bgg@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/dts-v1/;
+#include "infinity2.dtsi"
+
+/ {
+    model = "INFINITY2 MSC005A-S01A";
+    compatible = "mstar,infinity2";
+
+    memory {
+        reg = <0x20000000 0x3C400000>;
+    };
+
+    chosen {
+        bootargs = "console=ttyS0,115200n8r androidboot.console=ttyS0 root=/dev/mtdblock2 init=/linuxrc reserve_mem=16M LX_MEM=0x3C400000 EMAC_MEM=0x100000 mma_heap=mma_heap_name0,miu=0,sz=0x3200000";
+        /*linux,initrd-start = <0x21FE0000>;
+        linux,initrd-end =   <0x22000000>;*/
+    };
+
+/*	rootfsp:rammtd@0 {
+		compatible = "mtd-ram";
+		reg= <0x2D000000 0x03000000>;
+		bank-width = <1>;
+		linux,mtd-name = "ROOTFS";
+	};
+*/
+
+/*!!IMPORTANT!! The reserved memory must be 1MB aligned*/
+    reserved-memory {
+        #address-cells = <1>;
+        #size-cells = <1>;
+        ranges;
+/*
+        miu_bist_mem: miu_bist_mem@27F00000 {
+            reg = <0x27F00000 0x00100000>;
+            no-map ;
+            status = "okay";
+        };
+
+        cma0 {
+            compatible = "shared-dma-pool";
+            reusable;
+            size = <0x2000000>;
+            alignment = <0x1000>;
+            linux,cma-default;
+        };*/
+
+    };
+
+    soc{
+        isp: isp {
+            //clk-pad = <PAD_SPI0_CK>; //be compatible with the previous QFN, so it must reserved 4 pins for SPI0 pads
+            //isp-flag = <0x3>; //enable DNR and ROT
+            //isp-res = <0x5>; //max image size 5M
+        };
+	vif{
+            ccir0_ctrl_mode = <1>;
+            ccir1_ctrl_mode = <0>;
+            ccir2_ctrl_mode = <0>;
+            ccir3_ctrl_mode = <0>;
+
+            ccir0_8b_mode = <1>;
+            ccir1_8b_mode = <1>;
+            ccir2_8b_mode = <1>;
+            ccir3_8b_mode = <1>;
+
+            ccir0_clk_mode = <1>;
+            ccir1_clk_mode = <1>;
+            ccir2_clk_mode = <1>;
+            ccir3_clk_mode = <1>;
+
+            ccir0_16b_mode = <0>;
+            ccir2_16b_mode = <0>;
+            mcu = <0>; //1:Enable MCU 0:Disable MCU
+	};
+    };
+
+};

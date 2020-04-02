@@ -25,7 +25,6 @@
 #include <linux/io.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-
 #include <asm/cacheflush.h>
 #include <asm/cp15.h>
 #include <asm/cputype.h>
@@ -53,6 +52,7 @@ static u32 l2x0_size;
 static unsigned long sync_reg_offset = L2X0_CACHE_SYNC;
 
 struct l2x0_regs l2x0_saved_regs;
+
 
 /*
  * Common code for all cache controllers.
@@ -172,6 +172,13 @@ static void l2x0_cache_sync(void)
 	raw_spin_lock_irqsave(&l2x0_lock, flags);
 	cache_sync();
 	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+
+#ifdef CONFIG_MS_L2X0_PATCH
+	if(outer_cache.flush_MIU_pipe)
+	{
+		outer_cache.flush_MIU_pipe();
+	}
+#endif
 }
 
 static void __l2x0_flush_all(void)
@@ -190,6 +197,13 @@ static void l2x0_flush_all(void)
 	raw_spin_lock_irqsave(&l2x0_lock, flags);
 	__l2x0_flush_all();
 	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+
+#ifdef CONFIG_MS_L2X0_PATCH
+	if(outer_cache.flush_MIU_pipe)
+	{
+		outer_cache.flush_MIU_pipe();
+	}
+#endif
 }
 
 static void l2x0_disable(void)
@@ -225,6 +239,13 @@ static void l2c_save(void __iomem *base)
 static void __l2c210_cache_sync(void __iomem *base)
 {
 	writel_relaxed(0, base + sync_reg_offset);
+
+#ifdef CONFIG_MS_L2X0_PATCH
+	if(outer_cache.flush_MIU_pipe)
+	{
+		outer_cache.flush_MIU_pipe();
+	}
+#endif
 }
 
 static void __l2c210_op_pa_range(void __iomem *reg, unsigned long start,
@@ -262,6 +283,7 @@ static void l2c210_clean_range(unsigned long start, unsigned long end)
 	start &= ~(CACHE_LINE_SIZE - 1);
 	__l2c210_op_pa_range(base + L2X0_CLEAN_LINE_PA, start, end);
 	__l2c210_cache_sync(base);
+
 }
 
 static void l2c210_flush_range(unsigned long start, unsigned long end)
@@ -618,6 +640,13 @@ static void __init l2c310_save(void __iomem *base)
 static void l2c310_resume(void)
 {
 	void __iomem *base = l2x0_base;
+
+#if defined(CONFIG_MS_L2X0_PATCH)
+	if(outer_cache.flush_MIU_pipe)
+	{
+		outer_cache.flush_MIU_pipe();
+	}
+#endif
 
 	if (!(readl_relaxed(base + L2X0_CTRL) & L2X0_CTRL_EN)) {
 		unsigned revision;

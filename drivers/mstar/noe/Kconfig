@@ -1,0 +1,15 @@
+config MS_NOE
+    bool "Mstar NOE driver"
+    depends on ARCH_INFINITY2
+    help
+        MStar NOE driver function
+menu "MStar Network Offload Engine"
+source "drivers/mstar/noe/drv/eth/Kconfig"
+if NETFILTER
+config NOE_NAT_HW
+    bool "HW NAT support (Module Mode Only)"
+    depends on NOE
+source "drivers/mstar/noe/drv/nat/hw_nat/Kconfig"
+endif   # if NETFILTER
+endmenu #"MStar Network Offload Engine"
+

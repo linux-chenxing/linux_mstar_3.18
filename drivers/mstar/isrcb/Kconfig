@@ -1,0 +1,8 @@
+#config MS_ISRCB
+#    boolean "Mstar ISRCB driver"
+#    help
+#        MStar ISRCB driver function
+
+config MS_ISRCB_INFINITY2
+    boolean "ISRCB driver support for iNfinity2"
+    depends on ARCH_INFINITY2

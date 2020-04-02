@@ -274,6 +274,10 @@ phys_addr_t __init arm_memblock_steal(phys_addr_t size, phys_addr_t align)
 	return phys;
 }
 
+#ifdef CONFIG_MSTAR_MMAHEAP
+extern void deal_with_reserve_mma_heap(void);
+#endif
+
 void __init arm_memblock_init(const struct machine_desc *mdesc)
 {
 	/* Register the kernel text, kernel data and initrd with memblock. */
@@ -323,6 +327,13 @@ void __init arm_memblock_init(const struct machine_desc *mdesc)
 	 * must come from DMA area inside low memory
 	 */
 	dma_contiguous_reserve(arm_dma_limit);
+
+
+// first reserve for mstar,
+//not place call this deal_with_reserve_mma_heap function in the end of arm_memblock_init.
+#ifdef CONFIG_MSTAR_MMAHEAP
+        deal_with_reserve_mma_heap();
+#endif
 
 	arm_memblock_steal_permitted = false;
 	memblock_dump_all();
@@ -615,6 +626,15 @@ void __init mem_init(void)
 	}
 }
 
+#if 1
+extern int reserveMemSize;
+extern int addToSystemRAMSize;
+extern int DRAM_start;
+extern int DTS_DRAM_start;
+extern int DTS_DRAM_end;
+#endif
+
+
 void free_initmem(void)
 {
 #ifdef CONFIG_HAVE_TCM
@@ -622,6 +642,17 @@ void free_initmem(void)
 
 	poison_init_mem(&__tcm_start, &__tcm_end - &__tcm_start);
 	free_reserved_area(&__tcm_start, &__tcm_end, -1, "TCM link");
+#endif
+
+#if 1
+	// free reserve memory zone
+	memblock_free(DTS_DRAM_start, reserveMemSize);
+	memblock_remove(DTS_DRAM_start, reserveMemSize);
+	// free over DRAM mapping range because lowmem size calculate from 0x21000000
+	memblock_free(DTS_DRAM_end, addToSystemRAMSize);
+	memblock_remove(DTS_DRAM_end, addToSystemRAMSize);
+	// make MEMBLOCK_HOTPLUG for system RAM
+	memblock_mark_hotplug(DTS_DRAM_start + reserveMemSize, addToSystemRAMSize);
 #endif
 
 	poison_init_mem(__init_begin, __init_end - __init_begin);

@@ -74,6 +74,9 @@
 #include <asm/uaccess.h>
 #include <trace/events/skb.h>
 #include <linux/highmem.h>
+#if defined (CONFIG_NOE_NAT_HW)
+#include "../../drivers/mstar/noe/drv/nat/hw_nat/mdrv_hwnat.h"
+#endif
 
 struct kmem_cache *skbuff_head_cache __read_mostly;
 static struct kmem_cache *skbuff_fclone_cache __read_mostly;
@@ -625,6 +628,18 @@ static void skb_release_all(struct sk_buff *skb)
 
 void __kfree_skb(struct sk_buff *skb)
 {
+#if defined(CONFIG_NOE_NAT_HW)
+        if(IS_MAGIC_TAG_PROTECT_VALID_HEAD(skb) || (FOE_MAGIC_TAG(skb) == FOE_MAGIC_PPE)){
+                if (IS_SPACE_AVAILABLED_HEAD(skb)){
+                        memset(FOE_INFO_START_ADDR_HEAD(skb), 0, FOE_INFO_LEN);
+                }
+        }
+        if(IS_MAGIC_TAG_PROTECT_VALID_TAIL(skb) || (FOE_MAGIC_TAG(skb) == FOE_MAGIC_PPE)){
+                if (IS_SPACE_AVAILABLED_TAIL(skb)){
+                        memset(FOE_INFO_START_ADDR_TAIL(skb), 0, FOE_INFO_LEN);
+                }
+        }
+#endif
 	skb_release_all(skb);
 	kfree_skbmem(skb);
 }
@@ -1097,6 +1112,10 @@ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
 	memcpy((struct skb_shared_info *)(data + size),
 	       skb_shinfo(skb),
 	       offsetof(struct skb_shared_info, frags[skb_shinfo(skb)->nr_frags]));
+
+#if defined(CONFIG_NOE_NAT_HW)
+    memcpy(data, skb->head, FOE_INFO_LEN);
+#endif
 
 	/*
 	 * if shinfo is shared we must drop the old head gracefully, but if it

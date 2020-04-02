@@ -24,6 +24,10 @@ ifneq ($(CONFIG_USB_XHCI_RCAR), )
 	xhci-plat-hcd-y		+= xhci-rcar.o
 endif
 
+#ifeq ($(CONFIG_MSTAR_CHIP),y)
+xhci-hcd-y += xhci-mstar.o
+#endif
+
 obj-$(CONFIG_USB_WHCI_HCD)	+= whci/
 
 obj-$(CONFIG_PCI)		+= pci-quirks.o

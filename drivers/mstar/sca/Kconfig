@@ -1,0 +1,32 @@
+config MS_SCALER
+	tristate "Scaler driver"
+	default y
+	help
+
+config MS_DUAL_SCREEN
+bool "Support Dual Screen. And both screens display the same screen."
+depends on MS_QST
+	help
+	If the device has two screen, And both screens display the same screen. Say Yes here.
+	Otherwise Say No.
+
+config MS_DUAL_SCREEN_HDMITX
+bool "Support Dual Screen HDMITx. And both screens display the same screen."
+depends on MS_QST
+	help
+	If the device has two screen, And both screens display the same screen. Say Yes here.
+	Otherwise Say No.
+
+config MS_CLONE_SCREEN
+bool "Support Clone Screen. The secondary screen will be same as the primary screen."
+depends on MS_SCALER
+	help
+	If the device has two screen, The secondary screen will be same as the primary screen. Say Yes here.
+	Otherwise Say No.
+	
+config MS_SCALER_BOOT_PNL	
+bool "Support scaler bootup pnl. The scaler will bootup pnl."
+depends on MS_SCALER
+	help
+	If the device has two screen, The secondary screen will be same as the primary screen. Say Yes here.
+	Otherwise Say No.

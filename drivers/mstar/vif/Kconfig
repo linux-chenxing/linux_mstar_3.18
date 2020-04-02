@@ -1,0 +1,9 @@
+config MS_VIF
+    tristate "Mstar VIF driver"
+    help
+        MStar VIF driver function
+        
+config MS_VIF_INFINITY2
+    tristate "VIF driver support for iNfinity2"
+    depends on MS_VIF
+    depends on ARCH_INFINITY2

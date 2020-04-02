@@ -1,0 +1,90 @@
+/*
+ * Copyright (c) 2014 MundoReader S.L.
+ * Author: Matthias Brugger <matthias.bgg@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+
+/dts-v1/;
+#include "infinity2-fpga.dtsi"
+
+/ {
+    model = "INFINITY2 FPGA";
+    compatible = "mstar,infinity2";
+
+    memory {
+        reg = <0x20000000 0x0C000000>;
+    };
+
+    chosen {
+        bootargs = "console=ttyS0,38400n8r androidboot.console=ttyS0 root=/dev/mtdblock0 init=/linuxrc reserve_mem=16M LX_MEM=0xC000000 EMAC_MEM=0x100000 mma_heap=mma_heap_name0,miu=0,sz=0x3200000";
+		/*linux,initrd-start = <0x21FE0000>;
+		linux,initrd-end =   <0x22000000>;*/
+    };
+
+	/*nvrconfigsp:rammtd@0 {
+        compatible = "mtd-ram";
+        reg= <0x2DC00000 0x40000>;
+        bank-width = <1>;
+        linux,mtd-name = "NVRCONFIG";
+    };
+*/
+	rootfsp:rammtd@0 {
+        compatible = "mtd-ram";
+        reg= <0x2D000000 0x03000000>;
+        bank-width = <1>;
+        linux,mtd-name = "ROOTFS";
+    };
+
+
+
+ /*sysp:rammtd@0 {
+        compatible = "mtd-ram";
+        reg= <0x2D000000 0x00b00000>;
+        bank-width = <1>;
+        linux,mtd-name = "SYSTEM";
+    };*/
+    /* Size of this partition must be identical to the size of data.jffs2 due to JFFS2 limitation */
+   /* datap:rammtd@3 {
+        compatible = "mtd-ram";
+        reg= <0x2D500000 0x02000000>;
+        bank-width = <1>;
+        linux,mtd-name = "DATA1";
+        //erase-size = <0x10000>;
+    };*/
+
+
+
+    /*extp:rammtd@2 {
+        compatible = "mtd-ram";
+        reg= <0x2F000000 0x1000000>;
+        bank-width = <1>;
+        linux,mtd-name = "EXT";
+        /*erase-size = <0x10000>;*/
+    /*};*/
+
+/*!!IMPORTANT!! The reserved memory must be 1MB aligned*/
+    reserved-memory {
+        #address-cells = <1>;
+        #size-cells = <1>;
+        ranges;
+
+ /*       cma0 {
+            compatible = "shared-dma-pool";
+            reusable;
+            size = <0x02000000>;
+            alignment = <0x1000>;
+            linux,cma-default;
+        };*/
+    };
+
+};

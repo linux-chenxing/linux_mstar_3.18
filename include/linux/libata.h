@@ -38,6 +38,7 @@
 #include <linux/acpi.h>
 #include <linux/cdrom.h>
 #include <linux/sched.h>
+#include <linux/platform_device.h>
 
 /*
  * Define if arch has non-standard setup.  This is a _PCI_ standard
@@ -599,6 +600,15 @@ struct ata_ioports {
 };
 #endif /* CONFIG_ATA_SFF */
 
+#if 0//def CONFIG_MS_SATA_HOST
+struct sata_ms_host_priv
+{
+    phys_addr_t hba_base;
+    phys_addr_t port_base;
+    phys_addr_t misc_base;
+};
+#endif
+
 struct ata_host {
 	spinlock_t		lock;
 	struct device 		*dev;
@@ -614,6 +624,9 @@ struct ata_host {
 
 	struct ata_port		*simplex_claimed;	/* channel owning the DMA */
 	struct ata_port		*ports[0];
+#if 0//def CONFIG_MS_SATA_HOST
+	/*phys_addr_t*/void * 		ms_private_data;
+#endif
 };
 
 struct ata_queued_cmd {
@@ -652,6 +665,10 @@ struct ata_queued_cmd {
 
 	void			*private_data;
 	void			*lldd_task;
+#if 0//def CONFIG_MS_SATA_HOST
+	/*phys_addr_t*/void * 		ms_private_data;
+#endif
+
 };
 
 struct ata_port_stats {
@@ -876,6 +893,10 @@ struct ata_port {
 #endif
 	/* owned by EH */
 	u8			sector_buf[ATA_SECT_SIZE] ____cacheline_aligned;
+#if 1//def CONFIG_MS_SATA_HOST
+	/*phys_addr_t*/void * 		ms_private_data;
+#endif
+
 };
 
 /* The following initializer overrides a method to NULL whether one of
@@ -1000,7 +1021,14 @@ struct ata_port_info {
 	struct ata_port_operations *port_ops;
 	void 			*private_data;
 };
-
+#if 0 //def CONFIG_MS_SATA_HOST
+struct sata_mstar_host_priv
+{
+    phys_addr_t hba_base;
+    phys_addr_t port_base;
+    phys_addr_t misc_base;
+};
+#endif
 struct ata_timing {
 	unsigned short mode;		/* ATA mode */
 	unsigned short setup;		/* t1 */
@@ -1119,8 +1147,13 @@ extern int sata_std_hardreset(struct ata_link *link, unsigned int *class,
 extern void ata_std_postreset(struct ata_link *link, unsigned int *classes);
 
 extern struct ata_host *ata_host_alloc(struct device *dev, int max_ports);
+#if 0 //def CONFIG_MS_SATA_HOST
+extern struct ata_host *ata_host_alloc_pinfo(struct platform_device *pdev,
+			const struct ata_port_info * const * ppi, int n_ports /*void * ms_hpriv*/);
+#else
 extern struct ata_host *ata_host_alloc_pinfo(struct device *dev,
-			const struct ata_port_info * const * ppi, int n_ports);
+			const struct ata_port_info * const * ppi, int n_ports /*void * ms_hpriv*/);
+#endif
 extern int ata_slave_link_init(struct ata_port *ap);
 extern int ata_host_start(struct ata_host *host);
 extern int ata_host_register(struct ata_host *host,

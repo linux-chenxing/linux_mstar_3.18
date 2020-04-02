@@ -723,6 +723,10 @@ int __mm_populate(unsigned long start, unsigned long len, int ignore_errors)
 	return ret;	/* 0 or negative error code */
 }
 
+#ifdef CONFIG_MSTAR_MMAHEAP 
+EXPORT_SYMBOL(__mm_populate);
+#endif
+
 SYSCALL_DEFINE2(mlock, unsigned long, start, size_t, len)
 {
 	unsigned long locked;

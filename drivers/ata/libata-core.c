@@ -3865,6 +3865,7 @@ int sata_link_hardreset(struct ata_link *link, const unsigned long *timing,
 		ata_link_err(link, "COMRESET failed (errno=%d)\n", rc);
 	}
 	DPRINTK("EXIT, rc=%d\n", rc);
+
 	return rc;
 }
 
@@ -5822,13 +5823,16 @@ struct ata_host *ata_host_alloc(struct device *dev, int max_ports)
  */
 struct ata_host *ata_host_alloc_pinfo(struct device *dev,
 				      const struct ata_port_info * const * ppi,
-				      int n_ports)
+				      int n_ports/*void * ms_priv*/)
 {
 	const struct ata_port_info *pi;
 	struct ata_host *host;
 	int i, j;
 
 	host = ata_host_alloc(dev, n_ports);
+
+	
+
 	if (!host)
 		return NULL;
 
@@ -5851,6 +5855,7 @@ struct ata_host *ata_host_alloc_pinfo(struct device *dev,
 
 	return host;
 }
+
 
 /**
  *	ata_slave_link_init - initialize slave link
@@ -6003,7 +6008,6 @@ int ata_host_start(struct ata_host *host)
 	int have_stop = 0;
 	void *start_dr = NULL;
 	int i, rc;
-
 	if (host->flags & ATA_HOST_STARTED)
 		return 0;
 
@@ -6262,7 +6266,7 @@ int ata_host_activate(struct ata_host *host, int irq,
 		      struct scsi_host_template *sht)
 {
 	int i, rc;
-
+	
 	rc = ata_host_start(host);
 	if (rc)
 		return rc;
@@ -6273,6 +6277,8 @@ int ata_host_activate(struct ata_host *host, int irq,
 		return ata_host_register(host, sht);
 	}
 
+	
+	
 	rc = devm_request_irq(host->dev, irq, irq_handler, irq_flags,
 			      dev_name(host->dev), host);
 	if (rc)

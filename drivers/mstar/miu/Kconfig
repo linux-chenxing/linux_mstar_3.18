@@ -1,0 +1,8 @@
+config MSTAR_MIU
+
+tristate "MSTAR MIU"
+
+help
+    MStar miu driver
+default n
+    

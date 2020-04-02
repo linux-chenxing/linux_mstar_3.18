@@ -1,0 +1,81 @@
+////////////////////////////////////////////////////////////////////////////////
+//
+// Copyright (c) 2006-2008 MStar Semiconductor, Inc.
+// All rights reserved.
+//
+// Unless otherwise stipulated in writing, any and all information contained
+// herein regardless in any format shall remain the sole proprietary of
+// MStar Semiconductor Inc. and be kept in strict confidence
+// (¡§MStar Confidential Information¡¨) by the recipient.
+// Any unauthorized act including without limitation unauthorized disclosure,
+// copying, use, reproduction, sale, distribution, modification, disassembling,
+// reverse engineering and compiling of the contents of MStar Confidential
+// Information is unlawful and strictly prohibited. MStar hereby reserves the
+// rights to any and all damages, losses, costs and expenses resulting therefrom.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+#ifndef _DRVPQ_H_
+#define _DRVPQ_H_
+
+#include "mvideo_if.h"
+
+#define ENABLE_SUB          0
+#define PQ_IP_NULL  0xff
+
+#define PQTBL_EX            0x10
+#define PQTBL_NORMAL        0x11
+
+#define E_XRULE_HSD         0
+#define E_XRULE_VSD         1
+#define E_XRULE_HSP         2
+#define E_XRULE_VSP         3
+#define E_XRULE_CSC         4
+#define E_XRULE_NUM         5
+
+// common PQ function
+extern void MDrv_PQ_Init(U16 u16PnlWidth);
+extern void MDrv_PQ_DesideSrcType(SCALER_WIN eWindow);
+extern U16 MDrv_PQ_GetSrcType(SCALER_WIN eWindow);
+
+extern BOOLEAN MDrv_PQ_LoadScalingTable(SCALER_WIN eWindow,
+                                  U8 eScalingType,
+                                  BOOLEAN bPreV_ScalingDown,
+                                  BOOLEAN bInterlace,
+                                  BOOLEAN bColorSpaceYUV,
+                                  U16 u16InputSize,
+                                  U16 u16SizeAfterScaling);
+
+
+extern MS_DEINTERLACE_MODE MDrv_PQ_SetMemFormat(SCALER_WIN eWindow,
+                                                BOOLEAN bMemFmt422,
+                                                BOOLEAN bFBL,
+                                                U8 *u8BitsPerPixel);
+
+extern void MDrv_PQ_ReduceBW_ForOSD(SCALER_WIN eWindow, BOOLEAN bOSD_On);
+extern void MDrv_PQ_ReduceBW_ForPVR(SCALER_WIN eWindow, BOOLEAN bPVR_On);
+
+extern void MDrv_PQ_Set420upsampling(SCALER_WIN eWindow,
+                              BOOLEAN bFBL,
+                              BOOLEAN bPreV_ScalingDown,
+                              U16 u16V_CropStart);
+extern void MDrv_PQ_SetFilmMode(SCALER_WIN eWindow, BOOLEAN bEnable);
+extern void MDrv_PQ_LoadNRTable(SCALER_WIN eWindow, U8 en3DNRType);
+extern void MDrv_PQ_SetNonLinearScaling(SCALER_WIN eWindow, U8 u8Level, BOOLEAN bEnable);
+extern void MDrv_PQ_CheckSettings(SCALER_WIN eWindow);
+extern void MDrv_PQ_LoadSettings(SCALER_WIN eWindow);
+extern void MDrv_PQ_LoadTable(SCALER_WIN eWindow, U8 u8TabIdx, U8 u8PQIPIdx);
+extern U8 MDrv_PQ_GetIPNum(SCALER_WIN eWindow);
+extern U8 MDrv_PQ_GetTableNum(SCALER_WIN eWindow, U8 u8PQIPIdx);
+extern U8 MDrv_PQ_GetCurrentTableIndex(SCALER_WIN eWindow, U8 u8PQIPIdx);
+extern void MDrv_PQ_PatchFastPlayback(BOOLEAN bOn);
+extern void MDrv_PQ_DisableFilmMode(BOOLEAN bOn);
+
+extern char* MDrv_PQ_GetSrcTypeName(SCALER_WIN eWindow);
+extern char* MDrv_PQ_GetIPName(U8 u8PQIPIdx);
+extern char* MDrv_PQ_GetTableName(U8 u8PQIPIdx, U8 u8TabIdx );
+
+extern void MDrv_PQ_AdaptiveTuning(void);
+
+#endif /* _DRVPQ_H_ */
+

@@ -742,6 +742,31 @@ static int __init early_mem(char *p)
 }
 early_param("mem", early_mem);
 
+#if 1
+/*
+ * Pick out the reserved memory size.  We look for reserve_mem=size,
+ * where start and size are "size[M]"
+ */
+
+
+int reserveMemSize __initdata = 0;
+int addToSystemRAMSize __initdata = 0;
+int DRAM_start __initdata = 0;
+
+static int __init early_reserve_mem(char *p)
+{
+	sscanf(p,"%dM",&reserveMemSize);
+	reserveMemSize *= SZ_1M; // 1 MB alignment
+	addToSystemRAMSize = (SZ_32M + SZ_16M) - reserveMemSize;
+	DRAM_start = memblock_start_of_DRAM() - addToSystemRAMSize;
+	pr_info("[%s]: reserveMemSize=%#x, addToSystemRAMSize=%#x, DRAM_start=%#x\n",__func__, reserveMemSize, addToSystemRAMSize, DRAM_start);
+
+	memblock_add(memblock_start_of_DRAM(), memblock_end_of_DRAM() - memblock_start_of_DRAM() + addToSystemRAMSize);
+	return 0;
+}
+early_param("reserve_mem", early_reserve_mem);
+#endif
+
 static void __init request_standard_resources(const struct machine_desc *mdesc)
 {
 	struct memblock_region *region;
@@ -752,9 +777,14 @@ static void __init request_standard_resources(const struct machine_desc *mdesc)
 	kernel_data.start   = virt_to_phys(_sdata);
 	kernel_data.end     = virt_to_phys(_end - 1);
 
+	#if 1
+		 memblock_add(DRAM_start, addToSystemRAMSize);
+	#endif
+
 	for_each_memblock(memory, region) {
 		res = memblock_virt_alloc(sizeof(*res), 0);
 		res->name  = "System RAM";
+
 		res->start = __pfn_to_phys(memblock_region_memory_base_pfn(region));
 		res->end = __pfn_to_phys(memblock_region_memory_end_pfn(region)) - 1;
 		res->flags = IORESOURCE_MEM | IORESOURCE_BUSY;
@@ -890,6 +920,7 @@ void __init hyp_mode_check(void)
 #endif
 }
 
+void __init prom_meminit(void);
 void __init setup_arch(char **cmdline_p)
 {
 	const struct machine_desc *mdesc;
@@ -914,7 +945,7 @@ void __init setup_arch(char **cmdline_p)
 	*cmdline_p = cmd_line;
 
 	parse_early_param();
-
+        prom_meminit();
 	early_paging_init(mdesc, lookup_processor_type(read_cpuid_id()));
 	setup_dma_zone(mdesc);
 	sanity_check_meminfo();

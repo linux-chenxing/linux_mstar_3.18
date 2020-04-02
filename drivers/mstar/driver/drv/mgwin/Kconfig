@@ -1,0 +1,14 @@
+config MS_MGWIN
+	tristate "MGWIN driver"
+	help
+    		To enable MSTAR MGWIN driver.
+
+config MS_MGWIN_INFINITY3
+  tristate "support I3 driver"
+	depends on MS_MGWIN
+	depends on ARCH_INFINITY3
+
+config MS_MGWIN_INFINITY2
+  tristate "support I2 driver"
+	depends on MS_MGWIN
+	depends on ARCH_INFINITY2

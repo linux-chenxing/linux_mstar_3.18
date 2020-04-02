@@ -85,6 +85,75 @@ config USB_FSL_USB2
 	   dynamically linked module called "fsl_usb2_udc" and force
 	   all gadget drivers to also be dynamically linked.
 
+config USB_GADGET_MSB250X
+	tristate "MSB250X USB Device Controller"
+	help
+		Mstar USB device
+		
+config USB_MSB250X		
+	tristate		
+	depends on USB_GADGET_MSB250X
+	default USB_GADGET
+	select USB_GADGET_SELECTED
+
+config USB_MSB250X_DMA
+	tristate "Use DMA for MSB250x USB"
+		default y if USB_GADGET_MSB250X
+	
+config USB_MSB250X_DEBUG	
+	boolean "MSB250X udc debug messages"	
+	depends on USB_GADGET_MSB250X
+	
+config USB_MSB250X_PROC	
+	boolean "MSB250X udc proc system"	
+	depends on USB_GADGET_MSB250X && PROC_FS
+	
+config USB_MSB250X_FPGA	
+	boolean "MSB250X udc FPGA verification only"	
+	depends on USB_GADGET_MSB250X
+
+config USB_CHARGER_DETECT	
+	boolean "MSB250X udc charger detection"	
+	depends on USB_GADGET_MSB250X
+	#default y
+
+config USB_MTU3
+	tristate "MediaTek USB3 Dual Role controller"
+	#depends on EXTCON && (USB || USB_GADGET) && HAS_DMA
+	#depends on ARCH_MEDIATEK || COMPILE_TEST
+	#select USB_XHCI_MTK if USB_SUPPORT && USB_XHCI_HCD
+	help
+	  Say Y or M here if your system runs on MediaTek SoCs with
+	  Dual Role SuperSpeed USB controller. You can select usb
+	  mode as peripheral role or host role, or both.
+
+	  If you don't know what this is, please say N.
+
+	  Choose M here to compile this driver as a module, and it
+	  will be called mtu3.ko.
+
+if USB_MTU3
+choice
+	bool "MTU3 Mode Selection"
+	#default USB_MTU3_DUAL_ROLE if (USB && USB_GADGET)
+	#default USB_MTU3_HOST if (USB && !USB_GADGET)
+	default USB_MTU3_GADGET if (!USB && USB_GADGET)
+
+config USB_MTU3_GADGET
+	bool "Gadget only mode"
+	depends on USB_GADGET=y || USB_GADGET=USB_MTU3
+	help
+	  Select this when you want to use MTU3 in gadget mode only,
+	  thereby the host feature will be regressed.
+endchoice
+
+config USB_MTU3_DEBUG
+	bool "Enable Debugging Messages"
+	help
+	  Say Y here to enable debugging messages in the MTU3 Driver.
+
+endif
+
 config USB_FUSB300
 	tristate "Faraday FUSB300 USB Peripheral Controller"
 	depends on !PHYS_ADDR_T_64BIT && HAS_DMA

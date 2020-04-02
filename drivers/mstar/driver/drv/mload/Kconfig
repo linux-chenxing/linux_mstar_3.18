@@ -1,0 +1,4 @@
+config MS_MLOAD
+	tristate "MLOAD driver"
+	help
+    		To enable MSTAR MLOAD driver.

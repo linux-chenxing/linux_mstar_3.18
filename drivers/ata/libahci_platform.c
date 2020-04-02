@@ -426,7 +426,9 @@ int ahci_platform_init_host(struct platform_device *pdev,
 	/* prepare host */
 	pi.private_data = (void *)(unsigned long)hpriv->flags;
 
-	ahci_save_initial_config(dev, hpriv);
+	//ahci_save_initial_config(dev, hpriv);
+        ahci_save_initial_config(dev, hpriv,pdata ? pdata->force_port_map : 0,pdata ? pdata->mask_port_map  : 0);
+
 
 	if (hpriv->cap & HOST_CAP_NCQ)
 		pi.flags |= ATA_FLAG_NCQ;

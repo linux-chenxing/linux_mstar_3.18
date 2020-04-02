@@ -249,3 +249,4 @@ int walk_page_range(unsigned long addr, unsigned long end,
 
 	return err;
 }
+EXPORT_SYMBOL(walk_page_range);

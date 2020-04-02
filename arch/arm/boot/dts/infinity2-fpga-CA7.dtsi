@@ -1,0 +1,144 @@
+/*
+ * Copyright (c) 2014 MundoReader S.L.
+ * Author: Matthias Brugger <matthias.bgg@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include <../../../../drivers/mstar/include/infinity2/irqs.h>
+#include <../../../../drivers/mstar/include/infinity2/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include "skeleton.dtsi"
+
+
+/ {
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        cpu@0 {
+            device_type = "cpu";
+            compatible = "arm,cortex-a7";
+            /*next-level-cache = <&L2>;*/
+            reg = <0x0>;
+            clocks = <&xtal>;
+        };
+
+    };
+
+    xtal: oscillator {
+        compatible = "fixed-clock";
+        #clock-cells = <0>;
+        clock-frequency = <12000000>;
+    };
+
+    aliases {
+        console = &uart0;
+        serial0 = &uart0;
+    };
+
+    soc {
+        compatible = "simple-bus";
+        interrupt-parent = <&gic>;
+        #address-cells = <1>;
+        #size-cells = <1>;
+        ranges = <0 0 0xFFFFFFFF>;
+
+
+        gic: interrupt-controller@16000000 {
+            compatible = "arm,cortex-a7-gic";
+            #interrupt-cells = <3>;
+            #address-cells = <1>;
+            #size-cells = <1>;
+            interrupt-controller;
+            reg = <0x16001000 0x1000>,
+                  <0x16002000 0x1000>;
+        };
+
+        ms_pmsleep_intr: interrupt-controller@0 {
+            compatible = "mstar,intrctl-infinity2";
+            #interrupt-cells = <1>;
+            interrupt-parent=<&gic>;
+            interrupt-controller;
+        };
+
+        arch_timer {
+            compatible = "arm,cortex-a7-timer", "arm,armv7-timer";
+            interrupts = <GIC_PPI 13 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>,
+                         <GIC_PPI 14 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>,
+                         <GIC_PPI 11 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>,
+                         <GIC_PPI 10 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>;
+            clock-frequency = <24000000>;  /* arch_timer must use clock-frequency*/
+        };
+
+        pmu {
+            compatible = "arm,cortex-a7-pmu";
+            interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>,
+                         <GIC_SPI 16 IRQ_TYPE_LEVEL_HIGH>,
+                         <GIC_SPI 22 IRQ_TYPE_LEVEL_HIGH>,
+                         <GIC_SPI 28 IRQ_TYPE_LEVEL_HIGH>;
+        };
+		clks: clocks{
+            #address-cells = <1>;
+            #size-cells = <1>;
+            ranges;
+        };
+/*
+        clks: clocks{
+            #address-cells = <1>;
+            #size-cells = <1>;
+            ranges;
+            status = "disabled";
+        };
+
+
+        timer_clockevent: timer@1F006040 {
+            compatible = "mstar,piu-clockevent";
+            reg = <0x1F006040 0x100>;
+            interrupts=<GIC_SPI INT_FIQ_00_INT_TIMER0 IRQ_TYPE_LEVEL_HIGH>;
+            clocks = <&xtal>;
+        };
+
+        timer_clocksource: timer@1F006080 {
+            compatible = "mstar,piu-clocksource";
+            reg = <0x1F006080 0x100>;
+            clocks = <&xtal>;
+        };
+*/
+        uart0: uart@1F201300 {
+            compatible = "mstar,uart";
+            reg = <0x1F201300 0x100>;
+            interrupts= <GIC_SPI INT_IRQ_00_INT_UART0 IRQ_TYPE_LEVEL_HIGH>;
+            status = "ok";
+            clocks = <&xtal>;
+        };
+
+
+        flashisp {
+            compatible = "mtd-flashisp";
+            //clocks = <&CLK_bdma>;
+            quadread = <0>;
+            status = "disabled";
+        };
+
+
+
+
+    };
+};
+/*
+&clks {
+    #include <../../../../drivers/mstar/include/infinity3/reg_clks.h>
+    #include "infinity3-clks.dtsi"
+    #include "infinity-gates.dtsi"
+};
+*/

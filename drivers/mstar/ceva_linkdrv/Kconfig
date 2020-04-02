@@ -1,0 +1,3 @@
+config MS_XM6
+	tristate "XM6 driver"
+	help

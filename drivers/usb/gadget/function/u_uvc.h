@@ -19,6 +19,7 @@
 #include <linux/usb/composite.h>
 
 #define to_f_uvc_opts(f)	container_of(f, struct f_uvc_opts, func_inst)
+#define video_to_uvc(f)     container_of(f, struct uvc_device, video)
 
 struct f_uvc_opts {
 	struct usb_function_instance			func_inst;
@@ -26,6 +27,9 @@ struct f_uvc_opts {
 	unsigned int					streaming_interval;
 	unsigned int					streaming_maxpacket;
 	unsigned int					streaming_maxburst;
+    /* FOR BULK MODE SUPPORT */
+	bool                            bulk_streaming_ep;
+
 	const struct uvc_descriptor_header * const	*fs_control;
 	const struct uvc_descriptor_header * const	*ss_control;
 	const struct uvc_descriptor_header * const	*fs_streaming;

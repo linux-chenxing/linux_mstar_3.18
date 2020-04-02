@@ -1,0 +1,4 @@
+config MS_DIP
+	tristate "DIP driver"
+	default y
+	help

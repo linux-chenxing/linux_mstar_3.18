@@ -1,0 +1,17 @@
+config TCPC_CLASS
+	bool "TypeC Port Controller Device Class"
+	help
+	  Say Y to enable
+	  Typec Port
+	  Controller Device
+	  Class
+
+config TCPC_RT1711H
+	bool "Richtek RT1711H TypeC port Controller Driver"
+	depends on TCPC_CLASS
+	default n
+	help
+	  Say Y to enable
+	  Richtek RT1711H
+	  TypeC port Controller
+	  Driver

@@ -1,0 +1,5 @@
+config MS_MIPI_TX_DSI
+	tristate "MStar MIPI TX DSI driver"
+	help
+    		To enable MSTAR MIPI TX DSI driver function.
+

@@ -1,0 +1,9 @@
+config MS_SATA_HOST
+    tristate "MStar SATA HOST"
+    help
+        MStar SATA Host driver function
+
+config MS_SATA_BENCH_TEST
+    tristate "Support SATA Bench test"
+    depends on MS_SATA_HOST
+    default n

@@ -31,6 +31,10 @@
 #include <net/netfilter/ipv4/nf_defrag_ipv4.h>
 #include <net/netfilter/nf_log.h>
 
+#if  defined(CONFIG_NOE_NAT_HW)
+#include "../../drivers/mstar/noe/drv/nat/hw_nat/mdrv_hwnat.h"
+#endif
+
 static bool ipv4_pkt_to_tuple(const struct sk_buff *skb, unsigned int nhoff,
 			      struct nf_conntrack_tuple *tuple)
 {
@@ -111,6 +115,21 @@ static unsigned int ipv4_helper(const struct nf_hook_ops *ops,
 	help = nfct_help(ct);
 	if (!help)
 		return NF_ACCEPT;
+
+#if  defined(CONFIG_NOE_NAT_HW)
+        if((FOE_MAGIC_TAG_HEAD(skb) == FOE_MAGIC_PCI) ||
+           (FOE_MAGIC_TAG_HEAD(skb) == FOE_MAGIC_WLAN) ||
+           (FOE_MAGIC_TAG_HEAD(skb) == FOE_MAGIC_GE)){
+           if(IS_SPACE_AVAILABLED_HEAD(skb))
+                FOE_MAGIC_TAG_HEAD(skb) = 0;
+        }
+        if((FOE_MAGIC_TAG_TAIL(skb) == FOE_MAGIC_PCI) ||
+           (FOE_MAGIC_TAG_TAIL(skb) == FOE_MAGIC_WLAN) ||
+           (FOE_MAGIC_TAG_TAIL(skb) == FOE_MAGIC_GE)){
+           if(IS_SPACE_AVAILABLED_TAIL(skb))
+                FOE_MAGIC_TAG_TAIL(skb) = 0;
+        }
+#endif
 
 	/* rcu_read_lock()ed by nf_hook_slow */
 	helper = rcu_dereference(help->helper);
