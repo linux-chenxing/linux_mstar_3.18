@@ -245,6 +245,9 @@
 		*(__tracepoints_ptrs)	/* Tracepoints: pointer array */\
 		VMLINUX_SYMBOL(__stop___tracepoints_ptrs) = .;		\
 		*(__tracepoints_strings)/* Tracepoints: strings */	\
+		VMLINUX_SYMBOL(__mstar_fcie_rodata_start) = .;		\
+		*(.FCIE.module.rodata)					\
+		VMLINUX_SYMBOL(__mstar_fcie_rodata_end) = .;		\
 	}								\
 									\
 	.rodata1          : AT(ADDR(.rodata1) - LOAD_OFFSET) {		\
@@ -416,6 +419,9 @@
 		*(.text.hot)						\
 		*(.text)						\
 		*(.ref.text)						\
+	VMLINUX_SYMBOL(__mstar_fcie_text_start) = .;			\
+	*(.FCIE.module.text)						\
+	VMLINUX_SYMBOL(__mstar_fcie_text_end) = .;			\	
 	DEV_KEEP(init.text)						\
 	DEV_KEEP(exit.text)						\
 	CPU_KEEP(init.text)						\
@@ -492,10 +498,20 @@
 	}
 
 #ifdef CONFIG_CONSTRUCTORS
+#ifndef CONFIG_Kasan_Switch_On
 #define KERNEL_CTORS()	. = ALIGN(8);			   \
 			VMLINUX_SYMBOL(__ctors_start) = .; \
-			*(.ctors)			   \
+			*(CONFIG_GCOV_CTORS)			   \
 			VMLINUX_SYMBOL(__ctors_end) = .;
+#endif
+#ifdef CONFIG_Kasan_Switch_On
+#define KERNEL_CTORS()	. = ALIGN(8);			   \
+			VMLINUX_SYMBOL(__ctors_start) = .; \
+			*(CONFIG_GCOV_CTORS)			   \
+			*(SORT(.init_array.*))				\
+			*(.init_array)					\
+			VMLINUX_SYMBOL(__ctors_end) = .;
+#endif
 #else
 #define KERNEL_CTORS()
 #endif

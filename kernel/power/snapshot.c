@@ -762,6 +762,9 @@ int create_basic_memory_bitmaps(void)
 
 	forbidden_pages_map = bm1;
 	free_pages_map = bm2;
+#if defined(CONFIG_MSTAR_FASTBOOT)
+    if (!is_mstar_fastboot())
+#endif
 	mark_nosave_pages(forbidden_pages_map);
 
 	pr_debug("PM: Basic memory bitmaps created\n");
@@ -856,6 +859,14 @@ static struct page *saveable_highmem_page(struct zone *zone, unsigned long pfn)
 
 	BUG_ON(!PageHighMem(page));
 
+#if defined(CONFIG_MSTAR_FASTBOOT)
+    if (is_mstar_fastboot()){
+        if (swsusp_page_is_forbidden(page) ||  swsusp_page_is_free(page))
+            return NULL;
+        return page;
+    }
+#endif
+
 	if (swsusp_page_is_forbidden(page) ||  swsusp_page_is_free(page) ||
 	    PageReserved(page))
 		return NULL;
@@ -920,6 +931,14 @@ static struct page *saveable_page(struct zone *zone, unsigned long pfn)
 
 	if (swsusp_page_is_forbidden(page) || swsusp_page_is_free(page))
 		return NULL;
+
+#if defined(CONFIG_MSTAR_FASTBOOT)
+    if (is_mstar_fastboot()){
+        if (!kernel_page_present(page))
+            return NULL;
+        return page;
+    }
+#endif
 
 	if (PageReserved(page)
 	    && (!kernel_page_present(page) || pfn_is_nosave(pfn)))
@@ -1663,6 +1682,55 @@ static int init_header(struct swsusp_info *info)
 	return init_header_complete(info);
 }
 
+#if defined(CONFIG_MSTAR_FASTBOOT)
+unsigned int fastboot_get_cpy_pages(void)
+{
+    return nr_copy_pages;
+}
+unsigned int fastboot_get_meta_pages(void)
+{
+    return nr_meta_pages;
+}
+void fastboot_prepare_read_imgdata(struct snapshot_handle *handle)
+{
+    memset(handle, 0, sizeof(*handle));
+    handle->cur=nr_meta_pages+1;
+    memory_bm_position_reset(&orig_bm);
+    memory_bm_position_reset(&copy_bm);
+}
+int fastboot_read_imgpgs_conti(struct snapshot_handle *handle,
+        unsigned char* outbuf, int maxpages, unsigned long *startpfn)
+{
+    unsigned long origpfn;
+    struct memory_bitmap tmp=orig_bm;
+    int i;
+    int ret;
+    if (handle->cur > nr_meta_pages + nr_copy_pages)
+        return 0;
+    origpfn=memory_bm_next_pfn(&orig_bm);
+    *startpfn=origpfn;
+    i=0;
+    while(1){
+        ret = snapshot_read_next(handle);
+        if(ret<=0)
+            break;
+        memcpy(outbuf,data_of(*handle),PAGE_SIZE);
+        outbuf += PAGE_SIZE;
+        i++;
+        origpfn++;
+        if(i>=maxpages
+           || !memory_bm_pfn_present(&tmp,origpfn)
+           || 0==memory_bm_test_bit(&tmp,origpfn) )
+            break;
+        memory_bm_next_pfn(&orig_bm);
+    }
+    if (ret<0)
+        return ret;
+    return i;
+}
+#endif
+
+
 /**
  *	pack_pfns - pfns corresponding to the set bits found in the bitmap @bm
  *	are stored in the array @buf[] (1 page at a time)
@@ -1713,6 +1781,11 @@ int snapshot_read_next(struct snapshot_handle *handle)
 	if (!handle->cur) {
 		int error;
 
+#if defined(CONFIG_MSTAR_FASTBOOT)
+        if (is_mstar_fastboot())
+            error = fastboot_init_header(buffer);
+        else
+#endif
 		error = init_header((struct swsusp_info *)buffer);
 		if (error)
 			return error;

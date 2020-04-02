@@ -1,0 +1,17 @@
+config MSTAR_IR_REFACTOR
+	bool "Mstar IR Driver"
+	default y
+	help
+		Mstar IR decoder driver function
+menu "Mstar IR Config"
+	depends on MSTAR_IR_REFACTOR
+config IR_DYNAMIC_CONFIG
+	tristate "load ir config(header,protocol,keymap) from /config/ir_config"
+	default m
+config MIRC_INPUT_DEVICE
+	bool "IR Key send to input subsystem"
+	default y
+if MIRC_INPUT_DEVICE
+source "drivers/mstar2/drv/ir_mirc/keymaps/Kconfig"
+endif
+endmenu

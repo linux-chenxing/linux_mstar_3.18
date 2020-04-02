@@ -83,6 +83,7 @@ static inline int get_pageblock_migratetype(struct page *page)
 struct free_area {
 	struct list_head	free_list[MIGRATE_TYPES];
 	unsigned long		nr_free;
+	unsigned long		nr_cma_free;
 };
 
 struct pglist_data;
@@ -487,6 +488,25 @@ struct zone {
 	 * rarely used fields:
 	 */
 	const char		*name;
+	
+#ifdef CONFIG_CMA
+	#ifdef CONFIG_MP_CMA_PATCH_CMA_AGGRESSIVE_ALLOC
+	unsigned long managed_cma_pages;
+	/*
+	* Number of allocation attempt on each movable/cma type
+	* without switching type. max_try(movable/cma) maintain
+	* predefined calculated counter and replenish nr_try_(movable/cma)
+	* with each of them whenever both of them are 0.
+	*/
+	int nr_try_movable;
+	int nr_try_cma;
+	int max_try_movable;
+	int max_try_cma;
+	#endif //CONFIG_MP_CMA_PATCH_CMA_AGGRESSIVE_ALLOC
+	#ifdef CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA
+	int last_migrate_from_noncma_to_cma;
+	#endif
+#endif	//CONFIG_CMA	
 } ____cacheline_internodealigned_in_smp;
 
 typedef enum {
@@ -893,6 +913,10 @@ static inline int is_dma(struct zone *zone)
 struct ctl_table;
 int min_free_kbytes_sysctl_handler(struct ctl_table *, int,
 					void __user *, size_t *, loff_t *);
+#if (MP_CACHE_DROP==1)
+int kthre_drop_cache_threshold_sysctl_handler(struct ctl_table *, int,
+					void __user *, size_t *, loff_t *);
+#endif
 extern int sysctl_lowmem_reserve_ratio[MAX_NR_ZONES-1];
 int lowmem_reserve_ratio_sysctl_handler(struct ctl_table *, int,
 					void __user *, size_t *, loff_t *);

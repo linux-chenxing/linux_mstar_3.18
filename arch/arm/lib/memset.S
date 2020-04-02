@@ -14,8 +14,13 @@
 
 	.text
 	.align	5
-
+#ifdef CONFIG_Kasan_Switch_On
+	.weak memset
+#endif
 ENTRY(memset)
+#ifdef CONFIG_Kasan_Switch_On
+ENTRY(__memset)
+#endif
 	ands	r3, r0, #3		@ 1 unaligned?
 	mov	ip, r0			@ preserve r0 as return value
 	bne	6f			@ 1
@@ -120,4 +125,7 @@ ENTRY(memset)
 	strb	r1, [ip], #1		@ 1
 	add	r2, r2, r3		@ 1 (r2 = r2 - (4 - r3))
 	b	1b
+#ifdef CONFIG_Kasan_Switch_On
+ENDPROC(__memset)
+#endif
 ENDPROC(memset)

@@ -24,6 +24,19 @@ config LEDS_CLASS
 
 comment "LED drivers"
 
+config LEDS_MAX77660
+	tristate "LED Support for Maxim MAX77660"
+	depends on LEDS_CLASS || MFD_MAX77660
+	help
+	  This option enables the led support for Maxim PMIC MAX77660.
+
+config LEDS_MAX8831
+	tristate "LED Support for Maxim MAX8831"
+	depends on LEDS_CLASS
+	help
+	  This option enables the led support for Maxim LED
+	  controller MAX8831.
+
 config LEDS_88PM860X
 	tristate "LED Support for Marvell 88PM860x PMIC"
 	depends on LEDS_CLASS
@@ -205,6 +218,15 @@ config LEDS_LP5521
 	tristate "LED Support for N.S. LP5521 LED driver chip"
 	depends on LEDS_CLASS && I2C
 	select LEDS_LP55XX_COMMON
+	help
+	  If you say yes here you get support for the National Semiconductor
+	  LP5521 LED driver. It is 3 channel chip with programmable engines.
+	  Driver provides direct control via LED class and interface for
+	  programming the engines.
+
+config LEDS_LP5521_HTC
+	tristate "LED Support for N.S. LP5521 LED driver chip"
+	depends on LEDS_CLASS && I2C
 	help
 	  If you say yes here you get support for the National Semiconductor
 	  LP5521 LED driver. It is 3 channel chip with programmable engines.
@@ -478,6 +500,14 @@ config LEDS_BLINKM
 	help
 	  This option enables support for the BlinkM RGB LED connected
 	  through I2C. Say Y to enable support for the BlinkM LED.
+
+config LEDS_TPS61310
+	tristate "TI TPS61310 leds"
+	depends on LEDS_CLASS
+	depends on I2C
+	help
+	  This option enables support for the TI TPS61310 LED driver
+	  through I2C.
 
 comment "LED Triggers"
 source "drivers/leds/trigger/Kconfig"

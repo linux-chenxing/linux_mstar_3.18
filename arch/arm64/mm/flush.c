@@ -75,6 +75,11 @@ void __flush_dcache_page(struct page *page)
 	__flush_dcache_area(page_address(page), PAGE_SIZE);
 }
 
+void __clean_dcache_page(struct page *page)
+{
+	__clean_dcache_area(page_address(page), PAGE_SIZE);
+}
+
 void __sync_icache_dcache(pte_t pte, unsigned long addr)
 {
 	struct page *page = pte_page(pte);
@@ -103,8 +108,23 @@ void flush_dcache_page(struct page *page)
 }
 EXPORT_SYMBOL(flush_dcache_page);
 
+void __flush_icache_page(struct page *page)
+{
+    unsigned long addr;
+#ifdef CONFIG_HIGHMEM
+    addr = (unsigned long)kmap_atomic(page);
+#else
+    addr = (unsigned long)page_address(page);
+#endif
+    flush_icache_range(addr, addr+PAGE_SIZE);
+#ifdef CONFIG_HIGHMEM
+    kunmap_atomic((void*)addr);
+#endif
+}
+
 /*
  * Additional functions defined in assembly.
  */
 EXPORT_SYMBOL(flush_cache_all);
 EXPORT_SYMBOL(flush_icache_range);
+EXPORT_SYMBOL(__flush_dcache_area);

@@ -2,6 +2,7 @@
  * Generic helpers for smp ipi calls
  *
  * (C) Jens Axboe <jens.axboe@oracle.com> 2008
+ * Copyright (c) 2014, NVIDIA CORPORATION.  All rights reserved.
  */
 #include <linux/rcupdate.h>
 #include <linux/rculist.h>
@@ -12,10 +13,11 @@
 #include <linux/gfp.h>
 #include <linux/smp.h>
 #include <linux/cpu.h>
+#include <asm/relaxed.h>
+#include <asm/io.h>
 
 #include "smpboot.h"
 
-#ifdef CONFIG_USE_GENERIC_SMP_HELPERS
 enum {
 	CSD_FLAG_LOCK		= 0x01,
 };
@@ -102,8 +104,8 @@ void __init call_function_init(void)
  */
 static void csd_lock_wait(struct call_single_data *csd)
 {
-	while (csd->flags & CSD_FLAG_LOCK)
-		cpu_relax();
+	while (cpu_relaxed_read_short(&csd->flags) & CSD_FLAG_LOCK)
+		cpu_read_relax();
 }
 
 static void csd_lock(struct call_single_data *csd)
@@ -470,7 +472,6 @@ int smp_call_function(smp_call_func_t func, void *info, int wait)
 	return 0;
 }
 EXPORT_SYMBOL(smp_call_function);
-#endif /* USE_GENERIC_SMP_HELPERS */
 
 /* Setup configured maximum number of CPUs to activate */
 unsigned int setup_max_cpus = NR_CPUS;
@@ -534,11 +535,16 @@ void __init setup_nr_cpu_ids(void)
 {
 	nr_cpu_ids = find_last_bit(cpumask_bits(cpu_possible_mask),NR_CPUS) + 1;
 }
-
+extern void smp_clear_magic(void);
+extern void clear_magic(void);
 /* Called by boot processor to activate the rest. */
+extern ptrdiff_t mstar_pm_base;
 void __init smp_init(void)
 {
 	unsigned int cpu;
+	ptrdiff_t secondary_lo_addr_reg;
+	ptrdiff_t secondary_hi_addr_reg;
+	ptrdiff_t secondary_magic_reg;
 
 	idle_threads_init();
 
@@ -549,6 +555,24 @@ void __init smp_init(void)
 		if (!cpu_online(cpu))
 			cpu_up(cpu);
 	}
+
+	secondary_lo_addr_reg = mstar_pm_base + ( 0x100510 << 1) ;
+	secondary_hi_addr_reg = secondary_lo_addr_reg + 4;
+	secondary_magic_reg = secondary_lo_addr_reg + 8;
+
+	writel_relaxed( 0x0 , (void*)secondary_lo_addr_reg);
+	writel_relaxed( 0x0 , (void*)secondary_hi_addr_reg);
+	writel_relaxed( 0x0 , (void*)secondary_magic_reg);
+        clear_magic();
+	smp_clear_magic();
+#if 0
+	// add for WDT (0x30, 8_bit 08/0A)
+	secondary_lo_addr_reg = mstar_pm_base + ( 0x3008 << 1) ;
+	secondary_hi_addr_reg = secondary_lo_addr_reg + 4;
+
+	writel_relaxed( 0x0 , (void*)secondary_lo_addr_reg);
+	writel_relaxed( 0x0 , (void*)secondary_hi_addr_reg);
+#endif
 
 	/* Any cleanup work */
 	printk(KERN_INFO "Brought up %ld CPUs\n", (long)num_online_cpus());

@@ -1,0 +1,7 @@
+config MSTAR_TIMER2
+
+tristate "MSTAR_TIMER2"
+
+help
+    MStar timer2 driver function
+

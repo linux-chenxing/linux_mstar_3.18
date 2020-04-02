@@ -116,8 +116,12 @@ unsigned long swiotlb_nr_tbl(void)
 }
 EXPORT_SYMBOL_GPL(swiotlb_nr_tbl);
 
+/*modified by york, original setting is 64 mb, which will directly decrease the lx_mem.
+After experiment by jie.wang, this change will not deteriorate the score of GPU benchmark test
+*/
 /* default to 64MB */
-#define IO_TLB_DEFAULT_SIZE (64UL<<20)
+//#define IO_TLB_DEFAULT_SIZE (64UL<<20)
+#define IO_TLB_DEFAULT_SIZE 0
 unsigned long swiotlb_size_or_default(void)
 {
 	unsigned long size;

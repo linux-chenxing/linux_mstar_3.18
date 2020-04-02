@@ -1,0 +1,9 @@
+obj-$(CONFIG_IR_KEYMAP_MSTAR_NEC) += keymap-mstar-tv.o
+obj-$(CONFIG_IR_KEYMAP_TCL_RCA)   += keymap-tcl-rca-tv.o
+obj-$(CONFIG_IR_KEYMAP_TCL)       += keymap-tcl-tv.o
+obj-$(CONFIG_IR_KEYMAP_CHANGHONG) += keymap-changhong-tv.o
+obj-$(CONFIG_IR_KEYMAP_HISENSE)   += keymap-hisense-tv.o
+obj-$(CONFIG_IR_KEYMAP_SKYWORTH)  += keymap-skyworth-tv.o
+obj-$(CONFIG_IR_KEYMAP_PANASONIC) += keymap-p7051-tv.o
+obj-$(CONFIG_IR_KEYMAP_KATHREIN)  +=keymap-rc6-kathrein.o
+obj-$(CONFIG_IR_KEYMAP_RC5)       +=keymap-rc5-tv.o

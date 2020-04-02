@@ -25,8 +25,13 @@
  * is a transposition of the code from copy_template.S but with the copy
  * occurring in the opposite direction.
  */
-
+#ifdef CONFIG_Kasan_Switch_On
+	.weak memmove
+#endif
 ENTRY(memmove)
+#ifdef CONFIG_Kasan_Switch_On
+ENTRY(__memmove)
+#endif
 
 		subs	ip, r0, r1
 		cmphi	r2, ip
@@ -195,5 +200,7 @@ ENTRY(memmove)
 17:		backward_copy_shift	push=16	pull=16
 
 18:		backward_copy_shift	push=24	pull=8
-
+#ifdef CONFIG_Kasan_Switch_On
+ENDPROC(__memmove)
+#endif
 ENDPROC(memmove)

@@ -1,0 +1,6 @@
+config MSTAR_TSENSOR
+
+tristate "TSENSOR"
+
+help
+    MStar TSENSOR driver function

@@ -1,0 +1,7 @@
+config MSTAR_ZDEC
+  bool "ZDEC"
+  default n
+
+help
+    Enable MSTAR ZDEC
+

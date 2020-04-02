@@ -93,6 +93,7 @@
  * - Code works, detects all the partitions.
  *
  ************************************************************/
+#include <linux/kernel.h>
 #include <linux/crc32.h>
 #include <linux/ctype.h>
 #include <linux/math64.h>
@@ -105,6 +106,7 @@
  * the partition tables happens after init too.
  */
 static int force_gpt;
+static u64 force_gpt_sector;
 static int __init
 force_gpt_fn(char *str)
 {
@@ -112,6 +114,13 @@ force_gpt_fn(char *str)
 	return 1;
 }
 __setup("gpt", force_gpt_fn);
+
+static int __init force_gpt_sector_fn(char *str)
+{
+	force_gpt_sector = simple_strtoull(str, NULL, 0);
+	return 1;
+}
+__setup("gpt_sector=", force_gpt_sector_fn);
 
 
 /**
@@ -514,6 +523,9 @@ compare_gpts(gpt_header *pgpt, gpt_header *agpt, u64 lastlba)
 	return;
 }
 
+/* Skip searcking GPT from lastlba */
+#define SKIP_GPT_LASTLBA 1
+
 /**
  * find_valid_gpt() - Search disk for valid GPT headers and PTEs
  * @state
@@ -561,8 +573,13 @@ static int find_valid_gpt(struct parsed_partitions *state, gpt_header **gpt,
 		good_agpt = is_gpt_valid(state,
 					 le64_to_cpu(pgpt->alternate_lba),
 					 &agpt, &aptes);
+#if !SKIP_GPT_LASTLBA
         if (!good_agpt && force_gpt)
                 good_agpt = is_gpt_valid(state, lastlba, &agpt, &aptes);
+#endif
+
+	if (!good_agpt && force_gpt && force_gpt_sector)
+		good_agpt = is_gpt_valid(state, force_gpt_sector, &agpt, &aptes);
 
         /* The obviously unsuccessful case */
         if (!good_pgpt && !good_agpt)
@@ -659,8 +676,8 @@ int efi_partition(struct parsed_partitions *state)
 		efi_guid_unparse(&ptes[i].unique_partition_guid, info->uuid);
 
 		/* Naively convert UTF16-LE to 7 bits. */
-		label_max = min(sizeof(info->volname) - 1,
-				sizeof(ptes[i].partition_name));
+		label_max = min(ARRAY_SIZE(info->volname) - 1,
+				ARRAY_SIZE(ptes[i].partition_name));
 		info->volname[label_max] = 0;
 		while (label_count < label_max) {
 			u8 c = ptes[i].partition_name[label_count] & 0xff;

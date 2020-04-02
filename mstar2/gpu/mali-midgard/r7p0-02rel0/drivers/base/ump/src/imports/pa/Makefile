@@ -1,0 +1,51 @@
+#
+# (C) COPYRIGHT 2014-2015 MStar Semiconductor, Inc. All rights reserved.
+#
+# This program is free software and is provided to you under the terms of the
+# GNU General Public License version 2 as published by the Free Software
+# Foundation, and any use by you of this program is subject to the terms
+# of such GNU licence.
+#
+# A copy of the licence is included with the program, and can also be obtained
+# from Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+# Boston, MA  02110-1301, USA.
+#
+#
+
+# default to building for the host
+ARCH ?= $(shell uname -m)
+
+# linux build system integration
+
+ifneq ($(KERNELRELEASE),)
+# Inside the kernel build system
+
+EXTRA_CFLAGS += -I$(KBUILD_EXTMOD) -I$(KBUILD_EXTMOD)/../../../../..
+KBUILD_EXTRA_SYMBOLS += "$(KBUILD_EXTMOD)/../../Module.symvers"
+
+SRC += ump_kernel_import_pa.c
+
+MODULE:=ump_pa_import.ko
+
+obj-m := $(MODULE:.ko=.o)
+$(MODULE:.ko=-y) := $(SRC:.c=.o)
+$(MODULE:.ko=-objs) := $(SRC:.c=.o)
+
+else
+# Outside the kernel build system
+#
+#
+
+ifeq ($(KDIR),)
+$(error Must specify KDIR to point to the kernel to target))
+endif
+
+all:
+	# MStar: correct the build flags
+#	$(MAKE) ARCH=$(ARCH) -C $(KDIR) M=$(CURDIR)
+	$(MAKE) ARCH=$(ARCH) -C $(KDIR) M=$(CURDIR) EXTRA_CFLAGS="-I$(CURDIR)/../../../../../../include $(SCONS_CFLAGS)" $(SCONS_CONFIGS) KBUILD_EXTRA_SYMBOLS="$(CURDIR)/../../Module.symvers" modules
+
+clean:
+	$(MAKE) ARCH=$(ARCH) -C $(KDIR) M=$(CURDIR) clean
+
+endif

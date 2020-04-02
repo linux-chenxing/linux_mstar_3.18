@@ -25,9 +25,9 @@
 #include <asm/asm-offsets.h>
 #include <asm/errno.h>
 #include <asm/esr.h>
+#include <asm/ptrace.h>
 #include <asm/thread_info.h>
 #include <asm/unistd.h>
-#include <asm/unistd32.h>
 
 /*
  * Bad Abort numbers
@@ -283,11 +283,14 @@ el1_undef:
 	 * Undefined instruction
 	 */
 	mov	x0, sp
-	b	do_undefinstr
+	bl	do_undefinstr
+	kernel_exit 1
 el1_dbg:
 	/*
 	 * Debug exception handling
 	 */
+	cmp	x24, #ESR_EL1_EC_BRK64		// if BRK64
+	cinc	x24, x24, eq			// set bit '0'
 	tbz	x24, #0, el1_inv		// EL1 only
 	mrs	x0, far_el1
 	mov	x2, sp				// struct pt_regs
@@ -311,14 +314,14 @@ el1_irq:
 #endif
 #ifdef CONFIG_PREEMPT
 	get_thread_info tsk
-	ldr	x24, [tsk, #TI_PREEMPT]		// get preempt count
-	add	x0, x24, #1			// increment it
-	str	x0, [tsk, #TI_PREEMPT]
+	ldr	w24, [tsk, #TI_PREEMPT]		// get preempt count
+	add	w0, w24, #1			// increment it
+	str	w0, [tsk, #TI_PREEMPT]
 #endif
 	irq_handler
 #ifdef CONFIG_PREEMPT
-	str	x24, [tsk, #TI_PREEMPT]		// restore preempt count
-	cbnz	x24, 1f				// preempt count != 0
+	str	w24, [tsk, #TI_PREEMPT]		// restore preempt count
+	cbnz	w24, 1f				// preempt count != 0
 	ldr	x0, [tsk, #TI_FLAGS]		// get flags
 	tbz	x0, #TIF_NEED_RESCHED, 1f	// needs rescheduling?
 	bl	el1_preempt
@@ -350,25 +353,33 @@ el0_sync:
 	lsr	x24, x25, #ESR_EL1_EC_SHIFT	// exception class
 	cmp	x24, #ESR_EL1_EC_SVC64		// SVC in 64-bit state
 	b.eq	el0_svc
-	adr	lr, ret_from_exception
+	adr 	x26, el0_da
 	cmp	x24, #ESR_EL1_EC_DABT_EL0	// data abort in EL0
-	b.eq	el0_da
+	b.eq	el0_sync_tramp
+	adr 	x26, el0_ia
 	cmp	x24, #ESR_EL1_EC_IABT_EL0	// instruction abort in EL0
-	b.eq	el0_ia
+	b.eq	el0_sync_tramp
+	adr 	x26, el0_fpsimd_acc
 	cmp	x24, #ESR_EL1_EC_FP_ASIMD	// FP/ASIMD access
-	b.eq	el0_fpsimd_acc
+	b.eq	el0_sync_tramp
+	adr 	x26, el0_fpsimd_exc
 	cmp	x24, #ESR_EL1_EC_FP_EXC64	// FP/ASIMD exception
-	b.eq	el0_fpsimd_exc
+	b.eq	el0_sync_tramp
+	adr	x26, el0_undef
 	cmp	x24, #ESR_EL1_EC_SYS64		// configurable trap
-	b.eq	el0_undef
+	b.eq	el0_sync_tramp
+	adr	x26, el0_sp_pc
 	cmp	x24, #ESR_EL1_EC_SP_ALIGN	// stack alignment exception
-	b.eq	el0_sp_pc
+	b.eq	el0_sync_tramp
+	adr 	x26, el0_sp_pc
 	cmp	x24, #ESR_EL1_EC_PC_ALIGN	// pc alignment exception
-	b.eq	el0_sp_pc
+	b.eq	el0_sync_tramp
+	adr	x26, el0_undef
 	cmp	x24, #ESR_EL1_EC_UNKNOWN	// unknown exception in EL0
-	b.eq	el0_undef
+	b.eq	el0_sync_tramp
+	adr	x26, el0_dbg
 	cmp	x24, #ESR_EL1_EC_BREAKPT_EL0	// debug exception in EL0
-	b.ge	el0_dbg
+	b.ge	el0_sync_tramp
 	b	el0_inv
 
 #ifdef CONFIG_COMPAT
@@ -379,30 +390,51 @@ el0_sync_compat:
 	lsr	x24, x25, #ESR_EL1_EC_SHIFT	// exception class
 	cmp	x24, #ESR_EL1_EC_SVC32		// SVC in 32-bit state
 	b.eq	el0_svc_compat
-	adr	lr, ret_from_exception
+	adr	x26, el0_da
 	cmp	x24, #ESR_EL1_EC_DABT_EL0	// data abort in EL0
-	b.eq	el0_da
+	b.eq	el0_sync_tramp
+	adr	x26, el0_ia
 	cmp	x24, #ESR_EL1_EC_IABT_EL0	// instruction abort in EL0
-	b.eq	el0_ia
+	b.eq	el0_sync_tramp
+	adr	x26, el0_fpsimd_acc
 	cmp	x24, #ESR_EL1_EC_FP_ASIMD	// FP/ASIMD access
-	b.eq	el0_fpsimd_acc
+	b.eq	el0_sync_tramp
+	adr	x26, el0_fpsimd_exc
 	cmp	x24, #ESR_EL1_EC_FP_EXC32	// FP/ASIMD exception
-	b.eq	el0_fpsimd_exc
+	b.eq	el0_sync_tramp
+	adr	x26, el0_undef
 	cmp	x24, #ESR_EL1_EC_UNKNOWN	// unknown exception in EL0
-	b.eq	el0_undef
+	b.eq	el0_sync_tramp
+	adr	x26, el0_undef
 	cmp	x24, #ESR_EL1_EC_CP15_32	// CP15 MRC/MCR trap
-	b.eq	el0_undef
+	b.eq	el0_sync_tramp
+	adr	x26, el0_undef
 	cmp	x24, #ESR_EL1_EC_CP15_64	// CP15 MRRC/MCRR trap
-	b.eq	el0_undef
+	b.eq	el0_sync_tramp
+	adr	x26, el0_undef
 	cmp	x24, #ESR_EL1_EC_CP14_MR	// CP14 MRC/MCR trap
-	b.eq	el0_undef
+	b.eq	el0_sync_tramp
+	adr	x26, el0_undef
 	cmp	x24, #ESR_EL1_EC_CP14_LS	// CP14 LDC/STC trap
-	b.eq	el0_undef
+	b.eq	el0_sync_tramp
+	adr	x26, el0_undef
 	cmp	x24, #ESR_EL1_EC_CP14_64	// CP14 MRRC/MCRR trap
-	b.eq	el0_undef
+	b.eq	el0_sync_tramp
+	adr	x26, el0_dbg
 	cmp	x24, #ESR_EL1_EC_BREAKPT_EL0	// debug exception in EL0
-	b.ge	el0_dbg
+	b.ge	el0_sync_tramp
 	b	el0_inv
+el0_sync_tramp:
+	blr	x26
+	/* Fall through	*/
+/*
+ * This is the return code to user mode for abort handlers
+ */
+ret_from_exception:
+	get_thread_info tsk
+	b	ret_to_user
+ENDPROC(ret_from_exception)
+
 el0_svc_compat:
 	/*
 	 * AArch32 syscall handling
@@ -423,6 +455,7 @@ el0_da:
 	 * Data abort handling
 	 */
 	mrs	x0, far_el1
+	bic	x0, x0, #(0xff << 56)
 	disable_step x1
 	isb
 	enable_dbg
@@ -476,6 +509,8 @@ el0_undef:
 	 * Undefined instruction
 	 */
 	mov	x0, sp
+	// enable interrupts before calling the main handler
+	enable_irq
 	b	do_undefinstr
 el0_dbg:
 	/*
@@ -506,15 +541,15 @@ el0_irq_naked:
 #endif
 	get_thread_info tsk
 #ifdef CONFIG_PREEMPT
-	ldr	x24, [tsk, #TI_PREEMPT]		// get preempt count
-	add	x23, x24, #1			// increment it
-	str	x23, [tsk, #TI_PREEMPT]
+	ldr	w24, [tsk, #TI_PREEMPT]		// get preempt count
+	add	w23, w24, #1			// increment it
+	str	w23, [tsk, #TI_PREEMPT]
 #endif
 	irq_handler
 #ifdef CONFIG_PREEMPT
-	ldr	x0, [tsk, #TI_PREEMPT]
-	str	x24, [tsk, #TI_PREEMPT]
-	cmp	x0, x23
+	ldr	w0, [tsk, #TI_PREEMPT]
+	str	w24, [tsk, #TI_PREEMPT]
+	cmp	w0, w23
 	b.eq	1f
 	mov	x1, #0
 	str	x1, [x1]			// BUG
@@ -525,14 +560,6 @@ el0_irq_naked:
 #endif
 	b	ret_to_user
 ENDPROC(el0_irq)
-
-/*
- * This is the return code to user mode for abort handlers
- */
-ret_from_exception:
-	get_thread_info tsk
-	b	ret_to_user
-ENDPROC(ret_from_exception)
 
 /*
  * Register switch for AArch64. The callee-saved registers need to be saved
@@ -565,6 +592,36 @@ ENTRY(cpu_switch_to)
 ENDPROC(cpu_switch_to)
 
 /*
+ * SVC handler.
+ */
+ni_sys:
+	mov     x0, sp
+	bl      do_ni_syscall
+	b       ret_fast_syscall
+
+	.align	6
+el0_svc:
+	adrp	stbl, sys_call_table		// load syscall table pointer
+	uxtw	scno, w8			// syscall number in w8
+	mov	sc_nr, #__NR_syscalls
+el0_svc_naked:					// compat entry point
+	stp	x0, scno, [sp, #S_ORIG_X0]	// save the original x0 and syscall number
+	disable_step x16
+	isb
+	enable_dbg_irq
+
+	get_thread_info tsk
+        ldr     x16, [tsk, #TI_FLAGS]           // check for syscall hooks
+        tst     x16, #_TIF_SYSCALL_WORK
+        b.ne    __sys_trace
+	cmp     scno, sc_nr                     // check upper syscall limit
+	b.hs	ni_sys
+	ldr	x16, [stbl, scno, lsl #3]	// address in the syscall table
+	blr	x16				// call sys_* routine
+	/* Fall through */
+ENDPROC(el0_svc)
+
+/*
  * This is the fast syscall return path.  We do as little as possible here,
  * and this includes saving x0 back into the kernel stack.
  */
@@ -586,7 +643,7 @@ fast_work_pending:
 	str	x0, [sp, #S_X0]			// returned x0
 work_pending:
 	tbnz	x1, #TIF_NEED_RESCHED, work_resched
-	/* TIF_SIGPENDING or TIF_NOTIFY_RESUME case */
+	/* TIF_SIGPENDING, TIF_NOTIFY_RESUME or TIF_FOREIGN_FPSTATE case */
 	ldr	x2, [sp, #S_PSTATE]
 	mov	x0, sp				// 'regs'
 	tst	x2, #PSR_MODE_MASK		// user mode regs?
@@ -625,59 +682,39 @@ ENTRY(ret_from_fork)
 	b	ret_to_user
 ENDPROC(ret_from_fork)
 
-/*
- * SVC handler.
- */
-	.align	6
-el0_svc:
-	adrp	stbl, sys_call_table		// load syscall table pointer
-	uxtw	scno, w8			// syscall number in w8
-	mov	sc_nr, #__NR_syscalls
-el0_svc_naked:					// compat entry point
-	stp	x0, scno, [sp, #S_ORIG_X0]	// save the original x0 and syscall number
-	disable_step x16
-	isb
-	enable_dbg
-	enable_irq
-
-	get_thread_info tsk
-	ldr	x16, [tsk, #TI_FLAGS]		// check for syscall tracing
-	tbnz	x16, #TIF_SYSCALL_TRACE, __sys_trace // are we tracing syscalls?
-	adr	lr, ret_fast_syscall		// return address
-	cmp     scno, sc_nr                     // check upper syscall limit
-	b.hs	ni_sys
-	ldr	x16, [stbl, scno, lsl #3]	// address in the syscall table
-	br	x16				// call sys_* routine
-ni_sys:
-	mov	x0, sp
-	b	do_ni_syscall
-ENDPROC(el0_svc)
-
 	/*
 	 * This is the really slow path.  We're going to be doing context
 	 * switches, and waiting for our parent to respond.
 	 */
+ni_sys_systrace:
+	mov     x0, sp
+	bl      do_ni_syscall
+	b       __sys_trace_return
+
 __sys_trace:
-	mov	x1, sp
-	mov	w0, #0				// trace entry
-	bl	syscall_trace
+	mov	x0, sp
+	bl	syscall_trace_enter
 	adr	lr, __sys_trace_return		// return address
+	cmp	w0, #RET_SKIP_SYSCALL_TRACE	// skip syscall and tracing?
+	b.eq	ret_to_user
+	cmp	w0, #RET_SKIP_SYSCALL		// skip syscall?
+	b.eq	__sys_trace_return_skipped
 	uxtw	scno, w0			// syscall number (possibly new)
 	mov	x1, sp				// pointer to regs
 	cmp	scno, sc_nr			// check upper syscall limit
-	b.hs	ni_sys
+	b.hs	ni_sys_systrace
 	ldp	x0, x1, [sp]			// restore the syscall args
 	ldp	x2, x3, [sp, #S_X2]
 	ldp	x4, x5, [sp, #S_X4]
 	ldp	x6, x7, [sp, #S_X6]
 	ldr	x16, [stbl, scno, lsl #3]	// address in the syscall table
-	br	x16				// call sys_* routine
+	blr	x16				// call sys_* routine
 
 __sys_trace_return:
 	str	x0, [sp]			// save returned x0
-	mov	x1, sp
-	mov	w0, #1				// trace exit
-	bl	syscall_trace
+__sys_trace_return_skipped:			// x0 already in regs[0]
+	mov	x0, sp
+	bl	syscall_trace_exit
 	b	ret_to_user
 
 /*

@@ -17,9 +17,11 @@ struct dma_iommu_mapping {
 	size_t			bits;
 	unsigned int		order;
 	dma_addr_t		base;
+	dma_addr_t		end;
 
 	spinlock_t		lock;
 	struct kref		kref;
+	struct list_head	list;
 };
 
 struct dma_iommu_mapping *

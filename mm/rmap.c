@@ -62,6 +62,9 @@
 
 #include "internal.h"
 
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+extern void show_page_trace(unsigned long pfn);
+#endif
 static struct kmem_cache *anon_vma_cachep;
 static struct kmem_cache *anon_vma_chain_cachep;
 
@@ -1634,13 +1637,42 @@ int try_to_unmap(struct page *page, enum ttu_flags flags)
 	VM_BUG_ON(!PageHuge(page) && PageTransHuge(page));
 
 	if (unlikely(PageKsm(page)))
+	{
 		ret = try_to_unmap_ksm(page, flags);
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+		if(page_mapped(page)){
+
+			printk(KERN_ERR "[MIG]m21 %d\n", ret);
+			show_page_trace(page_to_pfn(page));		
+		}
+#endif
+	}
 	else if (PageAnon(page))
+	{
 		ret = try_to_unmap_anon(page, flags);
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+		if(page_mapped(page)){
+			printk(KERN_ERR "[MIG]m22 %d\n", ret);
+			show_page_trace(page_to_pfn(page));
+		}
+#endif
+
+	}
 	else
+	{
 		ret = try_to_unmap_file(page, flags);
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+		if(page_mapped(page)){
+			printk(KERN_ERR "[MIG]m23 %d\n", ret);
+			show_page_trace(page_to_pfn(page));
+		}
+#endif	
+	}
 	if (ret != SWAP_MLOCK && !page_mapped(page))
 		ret = SWAP_SUCCESS;
+	else
+	{
+	}
 	return ret;
 }
 

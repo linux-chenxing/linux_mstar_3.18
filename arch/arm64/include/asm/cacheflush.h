@@ -21,6 +21,7 @@
 
 #include <linux/mm.h>
 
+#include <asm/outercache.h>
 /*
  * This flag is used to indicate that the page pointed to by a pte is clean
  * and does not require cleaning before returning it to the user.
@@ -69,11 +70,18 @@
  *		- kaddr  - page address
  *		- size   - region size
  */
+#define __cpuc_flush_kern_all			flush_cache_all
+#define __cpuc_flush_dcache_area		__flush_dcache_area
 extern void flush_cache_all(void);
 extern void flush_cache_range(struct vm_area_struct *vma, unsigned long start, unsigned long end);
 extern void flush_icache_range(unsigned long start, unsigned long end);
 extern void __flush_dcache_area(void *addr, size_t len);
+extern void __clean_dcache_area(void *addr, size_t len);
 extern void __flush_cache_user_range(unsigned long start, unsigned long end);
+/* FIXME: see cache.S */
+extern void dmac_map_area(const void *, size_t, int);
+extern void dmac_unmap_area(const void *, size_t, int);
+extern void dmac_flush_range(const void *, const void *);
 
 static inline void flush_cache_mm(struct mm_struct *mm)
 {
@@ -83,6 +91,12 @@ static inline void flush_cache_page(struct vm_area_struct *vma,
 				    unsigned long user_addr, unsigned long pfn)
 {
 }
+/*
+* Cache maintenance functions used by the DMA API. No to be used directly.
+*/
+extern void __dma_map_area(const void *, size_t, int);
+extern void __dma_unmap_area(const void *, size_t, int);
+extern void __dma_flush_range(const void *, const void *);
 
 /*
  * Copy user data from/to a page which is mapped into a different
@@ -127,11 +141,12 @@ static inline void __flush_icache_all(void)
 #define flush_icache_user_range(vma,page,addr,len) \
 	flush_dcache_page(page)
 
-/*
- * We don't appear to need to do anything here.  In fact, if we did, we'd
- * duplicate cache flushing elsewhere performed by flush_dcache_page().
- */
-#define flush_icache_page(vma,page)	do { } while (0)
+extern void __flush_icache_page(struct page *page);
+static inline void flush_icache_page(struct vm_area_struct *vma,
+	struct page *page)
+{
+    __flush_icache_page(page);
+}
 
 /*
  * flush_cache_vmap() is used when creating mappings (eg, via vmap,

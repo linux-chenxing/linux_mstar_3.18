@@ -195,6 +195,30 @@ ifdef CONFIG_PHYSICAL_START
 load-y					= $(CONFIG_PHYSICAL_START)
 endif
 
+core-$(CONFIG_MIPS_BOARDS_GEN)	+= arch/mips/mips-boards/generic/
+
+#
+# MStar kris project
+#
+core-$(CONFIG_MSTAR_KRIS)    += ./mstar2/hal/kris/cpu/
+cflags-$(CONFIG_MSTAR_KRIS)+= -I$(srctree)/arch/mips/include/asm/mach-malta
+cflags-$(CONFIG_MSTAR_KRIS)+= -I ./mstar2/include/
+cflags-$(CONFIG_MSTAR_KRIS)+= -I$(srctree)/drivers/mstar2/hal/kris/cpu/
+cflags-$(CONFIG_MSTAR_KRIS)+= -I$(srctree)/drivers/mstar2/hal/kris/cpu/include
+load-$(CONFIG_MSTAR_KRIS)	:= 0xffffffff80000000
+all-$(CONFIG_MSTAR_KRIS)	:= vmlinux.bin
+cflags-y			+= -I$(srctree)/arch/mips/include/asm/mach-generic
+
+#
+# MStar kiwi project
+#
+core-$(CONFIG_MSTAR_KIWI)    += ./mstar2/hal/kiwi/cpu/
+cflags-$(CONFIG_MSTAR_KIWI)+= -I$(srctree)/arch/mips/include/asm/mach-malta
+cflags-$(CONFIG_MSTAR_KIWI)+= -I ./mstar2/include/
+cflags-$(CONFIG_MSTAR_KIWI)+= -I$(srctree)/drivers/mstar2/hal/kiwi/cpu/
+cflags-$(CONFIG_MSTAR_KIWI)+= -I$(srctree)/drivers/mstar2/hal/kiwi/cpu/include
+load-$(CONFIG_MSTAR_KIWI)	:= 0xffffffff80000000
+all-$(CONFIG_MSTAR_KIWI)	:= vmlinux.bin
 cflags-y			+= -I$(srctree)/arch/mips/include/asm/mach-generic
 drivers-$(CONFIG_PCI)		+= arch/mips/pci/
 
@@ -224,6 +248,12 @@ KBUILD_AFLAGS	+= $(cflags-y)
 KBUILD_CFLAGS	+= $(cflags-y)
 KBUILD_CPPFLAGS += -DVMLINUX_LOAD_ADDRESS=$(load-y)
 KBUILD_CPPFLAGS += -DDATAOFFSET=$(if $(dataoffset-y),$(dataoffset-y),0)
+ifeq ($(CONFIG_MP_MSTAR_STR_BASE),y)
+  mstar_chip = $(subst ",,$(CONFIG_MSTAR_CHIP_NAME))
+  ifneq ($(wildcard arch/mips/mips-boards/$(mstar_chip)/mstar_strmisc_chip.h),)
+    KBUILD_CPPFLAGS += -DMSTAR_STRMISC_CHIP
+  endif
+endif
 
 LDFLAGS			+= -m $(ld-emul)
 
@@ -273,19 +303,58 @@ vmlinux.32: vmlinux
 vmlinux.64: vmlinux
 	$(OBJCOPY) -O $(64bit-bfd) $(OBJCOPYFLAGS) $< $@
 
+
+makeboot =$(Q)$(MAKE) $(build)=arch/mips/boot VMLINUX=$(vmlinux-32) $(1)
+makezboot =$(Q)$(MAKE) $(build)=arch/mips/boot/compressed \
+           VMLINUX_LOAD_ADDRESS=$(load-y) 32bit-bfd=$(32bit-bfd) $(1)
+
 all:	$(all-y)
 
-# boot
-vmlinux.bin vmlinux.ecoff vmlinux.srec: $(vmlinux-32) FORCE
-	$(Q)$(MAKE) $(build)=arch/mips/boot VMLINUX=$(vmlinux-32) arch/mips/boot/$@
+vmlinuz: vmlinux FORCE
+	+@$(call makezboot,$@)
 
-# boot/compressed
-vmlinuz vmlinuz.bin vmlinuz.ecoff vmlinuz.srec: $(vmlinux-32) FORCE
-	$(Q)$(MAKE) $(build)=arch/mips/boot/compressed \
-	   VMLINUX_LOAD_ADDRESS=$(load-y) 32bit-bfd=$(32bit-bfd) $@
+vmlinuz.bin: vmlinux FORCE
+	+@$(call makezboot,$@)
+ifeq ($(CONFIG_PULLOUT_INITRAMFS), y)
+	@./scripts/packramfs initramfs.bin
+endif
+
+vmlinuz.ecoff: vmlinux
+	+@$(call makezboot,$@)
+
+vmlinuz.srec: vmlinux
+	+@$(call makezboot,$@)
+
+vmlinux.bin: $(vmlinux-32)
+	@echo FIRST BUILD VMLINUX.BIN
+	@echo +@$(call makeboot,$@)
+	+@$(call makeboot,$@)
+ifeq ($(CONFIG_PULLOUT_INITRAMFS), y)
+	@./scripts/packramfs initramfs.bin
+endif
+
+vmlinux.ecoff: $(vmlinux-32)
+	+@$(call makeboot,$@)
+
+vmlinux.srec: $(vmlinux-32)
+	+@$(call makeboot,$@)
+
+ifeq ($(CONFIG_PULLOUT_INITRAMFS), y)
+initramfs.bin: usr/initramfs_data.cpio.gz
+	@./scripts/packramfs initramfs.bin
+endif
+
+CLEAN_FILES += vmlinux.ecoff \
+               vmlinux.srec
+
+ifeq ($(CONFIG_PULLOUT_INITRAMFS), y)
+CLEAN_FILES += vmlinux.img \
+               initramfs.img \
+               initramfs.bin
+endif
 
 
-CLEAN_FILES += vmlinux.32 vmlinux.64
+#CLEAN_FILES += vmlinux.32 vmlinux.64
 
 archprepare:
 ifdef CONFIG_MIPS32_N32
@@ -299,9 +368,7 @@ endif
 
 install:
 	$(Q)install -D -m 755 vmlinux $(INSTALL_PATH)/vmlinux-$(KERNELRELEASE)
-ifdef CONFIG_SYS_SUPPORTS_ZBOOT
 	$(Q)install -D -m 755 vmlinuz $(INSTALL_PATH)/vmlinuz-$(KERNELRELEASE)
-endif
 	$(Q)install -D -m 644 .config $(INSTALL_PATH)/config-$(KERNELRELEASE)
 	$(Q)install -D -m 644 System.map $(INSTALL_PATH)/System.map-$(KERNELRELEASE)
 
@@ -322,3 +389,11 @@ define archhelp
 	echo
 	echo '  These will be default as appropriate for a configured platform.'
 endef
+
+CLEAN_FILES += vmlinux.32 \
+	       vmlinux.64 \
+	       vmlinux.ecoff \
+	       vmlinuz \
+	       vmlinuz.ecoff \
+	       vmlinuz.bin \
+	       vmlinuz.srec

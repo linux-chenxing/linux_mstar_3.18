@@ -44,6 +44,9 @@
  *  r5, r6 corrupted
  */
 __vet_atags:
+#ifdef CONFIG_OF
+        mov r2, #0x23000000               @ tempary patch assume FDT is at 0x23000000
+#endif
 	tst	r2, #0x3			@ aligned?
 	bne	1f
 

@@ -168,6 +168,19 @@ static int generic_probe(struct usb_device *udev)
 	else {
 		c = usb_choose_configuration(udev);
 		if (c >= 0) {
+#if (MP_USB_MSTAR==1)
+			int i;
+
+			for (i = 0; i < 3; ++i) {
+				err = usb_set_configuration(udev, c);
+				if (!err)
+					break;
+				if (err && err != -ENODEV) {
+					dev_err(&udev->dev, "can't set config #%d, error %d%s\n",
+						c, err, i<2 ? ", retry...": "");
+				}
+			}
+#else
 			err = usb_set_configuration(udev, c);
 			if (err && err != -ENODEV) {
 				dev_err(&udev->dev, "can't set config #%d, error %d\n",
@@ -175,6 +188,7 @@ static int generic_probe(struct usb_device *udev)
 				/* This need not be fatal.  The user can try to
 				 * set other configurations. */
 			}
+#endif
 		}
 	}
 	/* USB device state == configured ... usable */

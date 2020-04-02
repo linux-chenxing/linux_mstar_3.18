@@ -285,6 +285,16 @@ static int create_image(int platform_mode)
 	if (hibernation_test(TEST_CORE) || pm_wakeup_pending())
 		goto Power_up;
 
+#if defined(CONFIG_MSTAR_FASTBOOT)
+	void *pWakeup=0;
+	__asm__ volatile (
+		"LDR X1, =fastboot_restore1_ret\n"
+		"STR X1, %0\n"
+		:"=m"(pWakeup)::"r1");
+	extern void sleep_set_wakeup_addr_phy(unsigned long phy_addr, void *virt_addr);
+	sleep_set_wakeup_addr_phy(virt_to_phys((void*)pWakeup),(void*)pWakeup);
+#endif
+
 	in_suspend = 1;
 	save_processor_state();
 	error = swsusp_arch_suspend();
@@ -672,6 +682,11 @@ int hibernate(void)
 		        flags |= SF_CRC32_MODE;
 
 		pr_debug("PM: writing image.\n");
+#if defined(CONFIG_MSTAR_FASTBOOT)
+        if (is_mstar_fastboot())
+            error = fastboot_write(flags);
+        else
+#endif
 		error = swsusp_write(flags);
 		swsusp_free();
 		if (!error)
@@ -680,6 +695,7 @@ int hibernate(void)
 		pm_restore_gfp_mask();
 	} else {
 		pr_debug("PM: Image restored successfully.\n");
+        printk("fastboot: resotore successfully\n");
 	}
 
  Thaw:

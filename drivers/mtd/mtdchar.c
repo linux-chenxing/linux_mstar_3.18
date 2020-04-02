@@ -35,6 +35,7 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/map.h>
+#include <linux/vmalloc.h>
 
 #include <asm/uaccess.h>
 
@@ -850,6 +851,38 @@ static int mtdchar_ioctl(struct file *file, u_int cmd, u_long arg)
 	/* Legacy interface */
 	case MEMGETOOBSEL:
 	{
+    #if (defined(CONFIG_MSTAR_NAND) || defined(CONFIG_MSTAR_SPI_NAND)) && (MP_NAND_MTD == 1)
+		struct nand_oobinfo *oi;
+
+		oi = vmalloc(sizeof(struct nand_oobinfo));
+		if(!oi)
+			return -ENOMEM;
+   
+		if (!mtd->ecclayout)
+		{
+			vfree(oi);
+			return -EOPNOTSUPP;
+		}
+
+		if (mtd->ecclayout->eccbytes > ARRAY_SIZE(oi->eccpos))
+		{
+			vfree(oi);
+			return -EINVAL;
+		}
+		oi->useecc = MTD_NANDECC_AUTOPLACE;
+		memcpy(&oi->eccpos, mtd->ecclayout->eccpos, sizeof(oi->eccpos));
+		memcpy(&oi->oobfree, mtd->ecclayout->oobfree,
+		       sizeof(oi->oobfree));
+		oi->eccbytes = mtd->ecclayout->eccbytes;
+
+		if (copy_to_user(argp, oi, sizeof(struct nand_oobinfo)))
+		{
+			vfree(oi);
+			return -EFAULT;
+		}
+
+		vfree(oi);
+    #else
 		struct nand_oobinfo oi;
 
 		if (!mtd->ecclayout)
@@ -865,6 +898,7 @@ static int mtdchar_ioctl(struct file *file, u_int cmd, u_long arg)
 
 		if (copy_to_user(argp, &oi, sizeof(struct nand_oobinfo)))
 			return -EFAULT;
+    #endif
 		break;
 	}
 

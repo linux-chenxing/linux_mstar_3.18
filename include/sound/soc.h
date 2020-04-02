@@ -652,7 +652,7 @@ struct snd_soc_compr_ops {
 	int (*startup)(struct snd_compr_stream *);
 	void (*shutdown)(struct snd_compr_stream *);
 	int (*set_params)(struct snd_compr_stream *);
-	int (*trigger)(struct snd_compr_stream *);
+	int (*trigger)(struct snd_compr_stream *, int);
 };
 
 /* SoC cache ops */
@@ -1063,6 +1063,7 @@ struct snd_soc_pcm_runtime {
 
 	/* Dynamic PCM BE runtime data */
 	struct snd_soc_dpcm_runtime dpcm[2];
+	int fe_compr;
 
 	long pmdown_time;
 	unsigned char pop_wait:1;

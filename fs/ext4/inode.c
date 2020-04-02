@@ -3306,6 +3306,9 @@ static const struct address_space_operations ext4_journalled_aops = {
 	.invalidatepage		= ext4_journalled_invalidatepage,
 	.releasepage		= ext4_releasepage,
 	.direct_IO		= ext4_direct_IO,
+#ifdef CONFIG_MP_CMA_PATCH_MIGRATION_FILTER
+	.migratepage		= ext4_jnl_migrate_page,
+#endif
 	.is_partially_uptodate  = block_is_partially_uptodate,
 	.error_remove_page	= generic_error_remove_page,
 };
@@ -3330,9 +3333,15 @@ void ext4_set_aops(struct inode *inode)
 {
 	switch (ext4_inode_journal_mode(inode)) {
 	case EXT4_INODE_ORDERED_DATA_MODE:
+#ifdef CONFIG_MP_CMA_PATCH_MIGRATION_FILTER
+		mapping_set_gfp_mask(inode->i_mapping, GFP_HIGHUSER_MOVABLE);
+#endif
 		ext4_set_inode_state(inode, EXT4_STATE_ORDERED_MODE);
 		break;
 	case EXT4_INODE_WRITEBACK_DATA_MODE:
+#ifdef CONFIG_MP_CMA_PATCH_MIGRATION_FILTER
+		mapping_set_gfp_mask(inode->i_mapping, GFP_HIGHUSER_MOVABLE);
+#endif
 		ext4_clear_inode_state(inode, EXT4_STATE_ORDERED_MODE);
 		break;
 	case EXT4_INODE_JOURNAL_DATA_MODE:

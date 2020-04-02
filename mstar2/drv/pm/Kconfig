@@ -1,0 +1,7 @@
+config MSTAR_PM
+
+bool "PM"
+
+help
+    MStar PM driver function
+

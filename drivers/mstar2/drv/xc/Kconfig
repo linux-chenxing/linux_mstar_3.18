@@ -1,0 +1,19 @@
+config MSTAR_XC
+tristate "XC"
+default n
+help
+    enable MStar XC driver.
+
+config MSTAR_FRC_SOFTWARE_TOGGLE
+tristate "FRC software interrupt toggle"
+default n
+help
+    enable MStar FRC software interrupt toggle.
+
+
+config MSTAR_XC_HDR_SUPPORT
+bool "XC HDR Support"
+default n
+help
+    enable MStar XC HDR Support
+

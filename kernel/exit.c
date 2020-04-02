@@ -59,6 +59,18 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 
+#ifdef CONFIG_MP_PLATFORM_UTOPIA2K_EXPORT_SYMBOL
+struct Utopia2K_resource_collection{
+	void (*callback)(pid_t pid);
+};
+struct Utopia2K_resource_collection U2k_RC;
+
+void Utopia2K_resource_collection_Register(void (*callback)(pid_t pid)){
+	U2k_RC.callback = callback;
+}
+EXPORT_SYMBOL(Utopia2K_resource_collection_Register);
+#endif
+
 static void exit_mm(struct task_struct * tsk);
 
 static void __unhash_process(struct task_struct *p, bool group_dead)
@@ -74,6 +86,7 @@ static void __unhash_process(struct task_struct *p, bool group_dead)
 		__this_cpu_dec(process_counts);
 	}
 	list_del_rcu(&p->thread_group);
+	list_del_rcu(&p->thread_node);
 }
 
 /*
@@ -639,6 +652,10 @@ static void forget_original_parent(struct task_struct *father)
 	}
 }
 
+#ifdef CONFIG_MP_DEBUG_TOOL_THREAD_CREATE_MONITOR
+void notify_task_thread_zombie(struct task_struct  *tsk);
+#endif
+
 /*
  * Send signals to all our closest relatives so that they know
  * to properly mourn us..
@@ -673,6 +690,10 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 	} else {
 		autoreap = true;
 	}
+
+#ifdef CONFIG_MP_DEBUG_TOOL_THREAD_CREATE_MONITOR
+	notify_task_thread_zombie(tsk);
+#endif
 
 	tsk->exit_state = autoreap ? EXIT_DEAD : EXIT_ZOMBIE;
 
@@ -808,6 +829,11 @@ void do_exit(long code)
 	check_stack_usage();
 	exit_thread();
 
+#ifdef CONFIG_MP_PLATFORM_UTOPIA2K_EXPORT_SYMBOL
+	if(U2k_RC.callback)
+		U2k_RC.callback(tsk->pid);
+#endif
+
 	/*
 	 * Flush inherited counters to the parent - before the parent
 	 * gets woken up by child-exit notifications.
@@ -840,7 +866,7 @@ void do_exit(long code)
 	/*
 	 * Make sure we are holding no locks:
 	 */
-	debug_check_no_locks_held(tsk);
+	debug_check_no_locks_held();
 	/*
 	 * We can do this unlocked here. The futex code uses this flag
 	 * just to verify whether the pi state cleanup has been done

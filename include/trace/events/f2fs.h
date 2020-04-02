@@ -36,6 +36,11 @@
 		{ CURSEG_COLD_NODE, 	"Cold NODE" },			\
 		{ NO_CHECK_TYPE, 	"No TYPE" })
 
+#define show_file_type(type)						\
+	__print_symbolic(type,						\
+		{ 0,		"FILE" },				\
+		{ 1,		"DIR" })
+
 #define show_gc_type(type)						\
 	__print_symbolic(type,						\
 		{ FG_GC,	"Foreground GC" },			\
@@ -623,6 +628,52 @@ TRACE_EVENT(f2fs_do_submit_bio,
 		__entry->size)
 );
 
+DECLARE_EVENT_CLASS(f2fs__page,
+
+	TP_PROTO(struct page *page, int type),
+
+	TP_ARGS(page, type),
+
+	TP_STRUCT__entry(
+		__field(dev_t,	dev)
+		__field(ino_t,	ino)
+		__field(int, type)
+		__field(int, dir)
+		__field(pgoff_t, index)
+		__field(int, dirty)
+	),
+
+	TP_fast_assign(
+		__entry->dev	= page->mapping->host->i_sb->s_dev;
+		__entry->ino	= page->mapping->host->i_ino;
+		__entry->type	= type;
+		__entry->dir	= S_ISDIR(page->mapping->host->i_mode);
+		__entry->index	= page->index;
+		__entry->dirty	= PageDirty(page);
+	),
+
+	TP_printk("dev = (%d,%d), ino = %lu, %s, %s, index = %lu, dirty = %d",
+		show_dev_ino(__entry),
+		show_block_type(__entry->type),
+		show_file_type(__entry->dir),
+		(unsigned long)__entry->index,
+		__entry->dirty)
+);
+
+DEFINE_EVENT(f2fs__page, f2fs_set_page_dirty,
+
+	TP_PROTO(struct page *page, int type),
+
+	TP_ARGS(page, type)
+);
+
+DEFINE_EVENT(f2fs__page, f2fs_vm_page_mkwrite,
+
+	TP_PROTO(struct page *page, int type),
+
+	TP_ARGS(page, type)
+);
+
 TRACE_EVENT(f2fs_submit_write_page,
 
 	TP_PROTO(struct page *page, block_t blk_addr, int type),
@@ -674,6 +725,63 @@ TRACE_EVENT(f2fs_write_checkpoint,
 		show_dev(__entry),
 		__entry->is_umount ? "clean umount" : "consistency",
 		__entry->msg)
+);
+
+TRACE_EVENT(f2fs_write_begin,
+
+	TP_PROTO(struct inode *inode, loff_t pos, unsigned int len,
+		 unsigned int flags),
+
+	TP_ARGS(inode, pos, len, flags),
+
+	TP_STRUCT__entry(
+		__field(	dev_t,	dev			)
+		__field(	ino_t,	ino			)
+		__field(	loff_t,	pos			)
+		__field(	unsigned int, len		)
+		__field(	unsigned int, flags		)
+	),
+
+	TP_fast_assign(
+		__entry->dev	= inode->i_sb->s_dev;
+		__entry->ino	= inode->i_ino;
+		__entry->pos	= pos;
+		__entry->len	= len;
+		__entry->flags	= flags;
+	),
+
+	TP_printk("dev = (%d,%d), ino %lu, pos %lld, len %u, flags %u",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  (unsigned long) __entry->ino,
+		  __entry->pos, __entry->len, __entry->flags)
+);
+
+TRACE_EVENT(f2fs_write_end,
+	TP_PROTO(struct inode *inode, loff_t pos, unsigned int len,
+			unsigned int copied),
+
+	TP_ARGS(inode, pos, len, copied),
+
+	TP_STRUCT__entry(
+		__field(	dev_t,	dev			)
+		__field(	ino_t,	ino			)
+		__field(	loff_t,	pos			)
+		__field(	unsigned int, len		)
+		__field(	unsigned int, copied		)
+	),
+
+	TP_fast_assign(
+		__entry->dev	= inode->i_sb->s_dev;
+		__entry->ino	= inode->i_ino;
+		__entry->pos	= pos;
+		__entry->len	= len;
+		__entry->copied	= copied;
+	),
+
+	TP_printk("dev = (%d,%d), ino %lu, pos %lld, len %u, copied %u",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  (unsigned long) __entry->ino,
+		  __entry->pos, __entry->len, __entry->copied)
 );
 
 #endif /* _TRACE_F2FS_H */

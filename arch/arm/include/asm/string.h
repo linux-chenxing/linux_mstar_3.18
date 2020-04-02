@@ -14,18 +14,29 @@ extern char * strchr(const char * s, int c);
 
 #define __HAVE_ARCH_MEMCPY
 extern void * memcpy(void *, const void *, __kernel_size_t);
-
+#ifdef CONFIG_Kasan_Switch_On
+extern void * __memcpy(void *, const void *, __kernel_size_t);
+#endif
 #define __HAVE_ARCH_MEMMOVE
 extern void * memmove(void *, const void *, __kernel_size_t);
-
+#ifdef CONFIG_Kasan_Switch_On
+extern void * __memmove(void *, const void *, __kernel_size_t);
+#endif
 #define __HAVE_ARCH_MEMCHR
 extern void * memchr(const void *, int, __kernel_size_t);
-
+#ifdef CONFIG_Kasan_Switch_On
+extern void * __memchr(const void *, int, __kernel_size_t);
+#endif
 #define __HAVE_ARCH_MEMSET
 extern void * memset(void *, int, __kernel_size_t);
+#ifdef CONFIG_Kasan_Switch_On
+extern void * __memset(void *, int, __kernel_size_t);
+#endif
 
 extern void __memzero(void *ptr, __kernel_size_t n);
 
+#ifndef CONFIG_Kasan_Switch_On
+#ifndef CONFIG_KASAN
 #define memset(p,v,n)							\
 	({								\
 	 	void *__p = (p); size_t __n = n;			\
@@ -38,4 +49,22 @@ extern void __memzero(void *ptr, __kernel_size_t n);
 		(__p);							\
 	})
 
+#endif
+#endif
+
+#ifdef CONFIG_Kasan_Switch_On
+#if defined(CONFIG_KASAN) && !defined(__SANITIZE_ADDRESS__)
+
+/*
+ * For files that not instrumented (e.g. mm/slub.c) we
+ * should use not instrumented version of mem* functions.
+ */
+
+#undef memcpy
+#define memcpy(dst, src, len) __memcpy(dst, src, len)
+#define memmove(dst, src, len) __memmove(dst, src, len)
+#define memset(s, c, n) __memset(s, c, n)
+#endif
+
+#endif
 #endif

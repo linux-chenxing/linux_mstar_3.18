@@ -250,6 +250,39 @@ int regcache_write(struct regmap *map,
 	return 0;
 }
 
+static int regcache_default_sync(struct regmap *map, unsigned int min,
+				 unsigned int max)
+{
+	unsigned int reg;
+
+	for (reg = min; reg <= max; reg += map->reg_stride) {
+		unsigned int val;
+		int ret;
+
+		if (regmap_volatile(map, reg) ||
+		    !regmap_writeable(map, reg))
+			continue;
+
+		ret = regcache_read(map, reg, &val);
+		if (ret)
+			return ret;
+
+		/* Is this the hardware default?  If so skip. */
+		ret = regcache_lookup_reg(map, reg);
+		if (ret >= 0 && val == map->reg_defaults[ret].def)
+			continue;
+
+		map->cache_bypass = 1;
+		ret = _regmap_write(map, reg, val);
+		map->cache_bypass = 0;
+		if (ret)
+			return ret;
+		dev_dbg(map->dev, "Synced register %#x, value %#x\n", reg, val);
+	}
+
+	return 0;
+}
+
 /**
  * regcache_sync: Sync the register cache with the hardware.
  *
@@ -268,7 +301,7 @@ int regcache_sync(struct regmap *map)
 	const char *name;
 	unsigned int bypass;
 
-	BUG_ON(!map->cache_ops || !map->cache_ops->sync);
+	BUG_ON(!map->cache_ops);
 
 	map->lock(map->lock_arg);
 	/* Remember the initial bypass state */
@@ -297,7 +330,10 @@ int regcache_sync(struct regmap *map)
 	}
 	map->cache_bypass = 0;
 
-	ret = map->cache_ops->sync(map, 0, map->max_register);
+	if (map->cache_ops->sync)
+		ret = map->cache_ops->sync(map, 0, map->max_register);
+	else
+		ret = regcache_default_sync(map, 0, map->max_register);
 
 	if (ret == 0)
 		map->cache_dirty = false;
@@ -331,7 +367,7 @@ int regcache_sync_region(struct regmap *map, unsigned int min,
 	const char *name;
 	unsigned int bypass;
 
-	BUG_ON(!map->cache_ops || !map->cache_ops->sync);
+	BUG_ON(!map->cache_ops);
 
 	map->lock(map->lock_arg);
 
@@ -346,7 +382,10 @@ int regcache_sync_region(struct regmap *map, unsigned int min,
 	if (!map->cache_dirty)
 		goto out;
 
-	ret = map->cache_ops->sync(map, min, max);
+	if (map->cache_ops->sync)
+		ret = map->cache_ops->sync(map, min, max);
+	else
+		ret = regcache_default_sync(map, min, max);
 
 out:
 	trace_regcache_sync(map->dev, name, "stop region");
@@ -417,6 +456,53 @@ void regcache_cache_bypass(struct regmap *map, bool enable)
 	map->unlock(map->lock_arg);
 }
 EXPORT_SYMBOL_GPL(regcache_cache_bypass);
+
+static int _regcache_volatile_set(struct regmap *map, unsigned int reg,
+				  bool is_volatile)
+{
+	int ret;
+
+	if (is_volatile == regmap_volatile(map, reg))
+		return 0;
+
+	if (!map->reg_volatile_set)
+		return -ENOSYS;
+
+	if (!map->cache_present)
+		return -ENOENT;
+
+	ret = map->reg_volatile_set(map->dev, reg, is_volatile);
+	if (ret)
+		return ret;
+
+	regcache_clear_reg_present(map, reg);
+	return 0;
+}
+
+/**
+ * regcache_volatile_set: Set single register as volatile or cached
+ *
+ * @map: map to apply change to
+ * @reg: register to be set as volatile or cached
+ * @is_volatile: if true, register is set as volatile, otherwise as cached
+ *
+ * Set access attribute to the specified register as volatile or cached. Clear
+ * cache_present bit (i.e., invalidate cache) on successful exit.
+ *
+ * Return a negative value on failure, 0 on success.
+ */
+int regcache_volatile_set(struct regmap *map, unsigned int reg,
+			  bool is_volatile)
+{
+	int ret;
+
+	map->lock(map->lock_arg);
+	ret = _regcache_volatile_set(map, reg, is_volatile);
+	map->unlock(map->lock_arg);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(regcache_volatile_set);
 
 int regcache_set_reg_present(struct regmap *map, unsigned int reg)
 {

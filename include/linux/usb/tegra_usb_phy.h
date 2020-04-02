@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2010 Google, Inc.
+ * Copyright (c) 2010 Google, Inc.
+ * Copyright (c) 2011-2014, NVIDIA CORPORATION.  All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -15,68 +16,139 @@
 #ifndef __TEGRA_USB_PHY_H
 #define __TEGRA_USB_PHY_H
 
-#include <linux/clk.h>
-#include <linux/usb/otg.h>
+/**
+ * Tegra USB phy opaque handle
+ */
+struct tegra_usb_phy;
 
-struct tegra_utmip_config {
-	u8 hssync_start_delay;
-	u8 elastic_limit;
-	u8 idle_wait_delay;
-	u8 term_range_adj;
-	u8 xcvr_setup;
-	u8 xcvr_lsfslew;
-	u8 xcvr_lsrslew;
-};
+/**
+ * Opens the usb phy associated to the USB platform device
+ * tegra usb phy open must be called before accessing any phy APIs
+ */
+struct tegra_usb_phy *tegra_usb_phy_open(struct platform_device *pdev);
 
-struct tegra_ulpi_config {
-	int reset_gpio;
-	const char *clk;
-};
+/**
+ * Handles interrupts specific to the phy interface
+ * Note: udc or ehci driver will handle the controller interrupts
+ */
+irqreturn_t tegra_usb_phy_irq(struct tegra_usb_phy *phy);
 
-enum tegra_usb_phy_port_speed {
-	TEGRA_USB_PHY_PORT_SPEED_FULL = 0,
-	TEGRA_USB_PHY_PORT_SPEED_LOW,
-	TEGRA_USB_PHY_PORT_SPEED_HIGH,
-};
+/**
+ * Handles phy interface specific functionality after driver reset
+ */
+int tegra_usb_phy_reset(struct tegra_usb_phy *phy);
 
-enum tegra_usb_phy_mode {
-	TEGRA_USB_PHY_MODE_DEVICE,
-	TEGRA_USB_PHY_MODE_HOST,
-};
+/**
+ * Handles phy interface specific functionality before driver suspend
+ * Also, handles platform specific pre suspend functions
+ */
+int tegra_usb_phy_pre_suspend(struct tegra_usb_phy *phy);
 
-struct tegra_xtal_freq;
+/**
+ * Handles phy interface specific functionality after driver suspend
+ */
+int tegra_usb_phy_post_suspend(struct tegra_usb_phy *phy);
 
-struct tegra_usb_phy {
-	int instance;
-	const struct tegra_xtal_freq *freq;
-	void __iomem *regs;
-	void __iomem *pad_regs;
-	struct clk *clk;
-	struct clk *pll_u;
-	struct clk *pad_clk;
-	enum tegra_usb_phy_mode mode;
-	void *config;
-	struct usb_phy *ulpi;
-	struct usb_phy u_phy;
-	struct device *dev;
-	bool is_legacy_phy;
-	bool is_ulpi_phy;
-	void (*set_pts)(struct usb_phy *x, u8 pts_val);
-	void (*set_phcd)(struct usb_phy *x, bool enable);
-};
+/**
+ * Handles phy interface specific functionality before driver resume
+ * Also, handles platform specific pre resume functions
+ */
+int tegra_usb_phy_pre_resume(struct tegra_usb_phy *phy, bool remote_wakeup);
 
-struct tegra_usb_phy *tegra_usb_phy_open(struct device *dev, int instance,
-	void __iomem *regs, void *config, enum tegra_usb_phy_mode phy_mode,
-	void (*set_pts)(struct usb_phy *x, u8 pts_val),
-	void (*set_phcd)(struct usb_phy *x, bool enable));
+/**
+ * Handles phy interface specific functionality after driver resume
+ */
+int tegra_usb_phy_post_resume(struct tegra_usb_phy *phy);
 
-void tegra_usb_phy_preresume(struct usb_phy *phy);
+/**
+ * Handles phy interface specific functionality during port power on
+ */
+int tegra_usb_phy_port_power(struct tegra_usb_phy *phy);
 
-void tegra_usb_phy_postresume(struct usb_phy *phy);
+/**
+ * Handles phy interface specific functionality during bus reset
+ */
+int tegra_usb_phy_bus_reset(struct tegra_usb_phy *phy);
 
-void tegra_ehci_phy_restore_start(struct usb_phy *phy,
-				 enum tegra_usb_phy_port_speed port_speed);
+/**
+ * Handles phy interface specific functionality for turning off the phy to
+ * put the phy in low power mode
+ */
+int tegra_usb_phy_power_off(struct tegra_usb_phy *phy);
 
-void tegra_ehci_phy_restore_end(struct usb_phy *phy);
+/**
+ * Handles phy interface specific functionality for turning on the phy to
+ * bring phy out of low power mode
+ */
+int tegra_usb_phy_power_on(struct tegra_usb_phy *phy);
+
+/**
+ * Indicates whether phy registers are accessible or not
+ * if phy is powered off then returns false else true
+ */
+bool tegra_usb_phy_hw_accessible(struct tegra_usb_phy *phy);
+
+/**
+ * Indicates whether compliance charger is connected or not
+ * if compliance charger is detected then returns true else false
+ */
+bool tegra_usb_phy_charger_detected(struct tegra_usb_phy *phy);
+
+/**
+ * Indicates whether qc2 charger is connected or not
+ * if QuickCharge 2 DCP detected returns true else false
+ */
+bool tegra_usb_phy_qc2_charger_detected(struct tegra_usb_phy *phy,
+		int max_voltage);
+
+/**
+ * Indicates whether CDP charger is connected or not
+ * if CDP is connected then returns true else false
+ */
+bool tegra_usb_phy_cdp_charger_detected(struct tegra_usb_phy *phy);
+
+/**
+ * Indicates whether maxim charger is connected or not
+ * if maxim is connect then returns true else false
+ */
+bool tegra_usb_phy_maxim_charger_detected(struct tegra_usb_phy *phy);
+
+/**
+ * Indicates whether nvidia proprietary charger is connected or not
+ * if nvidia proprietary charger is detected then returns true else false
+ */
+bool tegra_usb_phy_nv_charger_detected(struct tegra_usb_phy *phy);
+
+/**
+ * Indicates whether apple 1A charger is connected or not
+ * if apple 1A charger is detected then returns true else false
+ */
+bool tegra_usb_phy_apple_1000ma_charger_detected(struct tegra_usb_phy *phy);
+
+/**
+ * Indicates whether apple 2A charger is connected or not
+ * if apple 2A charger is detected then returns true else false
+ */
+bool tegra_usb_phy_apple_2000ma_charger_detected(struct tegra_usb_phy *phy);
+
+/**
+ * Indicates whether apple 0.5A charger is connected or not
+ * if apple 0.5A charger is detected then returns true else false
+ */
+bool tegra_usb_phy_apple_500ma_charger_detected(struct tegra_usb_phy *phy);
+
+/**
+ * Indicates whether phy resumed due to the pmc remote/hotplug wake event
+ *  or not, returns true if remote/hotplug wake is detected.
+ */
+bool tegra_usb_phy_pmc_wakeup(struct tegra_usb_phy *phy);
+
+void tegra_usb_phy_memory_prefetch_on(struct tegra_usb_phy *phy);
+
+void tegra_usb_phy_memory_prefetch_off(struct tegra_usb_phy *phy);
+
+void tegra_usb_enable_vbus(struct tegra_usb_phy *phy, bool enable);
+
+void tegra_usb_phy_pmc_disable(struct tegra_usb_phy *phy);
 
 #endif /* __TEGRA_USB_PHY_H */

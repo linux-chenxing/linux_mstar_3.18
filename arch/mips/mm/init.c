@@ -44,6 +44,12 @@
 #include <asm/tlb.h>
 #include <asm/fixmap.h>
 
+#ifdef CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+#define LAST_PKMAP 1024
+#define PKMAP_ADDR(nr)  (PKMAP_BASE + ((nr) << PAGE_SHIFT))
+#endif // CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+
+
 /* Atomicity and interruptability */
 #ifdef CONFIG_MIPS_MT_SMTC
 
@@ -122,7 +128,11 @@ void *kmap_coherent(struct page *page, unsigned long addr)
 	pte_t pte;
 	int tlbidx;
 
+#ifdef CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+	BUG_ON((PKMAP_ADDR(0)>addr||PKMAP_ADDR(LAST_PKMAP-1)<addr) && Page_dcache_dirty(page));
+#else
 	BUG_ON(Page_dcache_dirty(page));
+#endif // CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
 
 	inc_preempt_count();
 	idx = (addr >> PAGE_SHIFT) & (FIX_N_COLOURS - 1);
@@ -332,7 +342,11 @@ void __init paging_init(void)
 	kmap_coherent_init();
 
 #ifdef CONFIG_ZONE_DMA
+#ifdef CONFIG_MP_MM_DMA_ZONE_EXTEND_PATCH
+	max_zone_pfns[ZONE_DMA] = max_low_pfn;
+#else
 	max_zone_pfns[ZONE_DMA] = MAX_DMA_PFN;
+#endif
 #endif
 #ifdef CONFIG_ZONE_DMA32
 	max_zone_pfns[ZONE_DMA32] = MAX_DMA32_PFN;
@@ -368,7 +382,20 @@ void __init mem_init(void)
 #ifdef CONFIG_DISCONTIGMEM
 #error "CONFIG_HIGHMEM and CONFIG_DISCONTIGMEM dont work together yet"
 #endif
+
+#ifdef CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+       max_mapnr = highend_pfn;
+    /*
+	 * if highmem region is not added, highend_pfn would be zero.
+	 * then the max_mapnr is also zero, it will make sanity check failed
+	 * if CONFIG_DEBUG_VM is enabled
+     */
+	if (max_mapnr < max_low_pfn)
+		max_mapnr = max_low_pfn;
+#else
 	max_mapnr = highend_pfn ? highend_pfn : max_low_pfn;
+#endif // CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+
 #else
 	max_mapnr = max_low_pfn;
 #endif
@@ -389,6 +416,13 @@ void __init mem_init(void)
 #ifdef CONFIG_HIGHMEM
 	for (tmp = highstart_pfn; tmp < highend_pfn; tmp++) {
 		struct page *page = pfn_to_page(tmp);
+
+#ifdef CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+        if (!pfn_valid(tmp))
+            {
+			 continue;
+            }
+#endif // CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
 
 		if (!page_is_ram(tmp)) {
 			SetPageReserved(page);

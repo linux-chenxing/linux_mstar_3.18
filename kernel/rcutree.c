@@ -210,7 +210,7 @@ DEFINE_PER_CPU(struct rcu_dynticks, rcu_dynticks) = {
 	.dynticks = ATOMIC_INIT(1),
 };
 
-static long blimit = 10;	/* Maximum callbacks per rcu_do_batch. */
+static long blimit = 20;	/* Maximum callbacks per rcu_do_batch. */
 static long qhimark = 10000;	/* If this many pending, ignore blimit. */
 static long qlowmark = 100;	/* Once only this many pending, use blimit. */
 

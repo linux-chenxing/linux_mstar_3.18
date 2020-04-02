@@ -4,6 +4,7 @@
  * Maintainer: Alan Stern <stern@rowland.harvard.edu>
  *
  * Copyright (c) 2000-2004 by David Brownell
+ * Copyright (c) 2013 NVIDIA CORPORATION. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -39,6 +40,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/debugfs.h>
 #include <linux/slab.h>
+#include <linux/uaccess.h>
 
 #include <asm/byteorder.h>
 #include <asm/io.h>
@@ -47,6 +49,12 @@
 
 #if defined(CONFIG_PPC_PS3)
 #include <asm/firmware.h>
+#endif
+
+#include <mstar/mpatch_macro.h>
+
+#if (MP_USB_MSTAR==1)
+#include "ehci-mstar.h"
 #endif
 
 /*-------------------------------------------------------------------------*/
@@ -77,7 +85,11 @@ static const char	hcd_name [] = "ehci_hcd";
 /* magic numbers that can affect system performance */
 #define	EHCI_TUNE_CERR		3	/* 0-3 qtd retries; 0 == don't stop */
 #define	EHCI_TUNE_RL_HS		4	/* nak throttle; see 4.9 */
+#if (MP_USB_MSTAR==1) && (_USB_TURN_ON_TT_THROTTLE_MODE_PATCH)
+#define	EHCI_TUNE_RL_TT		4
+#else
 #define	EHCI_TUNE_RL_TT		0
+#endif
 #define	EHCI_TUNE_MULT_HS	1	/* 1-3 transactions/uframe; 4.10.3 */
 #define	EHCI_TUNE_MULT_TT	1
 /*
@@ -86,7 +98,12 @@ static const char	hcd_name [] = "ehci_hcd";
  * code).  In an attempt to avoid trouble, we will use a minimum scheduling
  * length of 512 frames instead of 256.
  */
+
+#if (MP_USB_MSTAR==1)
+#define	EHCI_TUNE_FLS		0	/* 1024-frame schedule */
+#else
 #define	EHCI_TUNE_FLS		1	/* (medium) 512-frame schedule */
+#endif
 
 /* Initial IRQ latency:  faster than hw default */
 static int log2_irq_thresh = 0;		// 0 to 6
@@ -94,12 +111,23 @@ module_param (log2_irq_thresh, int, S_IRUGO);
 MODULE_PARM_DESC (log2_irq_thresh, "log2 IRQ latency, 1-64 microframes");
 
 /* initial park setting:  slower than hw default */
+#if (MP_USB_MSTAR==1) && defined(ENABLE_12US_EOF1)
+static unsigned park = 3;
+#else
 static unsigned park = 0;
+#endif
 module_param (park, uint, S_IRUGO);
 MODULE_PARM_DESC (park, "park setting; 1-3 back-to-back async packets");
 
 /* for flakey hardware, ignore overcurrent indicators */
+#if (MP_USB_MSTAR==1)	//tony ignore oc
+static bool ignore_oc = 1;
+#else
 static bool ignore_oc = 0;
+#endif
+#ifdef CONFIG_MSTAR_BDMA
+static int en_64bit_OBF_cipher = 0;
+#endif
 module_param (ignore_oc, bool, S_IRUGO);
 MODULE_PARM_DESC (ignore_oc, "ignore bogus hardware overcurrent indications");
 
@@ -127,10 +155,32 @@ static unsigned ehci_moschip_read_frame_index(struct ehci_hcd *ehci)
 	return uf;
 }
 
+#if (MP_USB_MSTAR==1)
+static unsigned ehci_mstar_read_frame_index(struct ehci_hcd *ehci)
+{
+	struct usb_hcd *hcd = ehci_to_hcd(ehci);
+	unsigned int 	frame_index;
+
+	frame_index = hcd->ms_flag >> 16;
+	frame_index += 800; //Jump 100ms
+	if (frame_index > 0x3FFF)
+		frame_index = 0;
+
+	hcd->ms_flag &= 0x0000FFFF;
+	hcd->ms_flag |= frame_index << 16;
+
+	return (unsigned) frame_index;
+}
+#endif
+
 static inline unsigned ehci_read_frame_index(struct ehci_hcd *ehci)
 {
 	if (ehci->frame_index_bug)
 		return ehci_moschip_read_frame_index(ehci);
+#if (MP_USB_MSTAR==1)
+	if (ehci_to_hcd(ehci)->ms_flag & MS_FLAG_SW_FRM_IDX)
+		return ehci_mstar_read_frame_index(ehci);
+#endif
 	return ehci_readl(ehci, &ehci->regs->frame_index);
 }
 
@@ -176,10 +226,17 @@ static int handshake (struct ehci_hcd *ehci, void __iomem *ptr,
 /* check TDI/ARC silicon is in host mode */
 static int tdi_in_host_mode (struct ehci_hcd *ehci)
 {
+#if (MP_USB_MSTAR==1)
+	return 1;
+#else
 	u32		tmp;
 
-	tmp = ehci_readl(ehci, &ehci->regs->usbmode);
+	if (ehci->has_hostpc)
+		tmp = ehci_readl(ehci, &ehci->regs->usbmode_ex);
+	else
+		tmp = ehci_readl(ehci, &ehci->regs->usbmode);
 	return (tmp & 3) == USBMODE_CM_HC;
+#endif
 }
 
 /*
@@ -219,6 +276,9 @@ static int ehci_halt (struct ehci_hcd *ehci)
 /* put TDI/ARC silicon into EHCI mode */
 static void tdi_reset (struct ehci_hcd *ehci)
 {
+#if (MP_USB_MSTAR==1)
+
+#else
 	u32		tmp;
 
 	tmp = ehci_readl(ehci, &ehci->regs->usbmode);
@@ -230,6 +290,7 @@ static void tdi_reset (struct ehci_hcd *ehci)
 	if (ehci_big_endian_mmio(ehci))
 		tmp |= USBMODE_BE;
 	ehci_writel(ehci, tmp, &ehci->regs->usbmode);
+#endif	
 }
 
 /*
@@ -248,11 +309,19 @@ static int ehci_reset (struct ehci_hcd *ehci)
 
 	command |= CMD_RESET;
 	dbg_cmd (ehci, "reset", command);
-	ehci_writel(ehci, command, &ehci->regs->command);
+#ifdef CONFIG_USB_EHCI_TEGRA
+	if (!ehci->controller_resets_phy)
+#endif
+		ehci_writel(ehci, command, &ehci->regs->command);
 	ehci->rh_state = EHCI_RH_HALTED;
 	ehci->next_statechange = jiffies;
 	retval = handshake (ehci, &ehci->regs->command,
 			    CMD_RESET, 0, 250 * 1000);
+
+#if (MP_USB_MSTAR==1) && defined(ENABLE_UHC_RUN_BIT_ALWAYS_ON_ECO)
+ 	/* Don't close RUN bit when device disconnect */
+	ehci_writel(ehci, ehci_readl(ehci, &ehci->regs->hcmisc) | BIT7, &ehci->regs->hcmisc);
+#endif
 
 	if (ehci->has_hostpc) {
 		ehci_writel(ehci, USBMODE_EX_HC | USBMODE_EX_VBPS,
@@ -268,8 +337,6 @@ static int ehci_reset (struct ehci_hcd *ehci)
 	if (ehci->debug)
 		dbgp_external_startup(ehci_to_hcd(ehci));
 
-	ehci->port_c_suspend = ehci->suspended_ports =
-			ehci->resuming_ports = 0;
 	return retval;
 }
 
@@ -380,6 +447,9 @@ static void ehci_work (struct ehci_hcd *ehci)
 	 * it reports urb completions.  this flag guards against bogus
 	 * attempts at re-entrant schedule scanning.
 	 */
+#if (MP_USB_MSTAR==1) && (_USB_T3_WBTIMEOUT_PATCH)
+	Chip_Read_Memory();	//Flush Read buffer when H/W finished
+#endif
 	if (ehci->scanning) {
 		ehci->need_rescan = true;
 		return;
@@ -502,10 +572,15 @@ static int ehci_init(struct usb_hcd *hcd)
 		return retval;
 
 	/* controllers may cache some of the periodic schedule ... */
+#if (MP_USB_MSTAR==1)	//tony add for FUSB200
+	ehci->i_thresh = 8;
+	ehci->periodic_count = 0;
+#else
 	if (HCC_ISOC_CACHE(hcc_params))		// full frame cache
 		ehci->i_thresh = 0;
 	else					// N microframes cached
 		ehci->i_thresh = 2 + HCC_ISOC_THRES(hcc_params);
+#endif
 
 	/*
 	 * dedicate a qh for the async ring head, since we couldn't unlink
@@ -567,7 +642,9 @@ static int ehci_init(struct usb_hcd *hcd)
 static int ehci_run (struct usb_hcd *hcd)
 {
 	struct ehci_hcd		*ehci = hcd_to_ehci (hcd);
+#if (MP_USB_MSTAR==0) // tony ignore oc
 	u32			temp;
+#endif
 	u32			hcc_params;
 
 	hcd->uses_new_polling = 1;
@@ -629,13 +706,14 @@ static int ehci_run (struct usb_hcd *hcd)
 	up_write(&ehci_cf_port_reset_rwsem);
 	ehci->last_periodic_enable = ktime_get_real();
 
+#if (MP_USB_MSTAR==0) // tony ignore oc
 	temp = HC_VERSION(ehci, ehci_readl(ehci, &ehci->caps->hc_capbase));
 	ehci_info (ehci,
 		"USB %x.%x started, EHCI %x.%02x%s\n",
 		((ehci->sbrn & 0xf0)>>4), (ehci->sbrn & 0x0f),
 		temp >> 8, temp & 0xff,
 		ignore_oc ? ", overcurrent ignored" : "");
-
+#endif
 	ehci_writel(ehci, INTR_MASK,
 		    &ehci->regs->intr_enable); /* Turn On Interrupts */
 
@@ -786,6 +864,18 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 			pstatus = ehci_readl(ehci,
 					 &ehci->regs->port_status[i]);
 
+			#if (MP_USB_MSTAR==1) 
+			/* Clear port enable bit when root device disconnect
+			 * Patch for hub+device hot plug frequency then lost disconnect event issue
+			 */
+			if (pstatus & PORT_CSC)
+			{
+				pstatus &= ~(PORT_PE|PORT_CSC|PORT_PEC);
+				ehci_writel(ehci, pstatus, &ehci->regs->port_status[i]);
+				//printk("[IRQ]Clear PORT_PE\n");
+			}
+			#endif
+
 			if (pstatus & PORT_OWNER)
 				continue;
 			if (!(test_bit(i, &ehci->suspended_ports) &&
@@ -801,10 +891,12 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 			 * like usb_port_resume() does.
 			 */
 			ehci->reset_done[i] = jiffies + msecs_to_jiffies(25);
-			set_bit(i, &ehci->resuming_ports);
 			ehci_dbg (ehci, "port %d remote wakeup\n", i + 1);
 			usb_hcd_start_port_resume(&hcd->self, i);
 			mod_timer(&hcd->rh_timer, ehci->reset_done[i]);
+#ifdef CONFIG_USB_EHCI_TEGRA
+			ehci->controller_remote_wakeup = true;
+#endif
 		}
 	}
 
@@ -882,6 +974,10 @@ static int ehci_urb_enqueue (
 	case PIPE_ISOCHRONOUS:
 		if (urb->dev->speed == USB_SPEED_HIGH)
 			return itd_submit (ehci, urb, mem_flags);
+#if (MP_USB_MSTAR==1)
+		else if ( (ehci_readl(ehci, &ehci->regs->bmcs) & 0x0600) != 0x0400) //Colin, patch for not real split-transaction mode
+			return itd_submit (ehci, urb, mem_flags);
+#endif
 		else
 			return sitd_submit (ehci, urb, mem_flags);
 	}
@@ -897,6 +993,9 @@ static int ehci_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 	struct ehci_qh		*qh;
 	unsigned long		flags;
 	int			rc;
+#if (MP_USB_MSTAR==1)
+	unsigned int		frm_idx = 0xFFFF;
+#endif
 
 	spin_lock_irqsave (&ehci->lock, flags);
 	rc = usb_hcd_check_unlink_urb(hcd, urb, status);
@@ -909,6 +1008,40 @@ static int ehci_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 		 * Just wait until they complete normally or their
 		 * time slot expires.
 		 */
+#if  (MP_USB_MSTAR==1)
+		if ( !(ehci_readl(ehci, &ehci->regs->port_status[0]) & BIT0) ||
+				ehci_readl(ehci, &ehci->regs->port_status[0]) & BIT1 )
+		{
+
+			while (atomic_read(&urb->use_count) > 0)
+			{
+				//Check port disconnect
+				if ( !(hcd->ms_flag & MS_FLAG_SW_FRM_IDX) &&
+					(frm_idx != 0xFFFF) &&
+					(frm_idx == ehci_readl(ehci, &ehci->regs->frame_index)) )
+				{
+					printk("[USB][%s] EHCI SW frame index start...\n", __func__);
+					hcd->ms_flag |= MS_FLAG_SW_FRM_IDX;
+					hcd->ms_flag &= 0x0000FFFF;
+					hcd->ms_flag |= ehci_readl(ehci, &ehci->regs->frame_index) << 16;
+				}
+
+				if (hcd->ms_flag & MS_FLAG_SW_FRM_IDX)
+				{
+					if (ehci->isoc_count > 0)
+						scan_isoc(ehci);
+				}
+
+				frm_idx = ehci_readl(ehci, &ehci->regs->frame_index);
+				spin_unlock_irqrestore (&ehci->lock, flags);
+				schedule_timeout_uninterruptible(1);
+				spin_lock_irqsave (&ehci->lock, flags);
+
+			}
+			hcd->ms_flag &= ~MS_FLAG_SW_FRM_IDX;
+
+		}
+#endif
 	} else {
 		qh = (struct ehci_qh *) urb->hcpriv;
 		qh->exception = 1;
@@ -947,6 +1080,9 @@ ehci_endpoint_disable (struct usb_hcd *hcd, struct usb_host_endpoint *ep)
 	struct ehci_hcd		*ehci = hcd_to_ehci (hcd);
 	unsigned long		flags;
 	struct ehci_qh		*qh, *tmp;
+#if (MP_USB_MSTAR==1)
+	unsigned int		frm_idx = 0xFFFF;
+#endif
 
 	/* ASSERT:  any requests/urbs are being unlinked */
 	/* ASSERT:  nobody can be submitting urbs for this any more */
@@ -964,7 +1100,37 @@ rescan:
 		struct ehci_iso_stream	*stream = ep->hcpriv;
 
 		if (!list_empty(&stream->td_list))
+#if (MP_USB_MSTAR==1)
+		{
+			//Check port disconnect
+			if ( !(ehci_readl(ehci, &ehci->regs->port_status[0]) & BIT0) ||
+				ehci_readl(ehci, &ehci->regs->port_status[0]) & BIT1 )
+			{
+				if ( !(hcd->ms_flag & MS_FLAG_SW_FRM_IDX) &&
+					(frm_idx != 0xFFFF) &&
+					(frm_idx == ehci_readl(ehci, &ehci->regs->frame_index)) )
+				{
+					printk("[USB] EHCI SW frame index start...\n");
+					hcd->ms_flag |= MS_FLAG_SW_FRM_IDX;
+					hcd->ms_flag &= 0x0000FFFF;
+					hcd->ms_flag |= ehci_readl(ehci, &ehci->regs->frame_index) << 16;
+				}
+
+				if (hcd->ms_flag & MS_FLAG_SW_FRM_IDX)
+				{
+					if (ehci->isoc_count > 0)
+						scan_isoc(ehci);
+				}
+
+				frm_idx = ehci_readl(ehci, &ehci->regs->frame_index);
+				goto idle_timeout;
+			}
+
+			goto done;      //Add by Austin for ISO hotlpug
+		}
+#else
 			goto idle_timeout;
+#endif
 
 		/* BUG_ON(!list_empty(&stream->free_list)); */
 		kfree(stream);
@@ -1011,6 +1177,9 @@ idle_timeout:
 		break;
 	}
  done:
+ #if (MP_USB_MSTAR==1)
+	hcd->ms_flag &= ~MS_FLAG_SW_FRM_IDX;
+ #endif
 	ep->hcpriv = NULL;
 	spin_unlock_irqrestore (&ehci->lock, flags);
 }
@@ -1293,6 +1462,15 @@ MODULE_LICENSE ("GPL");
 #define	PLATFORM_DRIVER		ehci_hcd_sead3_driver
 #endif
 
+#if (MP_USB_MSTAR==1)
+#include "ehci-mstar.c"
+#define	PLATFORM_DRIVER		ehci_hcd_mstar_driver
+#define	SECOND_PLATFORM_DRIVER	second_ehci_hcd_mstar_driver
+#define	THIRD_PLATFORM_DRIVER	third_ehci_hcd_mstar_driver
+#define	FOURTH_PLATFORM_DRIVER	fourth_ehci_hcd_mstar_driver
+#define	FIFTH_PLATFORM_DRIVER	fifth_ehci_hcd_mstar_driver
+#endif
+
 static int __init ehci_hcd_init(void)
 {
 	int retval = 0;
@@ -1369,7 +1547,192 @@ err_debug:
 	clear_bit(USB_EHCI_LOADED, &usb_hcds_loaded);
 	return retval;
 }
+
+#if (MP_USB_MSTAR==1)
+#if !defined(DISABLE_SECOND_EHC)
+static int __init second_ehci_hcd_init(void)
+{
+	int retval = 0;
+
+	pr_debug("%s: block sizes: qh %Zd qtd %Zd itd %Zd sitd %Zd\n",
+		 hcd_name,
+		 sizeof(struct ehci_qh), sizeof(struct ehci_qtd),
+		 sizeof(struct ehci_itd), sizeof(struct ehci_sitd));
+
+#ifdef PLATFORM_DRIVER
+	retval = platform_driver_register(&SECOND_PLATFORM_DRIVER);
+	if (retval < 0)
+		goto clean0;
+#endif
+
+#ifdef PCI_DRIVER
+	retval = pci_register_driver(&PCI_DRIVER);
+	if (retval < 0)
+		goto clean1;
+#endif
+
+#ifdef PS3_SYSTEM_BUS_DRIVER
+	retval = ps3_ehci_driver_register(&PS3_SYSTEM_BUS_DRIVER);
+	if (retval < 0)
+		goto clean2;
+#endif
+
+#ifdef OF_PLATFORM_DRIVER
+	retval = of_register_platform_driver(&OF_PLATFORM_DRIVER);
+	if (retval < 0)
+		goto clean3;
+#endif
+	return retval;
+
+#ifdef OF_PLATFORM_DRIVER
+	/* of_unregister_platform_driver(&OF_PLATFORM_DRIVER); */
+clean3:
+#endif
+#ifdef PS3_SYSTEM_BUS_DRIVER
+	ps3_ehci_driver_unregister(&PS3_SYSTEM_BUS_DRIVER);
+clean2:
+#endif
+#ifdef PCI_DRIVER
+	pci_unregister_driver(&PCI_DRIVER);
+clean1:
+#endif
+#ifdef PLATFORM_DRIVER
+	platform_driver_unregister(&SECOND_PLATFORM_DRIVER);
+clean0:
+#endif
+#ifdef DEBUG
+	debugfs_remove(ehci_debug_root);
+	ehci_debug_root = NULL;
+#endif
+	return retval;
+}
+#endif
+
+#ifdef ENABLE_THIRD_EHC
+static int __init third_ehci_hcd_init(void)
+{
+	int retval = 0;
+
+	pr_debug("%s: block sizes: qh %Zd qtd %Zd itd %Zd sitd %Zd\n",
+		 hcd_name,
+		 sizeof(struct ehci_qh), sizeof(struct ehci_qtd),
+		 sizeof(struct ehci_itd), sizeof(struct ehci_sitd));
+
+#ifdef PLATFORM_DRIVER
+	retval = platform_driver_register(&THIRD_PLATFORM_DRIVER);
+	if (retval < 0)
+		goto clean0;
+#endif
+
+	return retval;
+
+clean0:
+#ifdef DEBUG
+	debugfs_remove(ehci_debug_root);
+	ehci_debug_root = NULL;
+#endif
+	return retval;
+}
+#endif
+
+#ifdef ENABLE_FOURTH_EHC
+static int __init fourth_ehci_hcd_init(void)
+{
+	int retval = 0;
+
+	pr_debug("%s: block sizes: qh %Zd qtd %Zd itd %Zd sitd %Zd\n",
+		 hcd_name,
+		 sizeof(struct ehci_qh), sizeof(struct ehci_qtd),
+		 sizeof(struct ehci_itd), sizeof(struct ehci_sitd));
+
+#ifdef PLATFORM_DRIVER
+	retval = platform_driver_register(&FOURTH_PLATFORM_DRIVER);
+	if (retval < 0)
+		goto clean0;
+#endif
+
+	return retval;
+
+clean0:
+#ifdef DEBUG
+	debugfs_remove(ehci_debug_root);
+	ehci_debug_root = NULL;
+#endif
+	return retval;
+}
+#endif
+
+#ifdef ENABLE_FIFTH_EHC
+static int __init fifth_ehci_hcd_init(void)
+{
+	int retval = 0;
+
+	pr_debug("%s: block sizes: qh %Zd qtd %Zd itd %Zd sitd %Zd\n",
+		 hcd_name,
+		 sizeof(struct ehci_qh), sizeof(struct ehci_qtd),
+		 sizeof(struct ehci_itd), sizeof(struct ehci_sitd));
+
+#ifdef PLATFORM_DRIVER
+	retval = platform_driver_register(&FIFTH_PLATFORM_DRIVER);
+	if (retval < 0)
+		goto clean0;
+#endif
+
+	return retval;
+
+clean0:
+#ifdef DEBUG
+	debugfs_remove(ehci_debug_root);
+	ehci_debug_root = NULL;
+#endif
+	return retval;
+}
+#endif
+
+static int __init all_ehci_hcd_init(void)
+{
+	int retval = 0;
+	
+	printk("Mstar_ehc_init version:%s\n", EHCI_MSTAR_VERSION);
+
+#ifdef CONFIG_MSTAR_BDMA
+	set_64bit_OBF_cipher();
+#endif
+
+#if !defined(DISABLE_SECOND_EHC)
+	retval = second_ehci_hcd_init();
+	if (retval < 0)
+		return retval;
+#endif
+
+	retval = ehci_hcd_init();
+	if (retval < 0)
+		return retval;
+
+#ifdef ENABLE_THIRD_EHC
+	retval = third_ehci_hcd_init();
+	if (retval < 0)
+		return retval;
+#endif
+#ifdef ENABLE_FOURTH_EHC
+	retval = fourth_ehci_hcd_init();
+	if (retval < 0)
+		return retval;
+#endif
+#ifdef ENABLE_FIFTH_EHC
+	retval = fifth_ehci_hcd_init();
+	if (retval < 0)
+		return retval;
+#endif
+	return retval;
+}
+#endif
+
+#if (MP_USB_MSTAR==1)
+module_init(all_ehci_hcd_init);
+#else
 module_init(ehci_hcd_init);
+#endif
 
 static void __exit ehci_hcd_cleanup(void)
 {
@@ -1390,4 +1753,76 @@ static void __exit ehci_hcd_cleanup(void)
 #endif
 	clear_bit(USB_EHCI_LOADED, &usb_hcds_loaded);
 }
+
+#if (MP_USB_MSTAR==1)
+#if !defined(DISABLE_SECOND_EHC)
+static void __exit second_ehci_hcd_cleanup(void)
+{
+#ifdef OF_PLATFORM_DRIVER
+	of_unregister_platform_driver(&OF_PLATFORM_DRIVER);
+#endif
+#ifdef PLATFORM_DRIVER
+	platform_driver_unregister(&SECOND_PLATFORM_DRIVER);
+#endif
+#ifdef PCI_DRIVER
+	pci_unregister_driver(&PCI_DRIVER);
+#endif
+#ifdef PS3_SYSTEM_BUS_DRIVER
+	ps3_ehci_driver_unregister(&PS3_SYSTEM_BUS_DRIVER);
+#endif
+#ifdef DEBUG
+	debugfs_remove(ehci_debug_root);
+#endif
+}
+#endif
+
+#ifdef ENABLE_THIRD_EHC
+static void __exit third_ehci_hcd_cleanup(void)
+{
+#ifdef PLATFORM_DRIVER
+	platform_driver_unregister(&THIRD_PLATFORM_DRIVER);
+#endif
+}
+#endif
+
+#ifdef ENABLE_FOURTH_EHC
+static void __exit fourth_ehci_hcd_cleanup(void)
+{
+#ifdef PLATFORM_DRIVER
+	platform_driver_unregister(&FOURTH_PLATFORM_DRIVER);
+#endif
+}
+#endif
+
+#ifdef ENABLE_FIFTH_EHC
+static void __exit fifth_ehci_hcd_cleanup(void)
+{
+#ifdef PLATFORM_DRIVER
+	platform_driver_unregister(&FIFTH_PLATFORM_DRIVER);
+#endif
+}
+#endif
+
+static void __exit all_ehci_hcd_cleanup(void)
+{
+	ehci_hcd_cleanup();
+#if !defined(DISABLE_SECOND_EHC)
+	second_ehci_hcd_cleanup();
+#endif
+#ifdef ENABLE_THIRD_EHC
+	third_ehci_hcd_cleanup();
+#endif
+#ifdef ENABLE_FOURTH_EHC
+	fourth_ehci_hcd_cleanup();
+#endif
+#ifdef ENABLE_FIFTH_EHC
+	fifth_ehci_hcd_cleanup();
+#endif
+}
+#endif
+
+#if (MP_USB_MSTAR==1)
+module_exit(all_ehci_hcd_cleanup);
+#else
 module_exit(ehci_hcd_cleanup);
+#endif

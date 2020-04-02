@@ -153,6 +153,9 @@ struct od_cpu_dbs_info_s {
 	unsigned int freq_lo_jiffies;
 	unsigned int freq_hi_jiffies;
 	unsigned int rate_mult;
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+	unsigned int mstar_hotplug_rate_mult;
+#endif
 	unsigned int sample_type:1;
 };
 

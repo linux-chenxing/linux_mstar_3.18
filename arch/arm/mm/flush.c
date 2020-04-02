@@ -284,7 +284,15 @@ void flush_dcache_page(struct page *page)
 	if (page == ZERO_PAGE(0))
 		return;
 
-	mapping = page_mapping(page);
+	/*
+	 * A page struct obtained via virt_to_page from a slab object may be
+	 * passed to this function. However, slab allocation can only be done
+	 * in the kernel and slab objects are never mapped into user space.
+	 * However, slab allocators may use the mapping field for their own
+	 * purposes and as a result mapping may be != NULL here although the
+	 * page is not mapped. So using NULL for this special case.
+	 */
+	mapping = PageSlab(page) ? NULL : page_mapping(page);
 
 	if (!cache_ops_need_broadcast() &&
 	    mapping && !mapping_mapped(mapping))
@@ -299,6 +307,20 @@ void flush_dcache_page(struct page *page)
 	}
 }
 EXPORT_SYMBOL(flush_dcache_page);
+
+void __flush_icache_page(struct page *page)
+{
+    unsigned long addr;
+#ifdef CONFIG_HIGHMEM
+    addr = (unsigned long)kmap_atomic(page);
+#else
+    addr = (unsigned long)page_address(page);
+#endif
+    flush_icache_range(addr, addr+PAGE_SIZE);
+#ifdef CONFIG_HIGHMEM
+    kunmap_atomic((void*)addr);
+#endif
+}
 
 /*
  * Ensure cache coherency for the kernel mapping of this page. We can

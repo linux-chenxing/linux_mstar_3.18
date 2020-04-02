@@ -1,0 +1,67 @@
+config MSTAR_SPI_FLASH
+
+  select MTD
+  select MTD_CHAR
+  select MTD_BLKDEVS
+  select NFTL
+  select NFTL_RW
+  select MTD_OOPS
+  
+  select MTD_COMPLEX_MAPPINGS
+  select MTD_BLOCK2MTD
+  select MTD_CMDLINE_PARTS
+  select SCSI_LOWLEVEL
+  select AUTOFS_FS
+  
+  select FAT_FS
+  select MSDOS_FS
+  select VFAT_FS
+  
+  select MTD_DEBUG
+  #select MTD_DEBUG_VERBOSE
+  select MTD_CONCAT
+  select MTD_PARTITIONS
+  #select MTD_NAND
+  #select JFFS2_FS
+  #select JFFS2_FS_DEBUG
+  #select JFFS2_FS_WRITEBUFFER
+
+tristate "SPI Flash"
+default n
+
+---help---
+Enable compilation option for driver SPI Flash.
+	
+menu "SPI_ACCESS_MODE"
+
+choice
+	prompt "READ"
+	default DUAL_READ
+config RIUISP
+ bool "RIU ISP"
+config NORMAL_READ
+	bool "single-read"
+config BURST_READ
+	bool "burst-read"
+config DUAL_READ
+	bool "dual-read"
+config QUAL_READ
+	bool "qual-read"
+
+endchoice
+
+endmenu
+
+menu "SPI_WRITE_SELECTION"
+
+choice
+	prompt "WRITE"
+	default REMOVE_WRITE_PROTECT
+config REMOVE_WRITE_PROTECT
+ bool "remove-write-protect(speed up)"
+config ADD_WRITE_PROTECT
+	bool "add-write-protect"
+
+endchoice
+
+endmenu	

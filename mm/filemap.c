@@ -182,6 +182,11 @@ static int sleep_on_page(void *word)
 	return 0;
 }
 
+static int sleep_on_page_timeout(void *word)
+{
+	return io_schedule_timeout(2) ? 0 : -EAGAIN;
+}
+
 static int sleep_on_page_killable(void *word)
 {
 	sleep_on_page(word);
@@ -561,6 +566,16 @@ void wait_on_page_bit(struct page *page, int bit_nr)
 							TASK_UNINTERRUPTIBLE);
 }
 EXPORT_SYMBOL(wait_on_page_bit);
+
+void wait_on_page_bit_timeout(struct page *page, int bit_nr)
+{
+	DEFINE_WAIT_BIT(wait, &page->flags, bit_nr);
+
+	if (test_bit(bit_nr, &page->flags))
+		__wait_on_bit(page_waitqueue(page), &wait,
+				sleep_on_page_timeout, TASK_UNINTERRUPTIBLE);
+}
+EXPORT_SYMBOL(wait_on_page_bit_timeout);
 
 int wait_on_page_bit_killable(struct page *page, int bit_nr)
 {
@@ -1614,6 +1629,7 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	struct inode *inode = mapping->host;
 	pgoff_t offset = vmf->pgoff;
 	struct page *page;
+	bool memcg_oom;
 	pgoff_t size;
 	int ret = 0;
 
@@ -1622,7 +1638,11 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		return VM_FAULT_SIGBUS;
 
 	/*
-	 * Do we have something in the page cache already?
+	 * Do we have something in the page cache already?  Either
+	 * way, try readahead, but disable the memcg OOM killer for it
+	 * as readahead is optional and no errors are propagated up
+	 * the fault stack.  The OOM killer is enabled while trying to
+	 * instantiate the faulting page individually below.
 	 */
 	page = find_get_page(mapping, offset);
 	if (likely(page) && !(vmf->flags & FAULT_FLAG_TRIED)) {
@@ -1630,10 +1650,14 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		 * We found the page, so try async readahead before
 		 * waiting for the lock.
 		 */
+		memcg_oom = mem_cgroup_toggle_oom(false);
 		do_async_mmap_readahead(vma, ra, file, page, offset);
+		mem_cgroup_toggle_oom(memcg_oom);
 	} else if (!page) {
 		/* No page in the page cache at all */
+		memcg_oom = mem_cgroup_toggle_oom(false);
 		do_sync_mmap_readahead(vma, ra, file, offset);
+		mem_cgroup_toggle_oom(memcg_oom);
 		count_vm_event(PGMAJFAULT);
 		mem_cgroup_count_vm_event(vma->vm_mm, PGMAJFAULT);
 		ret = VM_FAULT_MAJOR;

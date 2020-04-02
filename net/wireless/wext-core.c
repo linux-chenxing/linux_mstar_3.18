@@ -925,8 +925,33 @@ static int wireless_process_ioctl(struct net *net, struct ifreq *ifr,
 			return private(dev, iwr, cmd, info, handler);
 	}
 	/* Old driver API : call driver ioctl handler */
+#ifdef CONFIG_64BIT
+    if (dev->netdev_ops->ndo_do_ioctl) {
+        if (info->flags & IW_REQUEST_FLAG_COMPAT) {
+            int ret = 0;
+            struct iwreq iwrp;
+            struct compat_iw_point *iwp_compat =
+                (struct compat_iw_point *) &iwr->u.data;
+
+            strncpy(iwrp.ifr_ifrn.ifrn_name, iwr->ifr_ifrn.ifrn_name, IFNAMSIZ);
+            iwrp.u.data.pointer = compat_ptr(iwp_compat->pointer);
+            iwrp.u.data.length = iwp_compat->length;
+            iwrp.u.data.flags = iwp_compat->flags;
+
+            ret = dev->netdev_ops->ndo_do_ioctl(dev, (struct ifreq *) &iwrp, cmd);
+
+            iwp_compat->pointer = ptr_to_compat(iwrp.u.data.pointer);
+            iwp_compat->length = iwrp.u.data.length;
+            iwp_compat->flags = iwrp.u.data.flags;
+            return ret;
+        } else {
+            return dev->netdev_ops->ndo_do_ioctl(dev, ifr, cmd);
+        }
+    }
+#else
 	if (dev->netdev_ops->ndo_do_ioctl)
 		return dev->netdev_ops->ndo_do_ioctl(dev, ifr, cmd);
+#endif
 	return -EOPNOTSUPP;
 }
 

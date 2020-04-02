@@ -1,0 +1,9 @@
+config MSTAR_PCMCIA
+depends on MEDIA_SUPPORT
+depends on DVB_CORE
+
+tristate "PCMCIA"
+default n
+
+---help---
+Enable compilation option for driver PCMCIA

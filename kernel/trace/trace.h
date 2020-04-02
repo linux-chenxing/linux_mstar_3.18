@@ -472,11 +472,11 @@ static __always_inline int trace_get_context_bit(void)
 
 	return bit;
 }
-
 static __always_inline int trace_test_and_set_recursion(int start, int max)
 {
+	int bit=0;
+#ifdef CONFIG_TRACING
 	unsigned int val = current->trace_recursion;
-	int bit;
 
 	/* A previous recursion check was made */
 	if ((val & TRACE_CONTEXT_MASK) > max)
@@ -489,12 +489,14 @@ static __always_inline int trace_test_and_set_recursion(int start, int max)
 	val |= 1 << bit;
 	current->trace_recursion = val;
 	barrier();
-
+#endif
 	return bit;
+
 }
 
 static __always_inline void trace_clear_recursion(int bit)
 {
+#ifdef CONFIG_TRACING
 	unsigned int val = current->trace_recursion;
 
 	if (!bit)
@@ -505,8 +507,9 @@ static __always_inline void trace_clear_recursion(int bit)
 
 	barrier();
 	current->trace_recursion = val;
+#endif        
 }
-
+#define TRACE_PIPE_ALL_CPU	-1
 static inline struct ring_buffer_iter *
 trace_buffer_iter(struct trace_iterator *iter, int cpu)
 {
@@ -653,6 +656,7 @@ static inline void __trace_stack(struct trace_array *tr, unsigned long flags,
 extern cycle_t ftrace_now(int cpu);
 
 extern void trace_find_cmdline(int pid, char comm[]);
+extern int trace_find_tgid(int pid);
 
 #ifdef CONFIG_DYNAMIC_FTRACE
 extern unsigned long ftrace_update_tot_cnt;
@@ -866,6 +870,7 @@ enum trace_iterator_flags {
 	TRACE_ITER_IRQ_INFO		= 0x800000,
 	TRACE_ITER_MARKERS		= 0x1000000,
 	TRACE_ITER_FUNCTION		= 0x2000000,
+	TRACE_ITER_TGID 		= 0x4000000,
 };
 
 /*

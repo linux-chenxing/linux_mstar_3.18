@@ -114,6 +114,9 @@ ssize_t slabinfo_write(struct file *file, const char __user *buffer,
 		       size_t count, loff_t *ppos);
 
 #ifdef CONFIG_MEMCG_KMEM
+#ifdef CONFIG_Kasan_Switch_On
+#include <linux/memcontrol.h>
+#endif
 static inline bool is_root_cache(struct kmem_cache *s)
 {
 	return !s->memcg_params || s->memcg_params->is_root_cache;

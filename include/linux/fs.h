@@ -463,6 +463,11 @@ struct block_device {
 	int			bd_fsfreeze_count;
 	/* Mutex for freeze */
 	struct mutex		bd_fsfreeze_mutex;
+	#if(1 == MP_FAT_DEBUG_MESSAGE_CONTROL)
+	/*debug message control*/
+	int msg_count;
+	bool not_msg_flag;
+	#endif
 };
 
 /*
@@ -675,10 +680,17 @@ static inline loff_t i_size_read(const struct inode *inode)
 static inline void i_size_write(struct inode *inode, loff_t i_size)
 {
 #if BITS_PER_LONG==32 && defined(CONFIG_SMP)
+#if(MP_SEQLOCK_RCU_STALL==1)
+	unsigned long flags;
+	raw_local_irq_save(flags);
+#endif
 	preempt_disable();
 	write_seqcount_begin(&inode->i_size_seqcount);
 	inode->i_size = i_size;
 	write_seqcount_end(&inode->i_size_seqcount);
+#if(MP_SEQLOCK_RCU_STALL==1)
+	raw_local_irq_restore(flags);
+#endif
 	preempt_enable();
 #elif BITS_PER_LONG==32 && defined(CONFIG_PREEMPT)
 	preempt_disable();
@@ -1322,6 +1334,11 @@ struct super_block {
 
 	/* Being remounted read-only */
 	int s_readonly_remount;
+#if (1 == MP_FAT_DEBUG_MESSAGE_CONTROL)
+	/*debug message control */
+	int msg_count;
+	bool not_msg_flag;
+#endif
 };
 
 /* superblock cache pruning functions */
@@ -2006,6 +2023,12 @@ extern long do_sys_open(int dfd, const char __user *filename, int flags,
 			umode_t mode);
 extern struct file *file_open_name(struct filename *, int, umode_t);
 extern struct file *filp_open(const char *, int, umode_t);
+
+#if (1 == MP_CMA_PATCH_POOL_UTOPIA_TO_KERNEL)
+extern int file_ioctl(struct file *filp, unsigned int cmd,
+		unsigned long arg);
+#endif
+
 extern struct file *file_open_root(struct dentry *, struct vfsmount *,
 				   const char *, int);
 extern struct file * dentry_open(const struct path *, int, const struct cred *);
@@ -2347,6 +2370,9 @@ extern void unlock_new_inode(struct inode *);
 extern unsigned int get_next_ino(void);
 
 extern void __iget(struct inode * inode);
+#if (MP_NTFS3G_WRAP==1)
+extern void __iget_wrap(struct inode * inode);      //AlanYu 20111121 : wrap for __iget()
+#endif
 extern void iget_failed(struct inode *);
 extern void clear_inode(struct inode *);
 extern void __destroy_inode(struct inode *);
@@ -2566,8 +2592,15 @@ extern int generic_check_addressable(unsigned, u64);
 extern int buffer_migrate_page(struct address_space *,
 				struct page *, struct page *,
 				enum migrate_mode);
+#ifdef CONFIG_MP_CMA_PATCH_MIGRATION_FILTER
+extern int ext4_jnl_migrate_page(struct address_space *mapping,
+	struct page *newpage, struct page *page, enum migrate_mode mode);
+#endif
 #else
 #define buffer_migrate_page NULL
+#ifdef CONFIG_MP_CMA_PATCH_MIGRATION_FILTER
+#define ext4_jnl_migrate_page NULL
+#endif
 #endif
 
 extern int inode_change_ok(const struct inode *, struct iattr *);

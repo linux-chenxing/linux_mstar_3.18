@@ -41,6 +41,10 @@
 #include <asm/tlbflush.h>
 #include "internal.h"
 
+#ifdef CONFIG_MP_CMA_PATCH_KSM_MIGRATION_FAILURE
+#include <linux/migrate.h>
+#endif
+
 #ifdef CONFIG_NUMA
 #define NUMA(x)		(x)
 #define DO_NUMA(x)	do { (x); } while (0)
@@ -1109,6 +1113,37 @@ out:
 	return err;
 }
 
+#ifdef CONFIG_MP_CMA_PATCH_KSM_MIGRATION_FAILURE
+static inline struct page *ksm_migrate_replace_cma_page(struct page *page)
+{
+	struct page *newpage = alloc_page(GFP_HIGHUSER);
+
+	if (!newpage)
+		goto out;
+
+	/*
+	 * Take additional reference to the new page to ensure it won't get
+	 * freed after migration procedure end.
+	 */
+	get_page_foll(newpage);
+
+	if (migrate_replace_page(page, newpage) == 0) {
+		put_page(newpage);
+		return newpage;
+	}
+
+	put_page(newpage);
+	__free_page(newpage);
+out:
+	/*
+	 * Migration errors in case of get_user_pages() might not
+	 * be fatal to CMA itself, so better don't fail here.
+	 */
+	return page;
+}
+
+#endif
+
 /*
  * try_to_merge_two_pages - take two identical pages and prepare them
  * to be merged into one page.
@@ -1126,6 +1161,32 @@ static struct page *try_to_merge_two_pages(struct rmap_item *rmap_item,
 {
 	int err;
 
+#ifdef CONFIG_MP_CMA_PATCH_KSM_MIGRATION_FAILURE
+	if (is_cma_page(page)) {
+			struct page *old_page = page;
+			//int page_cnt_old = page_count(page);
+			//int expect_count = 2 + page_has_private(page);
+		
+			put_page(page);
+			wait_on_page_locked_timeout(page);
+			page = ksm_migrate_replace_cma_page(page);
+			get_page(old_page);
+			if(page == old_page)
+			{
+			
+			   if(page_mapcount(page) != 1)
+			   {
+				    printk(KERN_ERR "SKIM stable tree may only trace one of the multiple references of this stable page candidate\n " 
+						   "	  so we may failed KSM migration late. skip this page(%ld, mapcount%d)\n", page_to_pfn(page), page_mapcount(page)); 
+				   return NULL;
+			   }
+			   else
+			   	printk(KERN_ERR "KSM migrate cma page failed, but page mapcount is equal to 1\n");
+			}
+			//printk(KERN_ERR "KSM mig %ld to %ld, %d, %d\n", page_to_pfn(old_page), page_to_pfn(page), 
+				//page_cnt_old, expect_count);
+		}	
+#endif
 	err = try_to_merge_with_ksm_page(rmap_item, page, NULL);
 	if (!err) {
 		err = try_to_merge_with_ksm_page(tree_rmap_item,
@@ -1291,6 +1352,12 @@ static struct stable_node *stable_tree_insert(struct page *kpage)
 		}
 	}
 
+	if(is_cma_page(kpage))
+	{
+	   printk(KERN_ERR "@@@@@stable_tree_insert cma page(mapcount%d),reject it\n", page_mapcount(kpage));
+	   dump_stack();
+	   return NULL;
+	}
 	stable_node = alloc_stable_node();
 	if (!stable_node)
 		return NULL;
@@ -1471,6 +1538,11 @@ static void cmp_and_merge_page(struct page *page, struct rmap_item *rmap_item)
 		rmap_item->oldchecksum = checksum;
 		return;
 	}
+
+#ifdef CONFIG_MP_CMA_PATCH_KSM_MIGRATION_FAILURE
+	if (is_cma_page(page)) //this patch is fix Mstar CMA & KSM conflict, have to Fix late
+		return;
+#endif
 
 	tree_rmap_item =
 		unstable_tree_search_insert(rmap_item, page, &tree_page);
@@ -2067,6 +2139,11 @@ void ksm_migrate_page(struct page *newpage, struct page *oldpage)
 		 */
 		smp_wmb();
 		set_page_stable_node(oldpage, NULL);
+		if(is_cma_page(newpage))
+		{
+			 printk(KERN_ERR "@@@@@ migrate to cma page\n");
+			dump_stack();
+		}
 	}
 }
 #endif /* CONFIG_MIGRATION */
@@ -2438,4 +2515,50 @@ out_free:
 out:
 	return err;
 }
+
+#ifdef CONFIG_CMA
+#ifdef CONFIG_MP_CMA_PATCH_AGRESSIVE_KILL_PROCESS_TO_FREE_CMA_PAGE
+void scan_ksm_cma_page(struct page *page)
+{
+	struct stable_node *stable_node;
+	struct rmap_item *rmap_item;
+	int search_new_forks = 0;
+
+	VM_BUG_ON(!PageKsm(page));
+	VM_BUG_ON(!PageLocked(page));
+
+	stable_node = page_stable_node(page);
+	if (!stable_node)
+		return;
+again:
+	printk(KERN_WARNING "@@@@@ scan_ksm_cma_page find ksm page%ld in cma area\n", page_to_pfn(page));
+	hlist_for_each_entry(rmap_item, &stable_node->hlist, hlist) {
+		struct anon_vma *anon_vma = rmap_item->anon_vma;
+		struct anon_vma_chain *vmac;
+		struct vm_area_struct *vma;
+
+		anon_vma_lock_read(anon_vma);
+		anon_vma_interval_tree_foreach(vmac, &anon_vma->rb_root,
+					       0, ULONG_MAX) {
+			vma = vmac->vma;
+			if (rmap_item->address < vma->vm_start ||
+			    rmap_item->address >= vma->vm_end)
+				continue;
+			/*
+			 * Initially we examine only the vma which covers this
+			 * rmap_item; but later, if there is still work to do,
+			 * we examine covering vmas in other mms: in case they
+			 * were forked from the original since ksmd passed.
+			 */
+			if ((rmap_item->mm == vma->vm_mm) == search_new_forks)
+				continue;
+			vma->vm_mm->cma_pages++;
+		}
+		anon_vma_unlock_read(anon_vma);
+	}
+	if (!search_new_forks++)
+		goto again;
+}
+#endif
+#endif
 module_init(ksm_init)

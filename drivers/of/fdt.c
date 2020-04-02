@@ -11,6 +11,7 @@
 
 #include <linux/kernel.h>
 #include <linux/initrd.h>
+#include <linux/memblock.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_fdt.h>
@@ -550,28 +551,64 @@ int __init of_flat_dt_match(unsigned long node, const char *const *compat)
  * early_init_dt_check_for_initrd - Decode initrd location from flat tree
  * @node: reference to node containing initrd location ('chosen')
  */
-void __init early_init_dt_check_for_initrd(unsigned long node)
+
+extern  unsigned long __ramdisk_start, __ramdisk_len;
+#if (MP_PLATFORM_ARM_64bit_BOOTARGS_NODTB == 1)
+extern  unsigned long __cmdline;
+char* cmd_ptr;
+#endif
+static void __init early_init_dt_check_for_initrd(unsigned long node)
 {
-	unsigned long start, end, len;
-	__be32 *prop;
+#if (MP_PLATFORM_ARM_64bit_BOOTARGS_NODTB == 1)
+	cmd_ptr = (char *)__cmdline;
+#endif
+        #if 0 
+	unsigned int startl, endl,starth,endh;
+        #endif
 
 	pr_debug("Looking for initrd properties... ");
 
+	printk("Looking for initrd properties... ");
+        printk("initrd_start=0x%lx  initrd_end=0x%lx\n", __ramdisk_start,__ramdisk_start+__ramdisk_len);
+#ifdef CONFIG_ARM64
+	initrd_start = (unsigned long)__va(__ramdisk_start);
+	initrd_end = (unsigned long)__va(__ramdisk_start+__ramdisk_len);
+	initrd_below_start_ok = 1;
+#endif
+        #if 0 
+        printk("initrd_start=0x%p  initrd_len=0x%p\n", &__ramdisk_start,&__ramdisk_len);
+        startl = *( volatile u32 * )( 0x1f000000 +  0x100510 * 2);
+        starth = *( volatile u32 * )( 0x1f000000 +  0x100512 * 2);
+        
+        endl = *(volatile u32 * )( 0x1f000000 +  0x100514 * 2);
+        endh = *(volatile u32 * )( 0x1f000000 +  0x100516 * 2);
+       
+        start = startl + (starth <<16);
+        end   = endl + (endh <<16);
+        pr_debug("initrd_start=0x%lx  initrd_end=0x%lx\n", start, end);
+        pr_debug("initrd_start1=0x%lx  initrd_end1=0x%lx\n", startl, endl);
+        pr_debug("initrd_starth=0x%lx  initrd_endh=0x%lx\n", starth, endh);
+        #endif
+
+
+        #if 0
 	prop = of_get_flat_dt_prop(node, "linux,initrd-start", &len);
 	if (!prop)
 		return;
-	start = of_read_ulong(prop, len/4);
+	start = of_read_number(prop, len/4);
 
 	prop = of_get_flat_dt_prop(node, "linux,initrd-end", &len);
 	if (!prop)
 		return;
-	end = of_read_ulong(prop, len/4);
+	end = of_read_number(prop, len/4);
 
-	early_init_dt_setup_initrd_arch(start, end);
-	pr_debug("initrd_start=0x%lx  initrd_end=0x%lx\n", start, end);
+	initrd_start = (unsigned long)__va(start);
+	initrd_end = (unsigned long)__va(end);
+	initrd_below_start_ok = 1;
+        #endif
 }
 #else
-inline void early_init_dt_check_for_initrd(unsigned long node)
+static inline void early_init_dt_check_for_initrd(unsigned long node)
 {
 }
 #endif /* CONFIG_BLK_DEV_INITRD */
@@ -579,9 +616,17 @@ inline void early_init_dt_check_for_initrd(unsigned long node)
 /**
  * early_init_dt_scan_root - fetch the top level address and size cells
  */
+ 
+ #if (MP_PLATFORM_ARM_64bit_BOOTARGS_NODTB == 1)
+extern  unsigned long __cmdline;
+char* cmd_ptr;
+#endif
 int __init early_init_dt_scan_root(unsigned long node, const char *uname,
 				   int depth, void *data)
 {
+#if (MP_PLATFORM_ARM_64bit_BOOTARGS_NODTB == 1)
+	cmd_ptr = (char *)__cmdline;
+#endif
 	__be32 *prop;
 
 	if (depth != 0)
@@ -649,7 +694,21 @@ int __init early_init_dt_scan_memory(unsigned long node, const char *uname,
 
 		base = dt_mem_next_cell(dt_root_addr_cells, &reg);
 		size = dt_mem_next_cell(dt_root_size_cells, &reg);
-
+#ifdef CONFIG_ARM64
+		if(lx_num == 0){
+			linux_memory_address = base;
+			linux_memory_length = size;
+		}
+		else if(lx_num == 1){
+			linux_memory2_address = base;
+			linux_memory2_length = size;
+		}
+		else if(lx_num == 2){
+			linux_memory3_address = base;
+                        linux_memory3_length = size;
+		}	
+		lx_num ++;
+#endif
 		if (size == 0)
 			continue;
 		pr_debug(" - %llx ,  %llx\n", (unsigned long long)base,
@@ -661,41 +720,127 @@ int __init early_init_dt_scan_memory(unsigned long node, const char *uname,
 	return 0;
 }
 
+/*
+ * Convert configs to something easy to use in C code
+ */
+#if defined(CONFIG_CMDLINE_FORCE)
+static const int overwrite_incoming_cmdline = 1;
+static const int read_dt_cmdline;
+static const int concat_cmdline;
+#elif defined(CONFIG_CMDLINE_EXTEND)
+static const int overwrite_incoming_cmdline;
+static const int read_dt_cmdline = 1;
+static const int concat_cmdline = 1;
+#else /* CMDLINE_FROM_BOOTLOADER */
+static const int overwrite_incoming_cmdline;
+static const int read_dt_cmdline = 1;
+static const int concat_cmdline;
+#endif
+
+#ifdef CONFIG_CMDLINE
+static const char *config_cmdline = CONFIG_CMDLINE;
+#else
+static const char *config_cmdline = "";
+#endif
+
 int __init early_init_dt_scan_chosen(unsigned long node, const char *uname,
 				     int depth, void *data)
 {
-	unsigned long l;
-	char *p;
+	unsigned long l = 0;
+	char *p = NULL;
+	char *cmdline = data;
 
 	pr_debug("search \"chosen\", depth: %d, uname: %s\n", depth, uname);
 
-	if (depth != 1 || !data ||
+	if (depth != 1 || !cmdline ||
 	    (strcmp(uname, "chosen") != 0 && strcmp(uname, "chosen@0") != 0))
 		return 0;
 
 	early_init_dt_check_for_initrd(node);
 
-	/* Retrieve command line */
-	p = of_get_flat_dt_prop(node, "bootargs", &l);
-	if (p != NULL && l > 0)
-		strlcpy(data, p, min((int)l, COMMAND_LINE_SIZE));
+	/* Put CONFIG_CMDLINE in if forced or if data had nothing in it to start */
+	if (overwrite_incoming_cmdline || !cmdline[0])
+		strlcpy(cmdline, config_cmdline, COMMAND_LINE_SIZE);
 
-	/*
-	 * CONFIG_CMDLINE is meant to be a default in case nothing else
-	 * managed to set the command line, unless CONFIG_CMDLINE_FORCE
-	 * is set in which case we override whatever was found earlier.
-	 */
-#ifdef CONFIG_CMDLINE
-#ifndef CONFIG_CMDLINE_FORCE
-	if (!((char *)data)[0])
-#endif
-		strlcpy(data, CONFIG_CMDLINE, COMMAND_LINE_SIZE);
-#endif /* CONFIG_CMDLINE */
+	/* Retrieve command line unless forcing */
+	if (read_dt_cmdline)
+		p = of_get_flat_dt_prop(node, "bootargs", &l);
+
+	if (p != NULL && l > 0) {
+		if (concat_cmdline) {
+			int cmdline_len;
+			int copy_len;
+			strlcat(cmdline, " ", COMMAND_LINE_SIZE);
+			cmdline_len = strlen(cmdline);
+			copy_len = COMMAND_LINE_SIZE - cmdline_len - 1;
+			copy_len = min((int)l, copy_len);
+			strncpy(cmdline + cmdline_len, p, copy_len);
+			cmdline[cmdline_len + copy_len] = '\0';
+		} else {
+			strlcpy(cmdline, p, min((int)l, COMMAND_LINE_SIZE));
+		}
+	}
 
 	pr_debug("Command line is: %s\n", (char*)data);
 
 	/* break now */
 	return 1;
+}
+
+#ifdef CONFIG_HAVE_MEMBLOCK
+void __init __weak early_init_dt_add_memory_arch(u64 base, u64 size)
+{
+	const u64 phys_offset = __pa(PAGE_OFFSET);
+	base &= PAGE_MASK;
+	size &= PAGE_MASK;
+	if (base + size < phys_offset) {
+		pr_warning("Ignoring memory block 0x%llx - 0x%llx\n",
+			   base, base + size);
+		return;
+	}
+	if (base < phys_offset) {
+		pr_warning("Ignoring memory range 0x%llx - 0x%llx\n",
+			   base, phys_offset);
+		size -= phys_offset - base;
+		base = phys_offset;
+	}
+	memblock_add(base, size);
+}
+
+/*
+ * called from unflatten_device_tree() to bootstrap devicetree itself
+ * Architectures can override this definition if memblock isn't used
+ */
+void * __init __weak early_init_dt_alloc_memory_arch(u64 size, u64 align)
+{
+	return __va(memblock_alloc(size, align));
+}
+#endif
+
+bool __init early_init_dt_scan(void *params)
+{
+	if (!params)
+		return false;
+
+	/* Setup flat device-tree pointer */
+	initial_boot_params = params;
+
+	/* check device tree validity */
+	if (be32_to_cpu(initial_boot_params->magic) != OF_DT_HEADER) {
+		initial_boot_params = NULL;
+		return false;
+	}
+
+	/* Retrieve various information from the /chosen node */
+	of_scan_flat_dt(early_init_dt_scan_chosen, boot_command_line);
+
+	/* Initialize {size,address}-cells info */
+	of_scan_flat_dt(early_init_dt_scan_root, NULL);
+
+	/* Setup memory, calling early_init_dt_add_memory_arch */
+	of_scan_flat_dt(early_init_dt_scan_memory, NULL);
+
+	return true;
 }
 
 /**

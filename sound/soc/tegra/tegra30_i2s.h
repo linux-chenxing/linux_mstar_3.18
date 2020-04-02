@@ -1,7 +1,7 @@
 /*
  * tegra30_i2s.h - Definitions for Tegra30 I2S driver
  *
- * Copyright (c) 2011,2012, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2010-2014, NVIDIA CORPORATION.  All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -45,6 +45,9 @@
 #define TEGRA30_I2S_LCOEF_2_4_0				0x4c
 #define TEGRA30_I2S_LCOEF_2_4_1				0x50
 #define TEGRA30_I2S_LCOEF_2_4_2				0x54
+#ifndef CONFIG_ARCH_TEGRA_3x_SOC
+#define TEGRA30_I2S_SLOT_CTRL2				0x64
+#endif
 
 /* Fields in TEGRA30_I2S_CTRL */
 
@@ -110,7 +113,7 @@
 
 #define TEGRA30_I2S_TIMING_NON_SYM_ENABLE		(1 << 12)
 #define TEGRA30_I2S_TIMING_CHANNEL_BIT_COUNT_SHIFT	0
-#define TEGRA30_I2S_TIMING_CHANNEL_BIT_COUNT_MASK_US	0x7ff
+#define TEGRA30_I2S_TIMING_CHANNEL_BIT_COUNT_MASK_US	0x7fff
 #define TEGRA30_I2S_TIMING_CHANNEL_BIT_COUNT_MASK	(TEGRA30_I2S_TIMING_CHANNEL_BIT_COUNT_MASK_US << TEGRA30_I2S_TIMING_CHANNEL_BIT_COUNT_SHIFT)
 
 /* Fields in TEGRA30_I2S_OFFSET */
@@ -171,9 +174,15 @@
 /* Fields in TEGRA30_I2S_SLOT_CTRL */
 
 /* Number of slots in frame, minus 1 */
+#ifndef CONFIG_ARCH_TEGRA_3x_SOC
+#define TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOTS_SHIFT		0
+#define TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOTS_MASK_US	0xf
+#define TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOTS_MASK		(TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOTS_MASK_US << TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOTS_SHIFT)
+#else
 #define TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOTS_SHIFT		16
 #define TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOTS_MASK_US	7
-#define TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOTS_MASK		(TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOT_MASK_US << TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOT_SHIFT)
+#define TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOTS_MASK		(TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOTS_MASK_US << TEGRA30_I2S_SLOT_CTRL_TOTAL_SLOTS_SHIFT)
+#endif
 
 /* TDM mode slot enable bitmask */
 #define TEGRA30_I2S_SLOT_CTRL_RX_SLOT_ENABLES_SHIFT	8
@@ -181,6 +190,14 @@
 
 #define TEGRA30_I2S_SLOT_CTRL_TX_SLOT_ENABLES_SHIFT	0
 #define TEGRA30_I2S_SLOT_CTRL_TX_SLOT_ENABLES_MASK	(0xff << TEGRA30_I2S_SLOT_CTRL_TX_SLOT_ENABLES_SHIFT)
+
+#ifndef CONFIG_ARCH_TEGRA_3x_SOC
+#define TEGRA30_I2S_SLOT_CTRL2_TX_SLOT_ENABLES_SHIFT	0
+#define TEGRA30_I2S_SLOT_CTRL2_TX_SLOT_ENABLES_MASK	(0xffff << TEGRA30_I2S_SLOT_CTRL2_TX_SLOT_ENABLES_SHIFT)
+
+#define TEGRA30_I2S_SLOT_CTRL2_RX_SLOT_ENABLES_SHIFT	16
+#define TEGRA30_I2S_SLOT_CTRL2_RX_SLOT_ENABLES_MASK	(0xffff << TEGRA30_I2S_SLOT_CTRL2_RX_SLOT_ENABLES_SHIFT)
+#endif
 
 /* Fields in TEGRA30_I2S_CIF_RX_CTRL */
 /* Uses field from TEGRA30_AUDIOCIF_CTRL_* in tegra30_ahub.h */
@@ -225,17 +242,98 @@
 #define TEGRA30_I2S_LCOEF_COEF_MASK_US			0xffff
 #define TEGRA30_I2S_LCOEF_COEF_MASK			(TEGRA30_I2S_LCOEF_COEF_MASK_US << TEGRA30_I2S_LCOEF_COEF_SHIFT)
 
+/* Number of i2s controllers*/
+#define TEGRA30_NR_I2S_IFC				5
+
+struct dsp_config_t {
+	int num_slots;
+	int rx_mask;
+	int tx_mask;
+	int slot_width;
+	int rx_data_offset;
+	int tx_data_offset;
+};
+
+struct codec_config {
+	int i2s_id;
+	int rate;
+	int channels;
+	int bitsize;
+	int is_i2smaster;
+	int i2s_mode;
+	int bit_clk;
+};
+
 struct tegra30_i2s {
 	struct snd_soc_dai_driver dai;
+	struct device *dev;
 	int cif_id;
 	struct clk *clk_i2s;
+	struct clk *clk_i2s_sync;
+	struct clk *clk_audio_2x;
+	struct clk *clk_pll_a_out0;
+	int id;
 	enum tegra30_ahub_txcif capture_i2s_cif;
 	enum tegra30_ahub_rxcif capture_fifo_cif;
-	struct snd_dmaengine_dai_dma_data capture_dma_data;
+	struct tegra_pcm_dma_params capture_dma_data;
 	enum tegra30_ahub_rxcif playback_i2s_cif;
 	enum tegra30_ahub_txcif playback_fifo_cif;
-	struct snd_dmaengine_dai_dma_data playback_dma_data;
+	struct tegra_pcm_dma_params playback_dma_data;
 	struct regmap *regmap;
+	int daifmt;
+	int dam_ifc;
+	int dam_ch_refcount;
+	int  playback_ref_count;
+	int  capture_ref_count;
+	bool is_dam_used;
+	bool allocate_pb_fifo_cif;
+	bool allocate_cap_fifo_cif;
+#ifdef CONFIG_PM
+	#ifdef CONFIG_ARCH_TEGRA_3x_SOC
+		u32  reg_cache[(TEGRA30_I2S_LCOEF_2_4_2 >> 2) + 1];
+	#else
+		u32  reg_cache[(TEGRA30_I2S_SLOT_CTRL2 >> 2) + 1];
+	#endif
+#endif
+	int call_record_dam_ifc;
+	int call_record_dam_ifc2;
+	int is_call_mode_rec;
+	struct dsp_config_t dsp_config;
+	int i2s_bit_clk;
 };
+
+int tegra30_make_voice_call_connections(struct codec_config *codec_info,
+			struct codec_config *bb_info,
+			int uses_voice_codec);
+
+int tegra30_break_voice_call_connections(struct codec_config *codec_info,
+			struct codec_config *bb_info,
+			int uses_voice_codec);
+
+int tegra30_make_bt_voice_call_connections(struct codec_config *codec_info,
+			struct codec_config *bb_info,
+			int uses_voice_codec);
+
+int tegra30_break_bt_voice_call_connections(struct codec_config *codec_info,
+			struct codec_config *bb_info,
+			int uses_voice_codec);
+
+#if defined(CONFIG_ARCH_TEGRA_14x_SOC)
+int t14x_make_bt_voice_call_connections(struct codec_config *codec_info,
+				struct ahub_bbc1_config *bb_info,
+				int uses_voice_codec);
+
+int t14x_break_bt_voice_call_connections(struct codec_config *codec_info,
+				struct ahub_bbc1_config *bb_info,
+				int uses_voice_codec);
+
+int t14x_make_voice_call_connections(struct codec_config *codec_info,
+				struct ahub_bbc1_config *bb_info,
+				int uses_voice_codec);
+
+int t14x_break_voice_call_connections(struct codec_config *codec_info,
+				struct ahub_bbc1_config *bb_info,
+				int uses_voice_codec);
+#endif
 
 #endif

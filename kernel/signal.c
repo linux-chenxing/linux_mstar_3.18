@@ -41,6 +41,7 @@
 #include <asm/unistd.h>
 #include <asm/siginfo.h>
 #include <asm/cacheflush.h>
+#include <mstar/mpatch_macro.h>
 #include "audit.h"	/* audit_signal_info() */
 
 /*
@@ -2361,6 +2362,23 @@ relock:
 			 * first and our do_group_exit call below will use
 			 * that value and ignore the one we pass it.
 			 */
+#if (MP_DEBUG_TOOL_COREDUMP == 1)
+#ifdef CONFIG_SHOW_FAULT_TRACE_INFO
+#if defined(CONFIG_ARM64) && defined(CONFIG_ANDROID)
+                /*prevent kernel coredump message mess up with Android coredump message*/
+#elif defined(CONFIG_ARM64)
+		extern void show_usr_info(struct task_struct *task, struct pt_regs *regs, unsigned long addr);
+		
+                #ifdef CONFIG_ANDROID
+                        /*prevent kernel coredump message mess up with Android coredump message*/
+                #else
+                        show_usr_info(current, regs, regs->pc);
+                #endif /*CONFIG_ANDROID*/
+
+#endif //CONFIG_ARM64
+		printk(KERN_ALERT "[Mstar COREDUMP] SIGNR:%d\n\n", signr);
+#endif //CONFIG__SHOW_FAULT_TRACE_INFO
+#endif /*MP_DEBUG_TOOL_COREDUMP*/
 			do_coredump(info);
 		}
 
@@ -2375,7 +2393,7 @@ relock:
 }
 
 /**
- * signal_delivered - 
+ * signal_delivered -
  * @sig:		number of signal being delivered
  * @info:		siginfo_t of signal being delivered
  * @ka:			sigaction setting that chose the handler
@@ -2723,7 +2741,7 @@ COMPAT_SYSCALL_DEFINE2(rt_sigpending, compat_sigset_t __user *, uset,
 
 #ifndef HAVE_ARCH_COPY_SIGINFO_TO_USER
 
-int copy_siginfo_to_user(siginfo_t __user *to, siginfo_t *from)
+int copy_siginfo_to_user(siginfo_t __user *to, const siginfo_t *from)
 {
 	int err;
 
@@ -2848,7 +2866,7 @@ int do_sigtimedwait(const sigset_t *which, siginfo_t *info,
 		recalc_sigpending();
 		spin_unlock_irq(&tsk->sighand->siglock);
 
-		timeout = schedule_timeout_interruptible(timeout);
+		timeout = freezable_schedule_timeout_interruptible(timeout);
 
 		spin_lock_irq(&tsk->sighand->siglock);
 		__set_task_blocked(tsk, &tsk->real_blocked);
@@ -3134,7 +3152,7 @@ int do_sigaction(int sig, struct k_sigaction *act, struct k_sigaction *oact)
 	return 0;
 }
 
-static int 
+static int
 do_sigaltstack (const stack_t __user *uss, stack_t __user *uoss, unsigned long sp)
 {
 	stack_t oss;
@@ -3278,7 +3296,7 @@ int __compat_save_altstack(compat_stack_t __user *uss, unsigned long sp)
  */
 SYSCALL_DEFINE1(sigpending, old_sigset_t __user *, set)
 {
-	return sys_rt_sigpending((sigset_t __user *)set, sizeof(old_sigset_t)); 
+	return sys_rt_sigpending((sigset_t __user *)set, sizeof(old_sigset_t));
 }
 
 #endif
@@ -3403,7 +3421,7 @@ COMPAT_SYSCALL_DEFINE4(rt_sigaction, int, sig,
 	ret = do_sigaction(sig, act ? &new_ka : NULL, oact ? &old_ka : NULL);
 	if (!ret && oact) {
 		sigset_to_compat(&mask, &old_ka.sa.sa_mask);
-		ret = put_user(ptr_to_compat(old_ka.sa.sa_handler), 
+		ret = put_user(ptr_to_compat(old_ka.sa.sa_handler),
 			       &oact->sa_handler);
 		ret |= copy_to_user(&oact->sa_mask, &mask, sizeof(mask));
 		ret |= __put_user(old_ka.sa.sa_flags, &oact->sa_flags);
@@ -3579,7 +3597,7 @@ SYSCALL_DEFINE2(rt_sigsuspend, sigset_t __user *, unewset, size_t, sigsetsize)
 		return -EFAULT;
 	return sigsuspend(&newset);
 }
- 
+
 #ifdef CONFIG_COMPAT
 COMPAT_SYSCALL_DEFINE2(rt_sigsuspend, compat_sigset_t __user *, unewset, compat_size_t, sigsetsize)
 {

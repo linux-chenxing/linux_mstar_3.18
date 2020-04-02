@@ -69,6 +69,8 @@ struct regmap_range {
 	unsigned int range_max;
 };
 
+#define regmap_reg_range(low, high) { .range_min = low, .range_max = high, }
+
 /*
  * A table of ranges including some yes ranges and some no ranges.
  * If a register belongs to a no_range, the corresponding check function
@@ -124,6 +126,8 @@ typedef void (*regmap_unlock)(void *);
  *                field is NULL but precious_table (see below) is not, the
  *                check is performed on such table (a register is precious if
  *                it belongs to one of the ranges specified by precious_table).
+ * @reg_volatile_set: Optional callback to change access mode for the register
+ *		  between volatile and cached.
  * @lock:	  Optional lock callback (overrides regmap's default lock
  *		  function, based on spinlock or mutex).
  * @unlock:	  As above for unlocking.
@@ -187,6 +191,8 @@ struct regmap_config {
 	bool (*readable_reg)(struct device *dev, unsigned int reg);
 	bool (*volatile_reg)(struct device *dev, unsigned int reg);
 	bool (*precious_reg)(struct device *dev, unsigned int reg);
+	int (*reg_volatile_set)(struct device *dev, unsigned int reg,
+				bool is_volatile);
 	regmap_lock lock;
 	regmap_unlock unlock;
 	void *lock_arg;
@@ -399,6 +405,8 @@ int regcache_sync_region(struct regmap *map, unsigned int min,
 void regcache_cache_only(struct regmap *map, bool enable);
 void regcache_cache_bypass(struct regmap *map, bool enable);
 void regcache_mark_dirty(struct regmap *map);
+int regcache_volatile_set(struct regmap *map, unsigned int reg,
+			  bool is_volatile);
 
 int regmap_register_patch(struct regmap *map, const struct reg_default *regs,
 			  int num_regs);
@@ -418,10 +426,16 @@ bool regmap_reg_in_ranges(unsigned int reg,
  *
  * @reg_offset: Offset of the status/mask register within the bank
  * @mask:       Mask used to flag/control the register.
+ * @type_reg_offset: Offset register for the irq type setting.
+ * @type_rising_mask: Mask bit to configure RISING type irq.
+ * @type_falling_mask: Mask bit to configure FALLING type irq.
  */
 struct regmap_irq {
 	unsigned int reg_offset;
 	unsigned int mask;
+	unsigned int type_reg_offset;
+	unsigned int type_rising_mask;
+	unsigned int type_falling_mask;
 };
 
 /**
@@ -435,13 +449,18 @@ struct regmap_irq {
  * @mask_base:   Base mask register address.
  * @ack_base:    Base ack address.  If zero then the chip is clear on read.
  * @wake_base:   Base address for wake enables.  If zero unsupported.
+ * @type_base:   Base address for irq type.  If zero unsupported.
  * @irq_reg_stride:  Stride to use for chips where registers are not contiguous.
  * @runtime_pm:  Hold a runtime PM lock on the device when accessing it.
+ * @type_invert: Invert the type flags.
  *
  * @num_regs:    Number of registers in each control bank.
  * @irqs:        Descriptors for individual IRQs.  Interrupt numbers are
  *               assigned based on the index in the array of the interrupt.
  * @num_irqs:    Number of descriptors.
+ * @num_type_reg:    Number of type registers.
+ * @type_reg_stride: Stride to use for chips where type registers are not
+ *			contiguous.
  */
 struct regmap_irq_chip {
 	const char *name;
@@ -450,15 +469,20 @@ struct regmap_irq_chip {
 	unsigned int mask_base;
 	unsigned int ack_base;
 	unsigned int wake_base;
+	unsigned int type_base;
 	unsigned int irq_reg_stride;
 	unsigned int mask_invert;
 	unsigned int wake_invert;
 	bool runtime_pm;
+	unsigned int type_invert;
 
 	int num_regs;
 
 	const struct regmap_irq *irqs;
 	int num_irqs;
+
+	int num_type_reg;
+	unsigned int type_reg_stride;
 };
 
 struct regmap_irq_chip_data;
@@ -467,6 +491,9 @@ int regmap_add_irq_chip(struct regmap *map, int irq, int irq_flags,
 			int irq_base, const struct regmap_irq_chip *chip,
 			struct regmap_irq_chip_data **data);
 void regmap_del_irq_chip(int irq, struct regmap_irq_chip_data *data);
+void regmap_shutdown_irq_chip(struct regmap_irq_chip_data *d);
+int regmap_irq_suspend_noirq(struct regmap_irq_chip_data *d);
+int regmap_irq_resume(struct regmap_irq_chip_data *d);
 int regmap_irq_chip_get_base(struct regmap_irq_chip_data *data);
 int regmap_irq_get_virq(struct regmap_irq_chip_data *data, int irq);
 struct irq_domain *regmap_irq_get_domain(struct regmap_irq_chip_data *data);
@@ -577,6 +604,13 @@ static inline void regcache_cache_bypass(struct regmap *map, bool enable)
 static inline void regcache_mark_dirty(struct regmap *map)
 {
 	WARN_ONCE(1, "regmap API is disabled");
+}
+
+static int regcache_volatile_set(struct regmap *map, unsigned int reg,
+				 bool is_volatile)
+{
+	WARN_ONCE(1, "regmap API is disabled");
+	return -EINVAL;
 }
 
 static inline void regmap_async_complete(struct regmap *map)

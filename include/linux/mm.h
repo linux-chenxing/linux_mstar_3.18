@@ -18,6 +18,33 @@
 #include <linux/bit_spinlock.h>
 #include <linux/shrinker.h>
 
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+enum {
+	CNT_FREE_PAGES,
+	CNT_FREE_CMA_PAGES,
+	CNT_FILE_PAGES,
+
+	CNT_PAGES_TYPE,
+};
+
+/* this is for counting memory usage */
+#define DB_MAX_CNT 11
+typedef struct
+{
+    char name[30];
+    atomic_t lone_time;
+	atomic_t do_cnt;
+	atomic_t pass_cnt;
+	atomic_t failed_cnt;
+
+	atomic_t min_page_cnt[CNT_PAGES_TYPE];
+	atomic_t max_page_cnt[CNT_PAGES_TYPE];
+	atomic_t order0_cnt[MIGRATE_TYPES];
+	atomic_t failed_order[MAX_ORDER];
+	atomic_t pass_order[MAX_ORDER];
+}db_time_table;
+#endif
+
 struct mempolicy;
 struct anon_vma;
 struct anon_vma_chain;
@@ -40,6 +67,17 @@ extern int sysctl_legacy_va_layout;
 #define sysctl_legacy_va_layout 0
 #endif
 
+#ifdef CONFIG_HAVE_ARCH_MMAP_RND_BITS
+extern const int mmap_rnd_bits_min;
+extern const int mmap_rnd_bits_max;
+extern int mmap_rnd_bits __read_mostly;
+#endif
+#ifdef CONFIG_HAVE_ARCH_MMAP_RND_COMPAT_BITS
+extern const int mmap_rnd_compat_bits_min;
+extern const int mmap_rnd_compat_bits_max;
+extern int mmap_rnd_compat_bits __read_mostly;
+#endif
+
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/processor.h>
@@ -51,6 +89,11 @@ extern unsigned long sysctl_admin_reserve_kbytes;
 
 /* to align the pointer to the (next) page boundary */
 #define PAGE_ALIGN(addr) ALIGN(addr, PAGE_SIZE)
+
+#ifdef CONFIG_Kasan_Switch_On
+/* test whether an address (unsigned long or pointer) is aligned to PAGE_SIZE */
+#define PAGE_ALIGNED(addr)      IS_ALIGNED((unsigned long)addr, PAGE_SIZE)
+#endif
 
 /*
  * Linux kernel virtual memory manager primitives.
@@ -167,6 +210,8 @@ extern pgprot_t protection_map[16];
 #define FAULT_FLAG_RETRY_NOWAIT	0x10	/* Don't drop mmap_sem and wait when retrying */
 #define FAULT_FLAG_KILLABLE	0x20	/* The fault task is in SIGKILL killable region */
 #define FAULT_FLAG_TRIED	0x40	/* second try */
+#define FAULT_FLAG_USER		0x80	/* The fault originated in userspace */
+#define FAULT_FLAG_NO_CMA      0x100    /* don't use CMA pages */
 
 /*
  * vm_fault is filled by the the pagefault handler and passed to the vma's
@@ -295,6 +340,37 @@ static inline int get_page_unless_zero(struct page *page)
 
 extern int page_is_ram(unsigned long pfn);
 
+#ifdef CONFIG_CMA
+#include <asm/dma-contiguous.h>
+#define CMA_DEBUG KERN_DEBUG
+#define CMA_WARNING KERN_NOTICE
+#define CMA_ERR KERN_ERR
+#define CMA_NOTICE KERN_NOTICE
+
+static inline int is_default_cma_buffer(const void *x)
+{
+	// addr is a ba
+	unsigned long addr = (unsigned long)x;
+	struct cma *cma = dev_get_cma_area(NULL);
+	unsigned long start_cma_addr = cma->base_pfn << PAGE_SHIFT;
+	unsigned long end_cma_addr = start_cma_addr + (cma->count << PAGE_SHIFT);
+	printk(CMA_DEBUG "\033[35mFunction = %s, Line = %d, check from 0x%lX to 0x%lX\033[m\n", __PRETTY_FUNCTION__, __LINE__, start_cma_addr, end_cma_addr); // joe.liu
+	return addr >= start_cma_addr && addr < end_cma_addr;
+}
+
+static inline int is_device_cma_buffer(struct device *cma_dev, const void *x)
+{
+	// addr is a ba
+	unsigned long addr = (unsigned long)x;
+	struct cma *device_cma = dev_get_cma_area(cma_dev);
+	unsigned long start_cma_addr = device_cma->base_pfn << PAGE_SHIFT;
+	unsigned long end_cma_addr = start_cma_addr + (device_cma->count << PAGE_SHIFT);
+
+	printk(CMA_DEBUG "\033[35mFunction = %s, Line = %d, check from 0x%lX to 0x%lX\033[m\n", __PRETTY_FUNCTION__, __LINE__, start_cma_addr, end_cma_addr); // joe.liu
+	return addr >= start_cma_addr && addr < end_cma_addr;
+}
+#endif
+
 /* Support for virtually mapped pages */
 struct page *vmalloc_to_page(const void *addr);
 unsigned long vmalloc_to_pfn(const void *addr);
@@ -323,6 +399,8 @@ static inline int is_vmalloc_or_module_addr(const void *x)
 	return 0;
 }
 #endif
+
+extern void kvfree(const void *addr);
 
 static inline void compound_lock(struct page *page)
 {
@@ -921,6 +999,7 @@ extern void pagefault_out_of_memory(void);
 extern void show_free_areas(unsigned int flags);
 extern bool skip_free_areas_node(unsigned int flags, int nid);
 
+void shmem_set_file(struct vm_area_struct *vma, struct file *file);
 int shmem_zero_setup(struct vm_area_struct *);
 
 extern int can_do_mlock(void);
@@ -1041,10 +1120,7 @@ long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 		      unsigned long start, unsigned long nr_pages,
 		      unsigned int foll_flags, struct page **pages,
 		      struct vm_area_struct **vmas, int *nonblocking);
-long get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
-		    unsigned long start, unsigned long nr_pages,
-		    int write, int force, struct page **pages,
-		    struct vm_area_struct **vmas);
+
 int get_user_pages_fast(unsigned long start, int nr_pages, int write,
 			struct page **pages);
 struct kvec;
@@ -1269,10 +1345,11 @@ static inline pmd_t *pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long a
 #define pte_lockptr(mm, pmd)	({(void)(pmd); &(mm)->page_table_lock;})
 #endif /* USE_SPLIT_PTLOCKS */
 
-static inline void pgtable_page_ctor(struct page *page)
+static inline bool pgtable_page_ctor(struct page *page)
 {
 	pte_lock_init(page);
 	inc_zone_page_state(page, NR_PAGETABLE);
+	return true;
 }
 
 static inline void pgtable_page_dtor(struct page *page)
@@ -1498,7 +1575,7 @@ extern int vma_adjust(struct vm_area_struct *vma, unsigned long start,
 extern struct vm_area_struct *vma_merge(struct mm_struct *,
 	struct vm_area_struct *prev, unsigned long addr, unsigned long end,
 	unsigned long vm_flags, struct anon_vma *, struct file *, pgoff_t,
-	struct mempolicy *);
+	struct mempolicy *, const char __user *);
 extern struct anon_vma *find_mergeable_anon_vma(struct vm_area_struct *);
 extern int split_vma(struct mm_struct *,
 	struct vm_area_struct *, unsigned long addr, int new_below);
@@ -1600,6 +1677,9 @@ void task_dirty_inc(struct task_struct *tsk);
 
 int force_page_cache_readahead(struct address_space *mapping, struct file *filp,
 			pgoff_t offset, unsigned long nr_to_read);
+
+int do_page_cache_readahead(struct address_space *mapping, struct file *filp,
+                    pgoff_t offset, unsigned long nr_to_read);
 
 void page_cache_sync_readahead(struct address_space *mapping,
 			       struct file_ra_state *ra,
@@ -1712,11 +1792,81 @@ static inline struct page *follow_page(struct vm_area_struct *vma,
 #define FOLL_HWPOISON	0x100	/* check page is hwpoisoned */
 #define FOLL_NUMA	0x200	/* force NUMA hinting page fault */
 #define FOLL_MIGRATION	0x400	/* wait for page to replace migration entry */
+#define FOLL_DURABLE	0x800	/* get the page reference for a long time */
 
 typedef int (*pte_fn_t)(pte_t *pte, pgtable_t token, unsigned long addr,
 			void *data);
 extern int apply_to_page_range(struct mm_struct *mm, unsigned long address,
 			       unsigned long size, pte_fn_t fn, void *data);
+
+/*
+ * get_user_pages() - pin user pages in memory
+ * @tsk:	the task_struct to use for page fault accounting, or
+ *		NULL if faults are not to be recorded.
+ * @mm:		mm_struct of target mm
+ * @start:	starting user address
+ * @nr_pages:	number of pages from start to pin
+ * @write:	whether pages will be written to by the caller
+ * @force:	whether to force write access even if user mapping is
+ *		readonly. This will result in the page being COWed even
+ *		in MAP_SHARED mappings. You do not want this.
+ * @pages:	array that receives pointers to the pages pinned.
+ *		Should be at least nr_pages long. Or NULL, if caller
+ *		only intends to ensure the pages are faulted in.
+ * @vmas:	array of pointers to vmas corresponding to each page.
+ *		Or NULL if the caller does not require them.
+ *
+ * Returns number of pages pinned. This may be fewer than the number
+ * requested. If nr_pages is 0 or negative, returns 0. If no pages
+ * were pinned, returns -errno. Each page returned must be released
+ * with a put_page() call when it is finished with. vmas will only
+ * remain valid while mmap_sem is held.
+ *
+ * Must be called with mmap_sem held for read or write.
+ *
+ * get_user_pages walks a process's page tables and takes a reference to
+ * each struct page that each user address corresponds to at a given
+ * instant. That is, it takes the page that would be accessed if a user
+ * thread accesses the given user virtual address at that instant.
+ *
+ * This does not guarantee that the page exists in the user mappings when
+ * get_user_pages returns, and there may even be a completely different
+ * page there in some cases (eg. if mmapped pagecache has been invalidated
+ * and subsequently re faulted). However it does guarantee that the page
+ * won't be freed completely. And mostly callers simply care that the page
+ * contains data that was valid *at some point in time*. Typically, an IO
+ * or similar operation cannot guarantee anything stronger anyway because
+ * locks can't be held over the syscall boundary.
+ *
+ * If write=0, the page must not be written to. If the page is written to,
+ * set_page_dirty (or set_page_dirty_lock, as appropriate) must be called
+ * after the page is finished with, and before put_page is called.
+ *
+ * get_user_pages is typically used for fewer-copy IO operations, to get a
+ * handle on the memory by some means other than accesses via the user virtual
+ * addresses. The pages may be submitted for DMA to devices or accessed via
+ * their kernel linear mapping (via the kmap APIs). Care should be taken to
+ * use the correct cache flushing APIs.
+ *
+ * See also get_user_pages_fast, for performance critical applications.
+ */
+static inline long get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
+			unsigned long start, unsigned long nr_pages, int write,
+			int force, struct page **pages,
+			struct vm_area_struct **vmas)
+{
+	int flags = FOLL_TOUCH;
+
+	if (pages)
+		flags |= FOLL_GET;
+	if (write)
+		flags |= FOLL_WRITE;
+	if (force)
+		flags |= FOLL_FORCE;
+
+	return __get_user_pages(tsk, mm, start, nr_pages, flags, pages, vmas,
+				NULL);
+}
 
 #ifdef CONFIG_PROC_FS
 void vm_stat_account(struct mm_struct *, unsigned long, struct file *, long);

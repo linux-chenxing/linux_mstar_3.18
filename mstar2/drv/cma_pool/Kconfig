@@ -1,0 +1,17 @@
+config MSTAR_CMAPOOL
+bool  "CMA POOL"
+depends on CMA
+select MSTAR_MIU
+ 
+help
+    MStar CMA POOL driver function
+
+config MSTAR_MIUSLITS
+bool  "MIU SLITS"
+depends on MSTAR_CMAPOOL 
+select MSTAR_MIU
+default n
+
+help
+    CMA HEAP kernel protected by MIU SLits
+    

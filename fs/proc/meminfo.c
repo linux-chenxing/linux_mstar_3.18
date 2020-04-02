@@ -16,6 +16,15 @@
 #include <asm/pgtable.h>
 #include "internal.h"
 
+#if defined(CONFIG_TEGRA_NVMAP)
+#include <linux/nvmap.h>
+#endif
+
+#ifdef CONFIG_MP_ION_PATCH_MSTAR
+extern void get_cma_status(struct seq_file *m);
+#endif
+
+
 void __attribute__((weak)) arch_report_meminfo(struct seq_file *m)
 {
 }
@@ -105,6 +114,10 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 		"AnonHugePages:  %8lu kB\n"
 #endif
+#if defined(CONFIG_TEGRA_NVMAP)
+		"NvMapMemFree:   %8lu kB\n"
+		"NvMapMemUsed:   %8lu kB\n"
+#endif
 		,
 		K(i.totalram),
 		K(i.freeram),
@@ -165,7 +178,22 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 		,K(global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
 		   HPAGE_PMD_NR)
 #endif
+#if defined(CONFIG_TEGRA_NVMAP)
+		, K(nvmap_page_pool_get_unused_pages()),
+		K(nvmap_iovmm_get_used_pages())
+#endif
 		);
+
+
+#ifdef CONFIG_MP_ION_PATCH_MSTAR
+
+	seq_printf(m,
+		"CMA Free: %lu kB \n"
+		"CMA heap info(name,alloc,in cache,fail,total free): \n"
+		,K(global_page_state(NR_FREE_CMA_PAGES))
+		);
+	get_cma_status(m);
+#endif
 
 	hugetlb_report_meminfo(m);
 

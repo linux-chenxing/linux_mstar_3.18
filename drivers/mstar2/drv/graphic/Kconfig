@@ -1,0 +1,6 @@
+config MSTAR_GRAPHIC
+tristate "GRAPHIC"
+default n
+help
+    enable MStar GRAPHIC driver.
+

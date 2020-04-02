@@ -1027,6 +1027,7 @@ next_ndp:
 			skb->len = len;
 			skb->data = ((u8 *)skb_in->data) + offset;
 			skb_set_tail_pointer(skb, len);
+			skb->truesize = len + sizeof(struct sk_buff);
 			usbnet_skb_return(dev, skb);
 		}
 	}
@@ -1167,11 +1168,25 @@ static const struct driver_info cdc_ncm_info = {
 	.tx_fixup = cdc_ncm_tx_fixup,
 };
 
+/* Same as cdc_ncm_info, but with FLAG_RMNET */
+static const struct driver_info cdc_mbm_info = {
+	.description = "CDC NCM",
+	.flags = FLAG_POINTTOPOINT | FLAG_NO_SETINT | FLAG_MULTI_PACKET
+			| FLAG_RMNET,
+	.bind = cdc_ncm_bind,
+	.unbind = cdc_ncm_unbind,
+	.check_connect = cdc_ncm_check_connect,
+	.manage_power = usbnet_manage_power,
+	.status = cdc_ncm_status,
+	.rx_fixup = cdc_ncm_rx_fixup,
+	.tx_fixup = cdc_ncm_tx_fixup,
+};
+
 /* Same as cdc_ncm_info, but with FLAG_WWAN */
 static const struct driver_info wwan_info = {
 	.description = "Mobile Broadband Network Device",
 	.flags = FLAG_POINTTOPOINT | FLAG_NO_SETINT | FLAG_MULTI_PACKET
-			| FLAG_WWAN,
+			| FLAG_WWAN | FLAG_RMNET,
 	.bind = cdc_ncm_bind,
 	.unbind = cdc_ncm_unbind,
 	.check_connect = cdc_ncm_check_connect,
@@ -1250,6 +1265,27 @@ static const struct usb_device_id cdc_devs[] = {
 		USB_CLASS_COMM,
 		USB_CDC_SUBCLASS_NCM, USB_CDC_PROTO_NONE),
 	  .driver_info = (unsigned long)&wwan_noarp_info,
+	},
+
+	/* Icera USB_PROFILE_IAD_5AN */
+	{
+		USB_DEVICE_AND_INTERFACE_INFO(0x1983, 0x0427, USB_CLASS_COMM,
+				USB_CDC_SUBCLASS_NCM, USB_CDC_PROTO_NONE),
+		.driver_info = (unsigned long)&wwan_info,
+	},
+
+	/* Icera USB_PROFILE_IAD_5AN (BSD) */
+	{
+		USB_DEVICE_AND_INTERFACE_INFO(0x1983, 0x1005, USB_CLASS_COMM,
+				USB_CDC_SUBCLASS_NCM, USB_CDC_PROTO_NONE),
+		.driver_info = (unsigned long)&wwan_info,
+	},
+
+	/* Icera Nemo */
+	{
+		USB_DEVICE_AND_INTERFACE_INFO(0x1983, 0x1007, USB_CLASS_COMM,
+				USB_CDC_SUBCLASS_NCM, USB_CDC_PROTO_NONE),
+		.driver_info = (unsigned long)&wwan_info,
 	},
 
 	/* Generic CDC-NCM devices */

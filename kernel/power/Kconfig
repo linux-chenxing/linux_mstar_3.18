@@ -7,6 +7,15 @@ config SUSPEND
 	  powered and thus its contents are preserved, such as the
 	  suspend-to-RAM state (e.g. the ACPI S3 state).
 
+config MSTAR_FASTBOOT
+	bool "MStar Fastboot enable"
+	depends on MP_MSTAR_STR_BASE
+	default n
+	select SWAP
+	select HIBERNATION
+	---help---
+	Enable MStar fastboot feature.
+
 config SUSPEND_FREEZER
 	bool "Enable freezer for suspend to RAM/standby" \
 		if ARCH_WANTS_FREEZER_CONTROL || BROKEN
@@ -17,6 +26,26 @@ config SUSPEND_FREEZER
 	  done, no tasks are frozen for suspend to RAM/standby.
 
 	  Turning OFF this setting is NOT recommended! If in doubt, say Y.
+
+config HAS_WAKELOCK
+	bool "Has Wakelock"
+	default y
+	help
+	  A wake_lock prevents the system from entering suspend or
+	  other low power states when active.
+	  Wake_lock has options to stop the system from suspending if a
+	  module holding wake_lock is active with some task.
+	  If in doubt, enable CONFIG_WAKELOCK too.
+
+config WAKELOCK
+	bool "Wakelock"
+	default y
+	help
+	  A wake_lock prevents the system from entering suspend or
+	  other low power states when active.
+	  Wake_lock has options to stop the system from suspending if a
+	  module holding wake_lock is active with some task.
+	  If in doubt, enable CONFIG_HAS_WAKELOCK too.
 
 config HIBERNATE_CALLBACKS
 	bool
@@ -75,20 +104,20 @@ config PM_STD_PARTITION
 	default ""
 	---help---
 	  The default resume partition is the partition that the suspend-
-	  to-disk implementation will look for a suspended disk image. 
+	  to-disk implementation will look for a suspended disk image.
 
-	  The partition specified here will be different for almost every user. 
+	  The partition specified here will be different for almost every user.
 	  It should be a valid swap partition (at least for now) that is turned
-	  on before suspending. 
+	  on before suspending.
 
 	  The partition specified can be overridden by specifying:
 
-		resume=/dev/<other device> 
+		resume=/dev/<other device>
 
-	  which will set the resume partition to the device specified. 
+	  which will set the resume partition to the device specified.
 
 	  Note there is currently not a way to specify which device to save the
-	  suspended image to. It will simply pick the first available swap 
+	  suspended image to. It will simply pick the first available swap
 	  device.
 
 config PM_SLEEP
@@ -274,3 +303,10 @@ config PM_GENERIC_DOMAINS_RUNTIME
 config CPU_PM
 	bool
 	depends on SUSPEND || CPU_IDLE
+
+config SUSPEND_TIME
+	bool "Log time spent in suspend"
+	---help---
+	  Prints the time spent in suspend in the kernel log, and
+	  keeps statistics on the time spent in suspend in
+	  /sys/kernel/debug/suspend_time

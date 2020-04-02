@@ -1,0 +1,7 @@
+# <- this is for comment applications total file size must be larger than 4MB
+
+#mboot
+tftp 0x20200000 MBoot/mboot.bin
+spi_wrc 0x20200000 0 $(filesize)
+
+% <- this is end of file symbol

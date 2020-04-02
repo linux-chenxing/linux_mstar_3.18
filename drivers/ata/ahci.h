@@ -373,7 +373,7 @@ static inline void __iomem *__ahci_port_base(struct ata_host *host,
 	struct ahci_host_priv *hpriv = host->private_data;
 	void __iomem *mmio = hpriv->mmio;
 
-	return mmio + 0x100 + (port_no * 0x80);
+	return mmio + 0x200 + (port_no * 0x80);
 }
 
 static inline void __iomem *ahci_port_base(struct ata_port *ap)

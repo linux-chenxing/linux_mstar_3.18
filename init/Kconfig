@@ -758,6 +758,9 @@ config LOG_BUF_SHIFT
 config HAVE_UNSTABLE_SCHED_CLOCK
 	bool
 
+config GENERIC_SCHED_CLOCK
+	bool
+
 #
 # For architectures that want to enable the support for NUMA-affine scheduler
 # balancing logic:
@@ -1251,6 +1254,12 @@ config HOTPLUG
 config HAVE_PCSPKR_PLATFORM
 	bool
 
+config PANIC_TIMEOUT
+	int "Default panic timeout"
+	default 0
+	help
+	  Set default panic timeout.
+
 menuconfig EXPERT
 	bool "Configure standard kernel features (expert users)"
 	# Unhide debug options, to make the on-by-default options visible
@@ -1486,6 +1495,20 @@ config PERF_EVENTS
 	  capabilities on top of those.
 
 	  Say Y if unsure.
+
+config PERF_ANDROID_BACKTRACE
+	default y
+	bool "Backtracing support for the Perf tool on Android"
+	depends on PERF_EVENTS && ANDROID
+	help
+	  This config changes default function stack format that Perf
+	  profiler uses for backtracing. With this config enabled Perf
+	  profiler will use stack format of the Android OS for its
+	  operation.
+
+	  Say Y only if this kernel will be used with Android OS.
+
+	  Say N if unsure.
 
 config DEBUG_PERF_USE_VMALLOC
 	default n

@@ -32,6 +32,10 @@
 #include	"xhci-ext-caps.h"
 #include "pci-quirks.h"
 
+#if (MP_USB_MSTAR==1)
+#include "xhci-mstar.h"
+#endif
+
 /* xHCI PCI Configuration Registers */
 #define XHCI_SBRN_OFFSET	(0x60)
 
@@ -844,6 +848,9 @@ struct xhci_virt_ep {
 	/* Watchdog timer for stop endpoint command to cancel URBs */
 	struct timer_list	stop_cmd_timer;
 	int			stop_cmds_pending;
+#if defined(CONFIG_SUSPEND) && (MP_USB_STR_PATCH==1)
+	unsigned int		stop_cmd_timer_count;
+#endif
 	struct xhci_hcd		*xhci;
 	/* Dequeue pointer and dequeue segment for a submitted Set TR Dequeue
 	 * command.  We'll need to update the ring's dequeue segment and dequeue
@@ -1258,10 +1265,17 @@ struct xhci_td {
 	struct xhci_segment	*start_seg;
 	union xhci_trb		*first_trb;
 	union xhci_trb		*last_trb;
+#if (MP_USB_MSTAR==1)
+	int			ctrl_td_zero_trans_flag;
+#endif
 };
 
 /* xHCI command default timeout value */
+#if (MP_USB_MSTAR==1)
+#define XHCI_CMD_DEFAULT_TIMEOUT	(10 * HZ)
+#else
 #define XHCI_CMD_DEFAULT_TIMEOUT	(5 * HZ)
+#endif
 
 /* command descriptor */
 struct xhci_cd {
@@ -1337,6 +1351,7 @@ struct xhci_scratchpad {
 struct urb_priv {
 	int	length;
 	int	td_cnt;
+	bool	finishing_short_td;
 	struct	xhci_td	*td[0];
 };
 
@@ -1712,7 +1727,8 @@ static inline int xhci_register_pci(void) { return 0; }
 static inline void xhci_unregister_pci(void) {}
 #endif
 
-#if defined(CONFIG_USB_XHCI_PLATFORM) \
+#if (MP_USB_MSTAR==1) \
+	|| defined(CONFIG_USB_XHCI_PLATFORM) \
 	|| defined(CONFIG_USB_XHCI_PLATFORM_MODULE)
 int xhci_register_plat(void);
 void xhci_unregister_plat(void);
@@ -1784,6 +1800,11 @@ void xhci_ring_cmd_db(struct xhci_hcd *xhci);
 int xhci_queue_slot_control(struct xhci_hcd *xhci, u32 trb_type, u32 slot_id);
 int xhci_queue_address_device(struct xhci_hcd *xhci, dma_addr_t in_ctx_ptr,
 		u32 slot_id);
+#if (MP_USB_MSTAR==1)
+int xhci_queue_address_device_BSR (struct xhci_hcd *xhci, dma_addr_t in_ctx_ptr,
+		u32 slot_id);
+void xhci_set_hc_event_deq(struct xhci_hcd *xhci);
+#endif
 int xhci_queue_vendor_command(struct xhci_hcd *xhci,
 		u32 field1, u32 field2, u32 field3, u32 field4);
 int xhci_queue_stop_endpoint(struct xhci_hcd *xhci, int slot_id,

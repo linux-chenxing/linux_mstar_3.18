@@ -75,15 +75,36 @@
 #include <linux/blkdev.h>
 #include <linux/elevator.h>
 #include <linux/random.h>
+#include <linux/sched_clock.h>
 
+#ifndef CONFIG_MP_PLATFORM_MIPS
+#include <mach/io.h>
+#endif
+
+
+#ifdef CONFIG_DEBUG_FS
+#include <linux/debugfs.h>
+#endif
+
+#include <linux/pasr.h>
 #include <asm/io.h>
 #include <asm/bugs.h>
 #include <asm/setup.h>
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
+#include <mstar/mpatch_macro.h>
+//#include <asm/dma-mapping.h>
+
+#if defined(CONFIG_ARM64)
+extern unsigned long __must_check __copy_in_user(void __user *to, const void __user *from, unsigned long n);
+#endif
 
 #ifdef CONFIG_X86_LOCAL_APIC
 #include <asm/smp.h>
+#endif
+
+#if (MP_CACHE_DROP==1)
+#include <linux/sched.h>
 #endif
 
 static int kernel_init(void *);
@@ -93,6 +114,26 @@ extern void fork_init(unsigned long);
 extern void mca_init(void);
 extern void sbus_init(void);
 extern void radix_tree_init(void);
+extern void __memblock_dump_all(void);
+#if (CONFIG_MP_DEBUG_TOOL_RAMLOG == 1 )
+#ifdef CONFIG_MSTAR_RAMLOG
+char ramlog_cmdline[COMMAND_LINE_SIZE];
+EXPORT_SYMBOL(ramlog_cmdline);
+unsigned int ramlog_buf_adr=0;;
+EXPORT_SYMBOL(ramlog_buf_adr);
+#endif
+#endif
+
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+extern void show_mm_time(unsigned long time);
+#endif
+
+#if (MP_PLATFORM_ARM == 1)
+#if (MP_PLATFORM_INT_1_to_1_SPI != 1)
+extern int __init init_irq_fiq_merge(void);
+#endif/*MP_PLATFORM_INT_1_to_1_SPI*/
+extern void __init serial_init(void);
+#endif /* MP_PLATFORM_ARM */
 #ifndef CONFIG_DEBUG_RODATA
 static inline void mark_rodata_ro(void) { }
 #endif
@@ -101,6 +142,9 @@ static inline void mark_rodata_ro(void) { }
 extern void tc_init(void);
 #endif
 
+#if (MP_CHECKPT_BOOT == 1)
+extern int Mstar_Timer1_GetMs(void);
+#endif // MP_CHECKPT_BOOT
 /*
  * Debug helper: via this flag we know that we are in 'early bootup code'
  * where only the boot processor is running with IRQ disabled.  This means
@@ -160,6 +204,70 @@ static const char *panic_later, *panic_param;
 
 extern const struct obs_kernel_param __setup_start[], __setup_end[];
 
+#ifdef CONFIG_MP_DEBUG_TOOL_DUMP_STACK_EACH_CPU
+#ifdef CONFIG_DEBUG_FS
+static int smp_stackdump_interval = 0;
+static struct timer_list smp_stackdump_timer;
+
+static inline void smp_stackdump_func(void *unused)
+{
+	dump_stack();
+}
+
+static void smp_stackdump_timer_func(unsigned long data)
+{
+	on_each_cpu(smp_stackdump_func, NULL, 1);
+	
+	if(!smp_stackdump_interval)
+		return;
+	
+	smp_stackdump_timer.expires = jiffies + (smp_stackdump_interval * HZ);
+	add_timer(&smp_stackdump_timer);
+}
+
+int smp_show_stackdump_interval(struct seq_file *m, void *v)
+{
+	printk("interval: %d\n", smp_stackdump_interval);
+	return 0;
+}
+
+static int smp_stackdump_timer_open(struct inode *inode, struct file *file)
+{
+	init_timer(&smp_stackdump_timer);
+	
+	smp_stackdump_timer.data = 1;
+	smp_stackdump_timer.function = smp_stackdump_timer_func;	
+
+	return single_open(file, smp_show_stackdump_interval, inode->i_private);
+}
+
+static ssize_t smp_stackdump_timer_write(struct file *file, const char __user *buf, size_t count,
+			loff_t *ppos)
+{
+	char buffer[16] = {0};
+
+	copy_from_user(buffer, buf, count);
+	
+	sscanf(buffer, "%d", &smp_stackdump_interval);	
+	if(smp_stackdump_interval){
+		smp_stackdump_timer.expires = jiffies + (smp_stackdump_interval * HZ);
+		add_timer(&smp_stackdump_timer);
+	}
+	else
+		del_timer(&smp_stackdump_timer);
+	
+	return count;
+}
+
+static const struct file_operations debug_smp_stackdump_fops = {
+	.owner		= THIS_MODULE,
+	.open             = smp_stackdump_timer_open,
+	.read		= seq_read,
+	.write		= smp_stackdump_timer_write,
+	.release          = single_release,
+};
+#endif
+#endif
 static int __init obsolete_checksetup(char *line)
 {
 	const struct obs_kernel_param *p;
@@ -365,6 +473,12 @@ static __initdata DECLARE_COMPLETION(kthreadd_done);
 static noinline void __init_refok rest_init(void)
 {
 	int pid;
+#if (MP_CACHE_DROP==1)
+		int pid_kthre_drop_cache;
+		struct sched_param para;
+		struct task_struct *p;
+		int srch_retval;
+#endif
 
 	rcu_scheduler_starting();
 	/*
@@ -375,6 +489,22 @@ static noinline void __init_refok rest_init(void)
 	kernel_thread(kernel_init, NULL, CLONE_FS | CLONE_SIGHAND);
 	numa_default_policy();
 	pid = kernel_thread(kthreadd, NULL, CLONE_FS | CLONE_FILES);
+
+#if (MP_CACHE_DROP==1)
+	pid_kthre_drop_cache=kernel_thread(kthre_drop_cache, NULL, CLONE_FS | CLONE_FILES);
+	rcu_read_lock();
+	srch_retval = -ESRCH;
+	p = pid_kthre_drop_cache ? find_task_by_vpid(pid_kthre_drop_cache) : current;
+	if (p != NULL)
+	{
+		srch_retval = (p->policy == SCHED_FIFO || p->policy == SCHED_RR)?1:0;
+		para.sched_priority=srch_retval;	
+		//use default and set min
+		srch_retval = sched_setscheduler(p, p->policy, &para);
+	}
+	rcu_read_unlock();
+#endif
+
 	rcu_read_lock();
 	kthreadd_task = find_task_by_pid_ns(pid, &init_pid_ns);
 	rcu_read_unlock();
@@ -447,14 +577,25 @@ void __init __weak smp_setup_processor_id(void)
 }
 
 # if THREAD_SIZE >= PAGE_SIZE
+#ifdef CONFIG_MP_CMA_PATCH_DO_FORK_PAGE_POOL
+#else
 void __init __weak thread_info_cache_init(void)
 {
 }
+#endif
 #endif
 
 /*
  * Set up kernel memory allocators
  */
+ptrdiff_t mstar_pm_base;
+EXPORT_SYMBOL(mstar_pm_base);
+
+#ifdef CONFIG_MP_PLATFORM_FRC_MAPPING
+/* add a FRE_BASE mapping, this is from 0x1f800000, currently use 2MB size */
+ptrdiff_t mstar_frc_base;
+EXPORT_SYMBOL(mstar_frc_base);
+#endif
 static void __init mm_init(void)
 {
 	/*
@@ -467,7 +608,42 @@ static void __init mm_init(void)
 	percpu_init_late();
 	pgtable_cache_init();
 	vmalloc_init();
+	
+	/*
+     * Mapping mstar peripheral register.
+     */
+      
+    #if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
+	mstar_pm_base = (ptrdiff_t)ioremap(IO_PHYS, IO_SIZE);
+    #endif
+	
+
+#ifdef CONFIG_MP_PLATFORM_FRC_MAPPING
+	/*
+     * Mapping mstar FRC register.
+     */
+	mstar_frc_base = (ptrdiff_t)ioremap(IO_FRC_PHYS, IO_FRC_SIZE);
+#endif
 }
+
+/* extern by "check_points.c" for "performance index" */
+unsigned int kr_PiuTime=0;
+
+unsigned long __initdata __ramdisk_start, __initdata __ramdisk_len ;
+#if (MP_PLATFORM_ARM_64bit_BOOTARGS_NODTB == 1)
+unsigned long __cmdline;
+void __init mstar_get_ramdisk_info(unsigned long start,unsigned long len,unsigned long cmdline)
+#else
+void __init mstar_get_ramdisk_info(unsigned long start,unsigned long len)
+#endif
+{
+   __ramdisk_start = start;
+   __ramdisk_len = len;
+#if (MP_PLATFORM_ARM_64bit_BOOTARGS_NODTB == 1)
+   __cmdline = cmdline;	
+#endif
+}
+
 
 asmlinkage void __init start_kernel(void)
 {
@@ -499,7 +675,11 @@ asmlinkage void __init start_kernel(void)
 	boot_cpu_init();
 	page_address_init();
 	pr_notice("%s", linux_banner);
+	pr_notice("--- MStar Version ---\n%s---------------------\n", mstar_kernel_version);
 	setup_arch(&command_line);
+#ifdef CONFIG_PASR
+	early_pasr_setup();
+#endif
 	mm_init_owner(&init_mm, &init_task);
 	mm_init_cpumask(&init_mm);
 	setup_command_line(command_line);
@@ -527,6 +707,23 @@ asmlinkage void __init start_kernel(void)
 	vfs_caches_init_early();
 	sort_main_extable();
 	trap_init();
+#if (CONFIG_MP_DEBUG_TOOL_RAMLOG == 1 )
+#ifdef CONFIG_MSTAR_RAMLOG
+        //strlcpy(ramlog_cmdline, boot_command_line, COMMAND_LINE_SIZE);
+
+	ramlog_buf_adr = (int)alloc_bootmem(0x100000);
+	//ramlog_buf_adr = __va(ramlog_buf_adr);
+        if (!ramlog_buf_adr)
+        {
+          printk("<ramlog_buf_adr>: alloc fail!\n");
+        }
+        else
+        {
+          printk("<ramlog_buf_adr>: alloc success! \n");
+          printk("Ramlog address = %x\n",ramlog_buf_adr);
+        }
+#endif
+#endif
 	mm_init();
 
 	/*
@@ -556,6 +753,12 @@ asmlinkage void __init start_kernel(void)
 	softirq_init();
 	timekeeping_init();
 	time_init();
+	sched_clock_postinit();
+#if (MP_CHECKPT_BOOT == 1)
+	/* checkpoint for autotest boottime, plz dont remove it */
+        kr_PiuTime = Mstar_Timer1_GetMs();
+	printk(KERN_ALERT "[AT][KR][reset timer][%u]\n", kr_PiuTime);
+#endif // MP_CHECKPT_BOOT
 	profile_init();
 	call_function_init();
 	WARN(!irqs_disabled(), "Interrupts were enabled early\n");
@@ -563,6 +766,18 @@ asmlinkage void __init start_kernel(void)
 	local_irq_enable();
 
 	kmem_cache_init_late();
+#if (MP_PLATFORM_ARM == 1)
+#if defined(CONFIG_ARM) | defined(CONFIG_ARM64) 
+#if (MP_PLATFORM_INT_1_to_1_SPI != 1)
+	init_irq_fiq_merge();
+#endif
+	serial_init();
+#endif
+#endif /* MP_PLATFORM_ARM */
+
+#ifdef CONFIG_PASR
+	late_pasr_setup();
+#endif
 
 	/*
 	 * HACK ALERT! This is early. We're enabling the console before
@@ -812,21 +1027,70 @@ static noinline void __init kernel_init_freeable(void);
 
 static int __ref kernel_init(void *unused)
 {
+#if (MP_CHECKPT_BOOT == 1)
+	unsigned int PiuTick;
+	unsigned int PiuTime;
+#endif
 	kernel_init_freeable();
 	/* need to finish all async __init code before freeing the memory */
 	async_synchronize_full();
+#if !defined(CONFIG_MP_MSTAR_STR_BASE)
 	free_initmem();
+#else
+	printk("\033[35mFunction = %s, Line = %d, donot free_initmem due to STR is enabled\033[m\n", __PRETTY_FUNCTION__, __LINE__); // joe.liu
+	printk("\033[35mFunction = %s, Line = %d, reserve from 0x%lX to 0x%lX, size is 0x%lX\033[m\n", __PRETTY_FUNCTION__, __LINE__, __init_begin, __init_end, __init_end - __init_begin); // joe.liu
+#endif
 	mark_rodata_ro();
 	system_state = SYSTEM_RUNNING;
 	numa_default_policy();
 
 	flush_delayed_fput();
 
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	show_mm_time(0);
+#endif
+
+#ifdef CONFIG_MP_PLATFORM_ARM
+#ifdef CONFIG_ARCH_SPARSEMEM_ENABLE
+#ifdef CONFIG_MP_SPARSE_MEM_ENABLE_HOLES_IN_ZONE_CHECK
+#if !defined(CONFIG_HOLES_IN_ZONE) && !defined(CONFIG_ARM64)  
+    printk("\033[31m[Error]Function = %s, Line = %d, while using ARM chips and SPARSE_MEMORY, you need to enable CONFIG_HOLES_IN_ZONE\033[m\n", __PRETTY_FUNCTION__, __LINE__);
+    printk("\033[31m[Error]Function = %s, Line = %d, while using ARM chips and SPARSE_MEMORY, you need to enable CONFIG_HOLES_IN_ZONE\033[m\n", __PRETTY_FUNCTION__, __LINE__);
+    printk("\033[31m[Error]Function = %s, Line = %d, while using ARM chips and SPARSE_MEMORY, you need to enable CONFIG_HOLES_IN_ZONE\033[m\n", __PRETTY_FUNCTION__, __LINE__);
+#endif
+#endif
+#endif
+#endif
+
+#if (MP_CHECKPT_BOOT == 1)
+    /* checkpoint for autotest boottime, plz dont remove it */
+#if (MP_PLATFORM_ARM == 1 && MP_PLATFORM_MIPS == 1)
+#error "Error, both CONFIG_MP_PLATFORM_ARM and CONFIG_MP_PLATFORM_MIPS are set, please select only one"
+#endif
+
+#ifdef CONFIG_MP_PLATFORM_ARM
+    PiuTick = reg_readw(0x1f006090UL);
+    PiuTick += (reg_readw(0x1f006094UL) << 16);
+#else
+    PiuTick = *(volatile unsigned short *)(0xbf006090);
+    PiuTick += (*(volatile unsigned short *)(0xbf006094)) << 16;
+#endif
+    PiuTime = PiuTick / 12000;
+    printk(KERN_ALERT "[AT][KR][start init][%u]\n", PiuTime);
+    printk(KERN_ALERT "[AutoTest][Kernel][start Initprocess][%u]\n", PiuTime);
+#endif
 	if (ramdisk_execute_command) {
 		if (!run_init_process(ramdisk_execute_command))
 			return 0;
 		pr_err("Failed to execute %s\n", ramdisk_execute_command);
 	}
+
+#ifdef CONFIG_MP_DEBUG_TOOL_DUMP_STACK_EACH_CPU
+#ifdef CONFIG_DEBUG_FS
+ 	debugfs_create_file("debug_stack", 0664, NULL, NULL, &debug_smp_stackdump_fops);
+#endif
+#endif
+	__memblock_dump_all();
 
 	/*
 	 * We try each of these until one succeeds.
@@ -846,10 +1110,9 @@ static int __ref kernel_init(void *unused)
 	    !run_init_process("/bin/sh"))
 		return 0;
 
-	panic("No init found.  Try passing init= option to kernel. "
+	panic("No init found. Try passing init= option to kernel. "
 	      "See Linux Documentation/init.txt for guidance.");
 }
-
 static noinline void __init kernel_init_freeable(void)
 {
 	/*
@@ -899,6 +1162,11 @@ static noinline void __init kernel_init_freeable(void)
 		ramdisk_execute_command = NULL;
 		prepare_namespace();
 	}
+
+#ifdef CONFIG_MP_DEBUG_TOOL_CHANGELIST
+	printk(KERN_DEBUG "%s\n",KERN_CL);
+	printk(KERN_DEBUG "%s\n",KERM_CL);
+#endif
 
 	/*
 	 * Ok, we have completed the initial bootup, and

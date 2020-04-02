@@ -609,6 +609,18 @@ int scsi_get_device_flags_keyed(struct scsi_device *sdev,
 			if (memcmp(devinfo->model, model,
 				   min(max, strlen(devinfo->model))))
 				continue;
+
+#if (MP_SCSI_MULTI_LUN == 1)
+			/* If vendor string is NULL, it'll check further model string.
+			 * But device with NULL model string will match any model string 
+			 * in the list. Now fix it. By Jonas_20150722 
+			 */
+			if ((strlen(devinfo->vendor) == 0) &&
+				 (strlen(devinfo->model) != 0) &&
+				 (max == 0))
+				continue; 
+#endif
+			
 			return devinfo->flags;
 		} else {
 			if (!memcmp(devinfo->vendor, vendor,

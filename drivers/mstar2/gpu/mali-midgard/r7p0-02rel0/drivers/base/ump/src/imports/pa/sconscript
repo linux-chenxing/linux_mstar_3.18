@@ -1,0 +1,50 @@
+#
+# (C) COPYRIGHT 2014-2015 MStar Semiconductor, Inc. All rights reserved.
+#
+# This program is free software and is provided to you under the terms of the
+# GNU General Public License version 2 as published by the Free Software
+# Foundation, and any use by you of this program is subject to the terms
+# of such GNU licence.
+#
+# A copy of the licence is included with the program, and can also be obtained
+# from Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+# Boston, MA  02110-1301, USA.
+#
+#
+
+import os
+Import('env')
+
+# Clone the environment so changes don't affect other build files
+env_pa = env.Clone()
+
+if env_pa['ump_pa'] == 0:
+	Return()
+
+if env_pa['v'] != '1':
+	env_pa['MAKECOMSTR'] = '[MAKE] ${SOURCE.dir}'
+
+# Source files required for UMP.
+pa_src = [Glob('#kernel/drivers/base/ump/src/imports/pa/*.c')]
+
+# Note: cleaning via the Linux kernel build system does not yet work
+if env_pa.GetOption('clean') :
+	makeAction=Action("cd ${SOURCE.dir} && make clean", '$MAKECOMSTR')
+else:
+	makeAction=Action("cd ${SOURCE.dir} && make PLATFORM=${platform} && cp ump_pa_import.ko $STATIC_LIB_PATH/ump_pa_import.ko", '$MAKECOMSTR')
+# The target is ump_import_pa.ko, built from the source in pa_src, via the action makeAction
+# ump_import_pa.ko will be copied to $STATIC_LIB_PATH after being built by the standard Linux
+# kernel build system, after which it can be installed to the directory specified if
+# "libs_install" is set; this is done by LibTarget.
+cmd = env_pa.Command('$STATIC_LIB_PATH/ump_pa_import.ko', pa_src, [makeAction])
+
+# Until we fathom out how the invoke the Linux build system to clean, we can use Clean
+# to remove generated files.
+
+patterns = ['*.mod.c', '*.o', '*.ko', '*.a', '.*.cmd', 'modules.order', '.tmp_versions', 'Module.symvers']
+
+for p in patterns:
+	Clean(cmd, Glob('#kernel/drivers/base/ump/src/imports/pa/%s' % p))
+
+env_pa.Depends('$STATIC_LIB_PATH/ump_pa_import.ko', '$STATIC_LIB_PATH/ump.ko')
+env_pa.ProgTarget('ump', cmd)

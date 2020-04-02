@@ -5,6 +5,8 @@
  * Copyright (C) 2011 Samsung Electronics
  * MyungJoo Ham <myungjoo.ham@samsung.com>
  *
+ * Copyright (c) 2012-2013, NVIDIA CORPORATION.  All rights reserved.
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -27,12 +29,16 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/delay.h>
+#include <linux/err.h>
 #include <linux/interrupt.h>
 #include <linux/pm.h>
+#include <linux/jiffies.h>
+#include <linux/math64.h>
 #include <linux/mod_devicetable.h>
 #include <linux/power_supply.h>
 #include <linux/power/max17042_battery.h>
 #include <linux/of.h>
+#include <linux/power/battery-charger-gauge-comm.h>
 
 /* Status register bits */
 #define STATUS_POR_BIT         (1 << 1)
@@ -64,19 +70,31 @@
 
 #define MAX17042_IC_VERSION	0x0092
 #define MAX17047_IC_VERSION	0x00AC	/* same for max17050 */
+#define MAX17047_DELAY		1000
 
 struct max17042_chip {
 	struct i2c_client *client;
 	struct power_supply battery;
 	enum max170xx_chip_type chip_type;
 	struct max17042_platform_data *pdata;
-	struct work_struct work;
+	struct battery_gauge_dev	*bg_dev;
+	struct delayed_work work;
 	int    init_complete;
+	int shutdown_complete;
+	int status;
+	int cap;
 };
+struct i2c_client *temp_client;
 
 static int max17042_write_reg(struct i2c_client *client, u8 reg, u16 value)
 {
-	int ret = i2c_smbus_write_word_data(client, reg, value);
+	int ret = 0;
+	struct max17042_chip *chip = i2c_get_clientdata(client);
+
+	if (chip && chip->shutdown_complete)
+		return -ENODEV;
+
+	ret = i2c_smbus_write_word_data(client, reg, value);
 
 	if (ret < 0)
 		dev_err(&client->dev, "%s: err %d\n", __func__, ret);
@@ -86,7 +104,13 @@ static int max17042_write_reg(struct i2c_client *client, u8 reg, u16 value)
 
 static int max17042_read_reg(struct i2c_client *client, u8 reg)
 {
-	int ret = i2c_smbus_read_word_data(client, reg);
+	int ret = 0;
+	struct max17042_chip *chip = i2c_get_clientdata(client);
+
+	if (chip && chip->shutdown_complete)
+		return -ENODEV;
+
+	ret = i2c_smbus_read_word_data(client, reg);
 
 	if (ret < 0)
 		dev_err(&client->dev, "%s: err %d\n", __func__, ret);
@@ -104,6 +128,7 @@ static void max17042_set_reg(struct i2c_client *client,
 }
 
 static enum power_supply_property max17042_battery_props[] = {
+	POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_CYCLE_COUNT,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
@@ -117,7 +142,29 @@ static enum power_supply_property max17042_battery_props[] = {
 	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
 	POWER_SUPPLY_PROP_CURRENT_AVG,
+	POWER_SUPPLY_PROP_STATUS,
 };
+
+int maxim_get_temp(int *deci_celsius)
+{
+	int ret = -ENODEV;
+	s16 temp;
+
+	*deci_celsius = -2732;
+	if (temp_client == NULL)
+		return ret;
+
+	ret = max17042_read_reg(temp_client, MAX17042_TEMP);
+	if (ret < 0)
+		return ret;
+
+	temp = ret & 0xFFFF;
+	/* The value is converted into deci-centigrade scale */
+	/* Units of LSB = 1 / 256 degree Celsius */
+	*deci_celsius = temp * 10 / 256;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(maxim_get_temp);
 
 static int max17042_get_property(struct power_supply *psy,
 			    enum power_supply_property psp,
@@ -131,6 +178,9 @@ static int max17042_get_property(struct power_supply *psy,
 		return -EAGAIN;
 
 	switch (psp) {
+	case POWER_SUPPLY_PROP_TECHNOLOGY:
+		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
+		break;
 	case POWER_SUPPLY_PROP_PRESENT:
 		ret = max17042_read_reg(chip->client, MAX17042_STATUS);
 		if (ret < 0)
@@ -173,6 +223,8 @@ static int max17042_get_property(struct power_supply *psy,
 			return ret;
 
 		val->intval = ret * 625 / 8;
+		battery_gauge_record_voltage_value(chip->bg_dev,
+							val->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
 		ret = max17042_read_reg(chip->client, MAX17042_AvgVCELL);
@@ -194,6 +246,8 @@ static int max17042_get_property(struct power_supply *psy,
 			return ret;
 
 		val->intval = ret >> 8;
+		chip->cap = val->intval;
+		battery_gauge_record_capacity_value(chip->bg_dev, chip->cap);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
 		ret = max17042_read_reg(chip->client, MAX17042_FullCAP);
@@ -261,6 +315,15 @@ static int max17042_get_property(struct power_supply *psy,
 			return -EINVAL;
 		}
 		break;
+
+	case POWER_SUPPLY_PROP_STATUS:
+		if (chip->status)
+			val->intval = POWER_SUPPLY_STATUS_CHARGING;
+		else
+			val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
+		if (chip->cap >= 100)
+			val->intval = POWER_SUPPLY_STATUS_FULL;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -275,7 +338,7 @@ static int max17042_write_verify_reg(struct i2c_client *client,
 	u16 read_value;
 
 	do {
-		ret = i2c_smbus_write_word_data(client, reg, value);
+		ret = max17042_write_reg(client, reg, value);
 		read_value =  max17042_read_reg(client, reg);
 		if (read_value != value) {
 			ret = -EIO;
@@ -600,6 +663,7 @@ static int max17042_init_chip(struct max17042_chip *chip)
 	val = max17042_read_reg(chip->client, MAX17042_STATUS);
 	max17042_write_reg(chip->client, MAX17042_STATUS,
 			val & (~STATUS_POR_BIT));
+	chip->init_complete = 1;
 	return 0;
 }
 
@@ -635,17 +699,9 @@ static irqreturn_t max17042_thread_handler(int id, void *dev)
 static void max17042_init_worker(struct work_struct *work)
 {
 	struct max17042_chip *chip = container_of(work,
-				struct max17042_chip, work);
-	int ret;
-
-	/* Initialize registers according to values from the platform data */
-	if (chip->pdata->enable_por_init && chip->pdata->config_data) {
-		ret = max17042_init_chip(chip);
-		if (ret)
-			return;
-	}
-
-	chip->init_complete = 1;
+				struct max17042_chip, work.work);
+	power_supply_changed(&chip->battery);
+	schedule_delayed_work(&chip->work, MAX17047_DELAY);
 }
 
 #ifdef CONFIG_OF
@@ -682,6 +738,29 @@ max17042_get_pdata(struct device *dev)
 }
 #endif
 
+static int max17042_update_battery_status(struct battery_gauge_dev *bg_dev,
+		enum battery_charger_status status)
+{
+	struct max17042_chip *chip = battery_gauge_get_drvdata(bg_dev);
+
+	if (status == BATTERY_CHARGING)
+		chip->status = POWER_SUPPLY_STATUS_CHARGING;
+	else
+		chip->status = POWER_SUPPLY_STATUS_DISCHARGING;
+
+	power_supply_changed(&chip->battery);
+	return 0;
+}
+
+static struct battery_gauge_ops max17042_bg_ops = {
+	.update_battery_status = max17042_update_battery_status,
+};
+
+static struct battery_gauge_info max17042_bgi = {
+	.cell_id = 0,
+	.bg_ops = &max17042_bg_ops,
+};
+
 static int max17042_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
@@ -698,12 +777,12 @@ static int max17042_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	chip->client = client;
+	temp_client = client;
 	chip->pdata = max17042_get_pdata(&client->dev);
 	if (!chip->pdata) {
 		dev_err(&client->dev, "no platform data provided\n");
 		return -EINVAL;
 	}
-
 	i2c_set_clientdata(client, chip);
 
 	ret = max17042_read_reg(chip->client, MAX17042_DevName);
@@ -742,12 +821,6 @@ static int max17042_probe(struct i2c_client *client,
 		max17042_write_reg(client, MAX17042_LearnCFG, 0x0007);
 	}
 
-	ret = power_supply_register(&client->dev, &chip->battery);
-	if (ret) {
-		dev_err(&client->dev, "failed: power supply register\n");
-		return ret;
-	}
-
 	if (client->irq) {
 		ret = request_threaded_irq(client->irq, NULL,
 						max17042_thread_handler,
@@ -767,13 +840,46 @@ static int max17042_probe(struct i2c_client *client,
 
 	reg = max17042_read_reg(chip->client, MAX17042_STATUS);
 	if (reg & STATUS_POR_BIT) {
-		INIT_WORK(&chip->work, max17042_init_worker);
-		schedule_work(&chip->work);
+		if (chip->pdata->enable_por_init && chip->pdata->config_data) {
+			ret = max17042_init_chip(chip);
+			if (ret)
+				return ret;
+		}
 	} else {
 		chip->init_complete = 1;
 	}
 
+	if (!chip->pdata->is_battery_present) {
+		dev_err(&client->dev, "Battery not detected exiting driver\n");
+		return -ENODEV;
+	}
+
+	ret = power_supply_register(&client->dev, &chip->battery);
+	if (ret) {
+		dev_err(&client->dev, "failed: power supply register\n");
+		return ret;
+	}
+
+	chip->bg_dev = battery_gauge_register(&client->dev, &max17042_bgi,
+					chip);
+	if (IS_ERR(chip->bg_dev)) {
+		ret = PTR_ERR(chip->bg_dev);
+		dev_err(&client->dev, "battery gauge register failed: %d\n",
+			ret);
+		goto bg_err;
+	}
+
+	INIT_DEFERRABLE_WORK(&chip->work, max17042_init_worker);
+	schedule_delayed_work(&chip->work, 0);
+
+	battery_gauge_record_snapshot_values(chip->bg_dev,
+					MAX17047_DELAY/2);
+
 	return 0;
+
+bg_err:
+	power_supply_unregister(&chip->battery);
+	return ret;
 }
 
 static int max17042_remove(struct i2c_client *client)
@@ -782,8 +888,21 @@ static int max17042_remove(struct i2c_client *client)
 
 	if (client->irq)
 		free_irq(client->irq, chip);
+	battery_gauge_unregister(chip->bg_dev);
 	power_supply_unregister(&chip->battery);
 	return 0;
+}
+
+static void max17042_shutdown(struct i2c_client *client)
+{
+	struct max17042_chip *chip = i2c_get_clientdata(client);
+
+	if (client->irq)
+		disable_irq(client->irq);
+
+	cancel_delayed_work_sync(&chip->work);
+
+	chip->shutdown_complete = 1;
 }
 
 #ifdef CONFIG_PM
@@ -854,8 +973,20 @@ static struct i2c_driver max17042_i2c_driver = {
 	.probe		= max17042_probe,
 	.remove		= max17042_remove,
 	.id_table	= max17042_id,
+	.shutdown	= max17042_shutdown,
 };
-module_i2c_driver(max17042_i2c_driver);
+
+static int __init max17042_init(void)
+{
+	return i2c_add_driver(&max17042_i2c_driver);
+}
+subsys_initcall(max17042_init);
+
+static void __exit max17042_exit(void)
+{
+	i2c_del_driver(&max17042_i2c_driver);
+}
+module_exit(max17042_exit);
 
 MODULE_AUTHOR("MyungJoo Ham <myungjoo.ham@samsung.com>");
 MODULE_DESCRIPTION("MAX17042 Fuel Gauge");

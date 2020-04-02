@@ -1,6 +1,7 @@
 #
 # Makefile for misc devices that really don't fit anywhere else.
 #
+GCOV_PROFILE := y
 
 obj-$(CONFIG_IBM_ASM)		+= ibmasm/
 obj-$(CONFIG_AD525X_DPOT)	+= ad525x_dpot.o
@@ -16,14 +17,15 @@ obj-$(CONFIG_BMP085_SPI)	+= bmp085-spi.o
 obj-$(CONFIG_DUMMY_IRQ)		+= dummy-irq.o
 obj-$(CONFIG_ICS932S401)	+= ics932s401.o
 obj-$(CONFIG_LKDTM)		+= lkdtm.o
-obj-$(CONFIG_TIFM_CORE)       	+= tifm_core.o
-obj-$(CONFIG_TIFM_7XX1)       	+= tifm_7xx1.o
+obj-$(CONFIG_TIFM_CORE)		+= tifm_core.o
+obj-$(CONFIG_TIFM_7XX1)		+= tifm_7xx1.o
 obj-$(CONFIG_PHANTOM)		+= phantom.o
 obj-$(CONFIG_SENSORS_BH1780)	+= bh1780gli.o
 obj-$(CONFIG_SENSORS_BH1770)	+= bh1770glc.o
 obj-$(CONFIG_SENSORS_APDS990X)	+= apds990x.o
 obj-$(CONFIG_SGI_IOC4)		+= ioc4.o
 obj-$(CONFIG_ENCLOSURE_SERVICES) += enclosure.o
+obj-$(CONFIG_KERNEL_DEBUGGER_CORE)	+= kernel_debugger.o
 obj-$(CONFIG_KGDB_TESTS)	+= kgdbts.o
 obj-$(CONFIG_SGI_XP)		+= sgi-xp/
 obj-$(CONFIG_SGI_GRU)		+= sgi-gru/
@@ -36,6 +38,7 @@ obj-$(CONFIG_SENSORS_TSL2550)	+= tsl2550.o
 obj-$(CONFIG_EP93XX_PWM)	+= ep93xx_pwm.o
 obj-$(CONFIG_DS1682)		+= ds1682.o
 obj-$(CONFIG_TI_DAC7512)	+= ti_dac7512.o
+obj-$(CONFIG_UID_STAT)		+= uid_stat.o
 obj-$(CONFIG_C2PORT)		+= c2port/
 obj-$(CONFIG_HMC6352)		+= hmc6352.o
 obj-y				+= eeprom/
@@ -53,3 +56,38 @@ obj-$(CONFIG_INTEL_MEI)		+= mei/
 obj-$(CONFIG_VMWARE_VMCI)	+= vmw_vmci/
 obj-$(CONFIG_LATTICE_ECP3_CONFIG)	+= lattice-ecp3-config.o
 obj-$(CONFIG_SRAM)		+= sram.o
+obj-$(CONFIG_UID_CPUTIME)		+= uid_cputime.o
+ifndef CONFIG_MSTAR_CHIP
+obj-$(CONFIG_SENSORS_NCT1008)	+= nct1008.o
+obj-$(CONFIG_BCM4329_RFKILL)	+= bcm4329_rfkill.o
+CFLAGS_tegra-cryptodev.o	 = -Werror
+obj-$(CONFIG_TEGRA_CRYPTO_DEV)	+= tegra-cryptodev.o
+obj-$(CONFIG_TEGRA_BB_SUPPORT)	+= tegra-baseband/
+obj-$(CONFIG_TEGRA_CEC_SUPPORT)	+= tegra-cec/
+obj-$(CONFIG_MAX1749_VIBRATOR)	+= max1749.o
+obj-$(CONFIG_APANIC)		+= apanic.o
+obj-$(CONFIG_THERM_EST)		+= therm_est.o
+CFLAGS_tegra-throughput.o	 = -Werror
+ifeq ($(CONFIG_ARM64),y)
+CFLAGS_tegra-throughput.o       += -Iarch/arm/mach-tegra/include
+endif
+obj-$(CONFIG_TEGRA_THROUGHPUT)	+= tegra-throughput.o
+obj-$(CONFIG_SND_SOC_TEGRA_CS42L73)	+= a2220.o
+obj-$(CONFIG_SND_SOC_TEGRA_RT5640)	+= tfa9887.o
+obj-$(CONFIG_FAN_THERM_EST)	+= therm_fan_est.o
+obj-$(CONFIG_BLUEDROID_PM)      += bluedroid_pm.o
+obj-$(CONFIG_CPULOAD_MONITOR)	+= cpuload.o
+obj-$(CONFIG_SIM_MAX77660)	+= max77660-sim.o
+obj-$(CONFIG_SIM_PALMAS)	+= palmas-sim.o
+obj-$(CONFIG_PALMAS_LDOUSB_INPUT)	+= palmas-ldousb-in.o
+obj-y				+= issp/
+obj-$(CONFIG_TEGRA_PROFILER)    += tegra-profiler/
+obj-$(CONFIG_MTK_GPS)		+= gps/
+obj-$(CONFIG_HTC_HEADSET_MGR)	+= headset/
+obj-y		+= tegra-fuse/
+obj-$(CONFIG_DENVER_CPU)	+= force_idle_t132.o
+obj-$(CONFIG_ARCH_TEGRA)        +=tegra_timerinfo.o
+obj-$(CONFIG_MODS) 		+= mods/
+obj-$(CONFIG_DENVER_CPU)	+= idle_test_t132.o
+obj-$(CONFIG_QCT_9K_MODEM)	+= qcom-mdm-9k/
+endif

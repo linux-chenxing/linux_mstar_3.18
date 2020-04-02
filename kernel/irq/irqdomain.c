@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/fs.h>
+#include <mstar/mpatch_macro.h>
 
 #define IRQ_DOMAIN_MAP_LEGACY 0 /* driver allocated fixed range of irqs.
 				 * ie. legacy 8259, gets irqs 1..15 */
@@ -132,10 +133,12 @@ static unsigned int irq_domain_legacy_revmap(struct irq_domain *domain,
 					     irq_hw_number_t hwirq)
 {
 	irq_hw_number_t first_hwirq = domain->revmap_data.legacy.first_hwirq;
-	int size = domain->revmap_data.legacy.size;
-
-	if (WARN_ON(hwirq < first_hwirq || hwirq >= first_hwirq + size))
+#if (MP_PLATFORM_ARM64_DTB_IRQNUM_CHECK_OFF == 0)
+	int size = domain->revmap_data.legacy.size;	
+	if (WARN_ON(hwirq < first_hwirq || hwirq >= first_hwirq + size)){
 		return 0;
+	}
+#endif
 	return hwirq - first_hwirq + domain->revmap_data.legacy.first_irq;
 }
 
@@ -224,7 +227,6 @@ struct irq_domain *irq_domain_add_legacy(struct device_node *of_node,
 	domain = irq_domain_alloc(of_node, IRQ_DOMAIN_MAP_LEGACY, ops, host_data);
 	if (!domain)
 		return NULL;
-
 	domain->revmap_data.legacy.first_irq = first_irq;
 	domain->revmap_data.legacy.first_hwirq = first_hwirq;
 	domain->revmap_data.legacy.size = size;
@@ -933,6 +935,7 @@ void irq_domain_generate_simple(const struct of_device_id *match,
 				u64 phys_base, unsigned int irq_start)
 {
 	struct device_node *node;
+	printk("#############################################\n");
 	pr_debug("looking for phys_base=%llx, irq_start=%i\n",
 		(unsigned long long) phys_base, (int) irq_start);
 	node = of_find_matching_node_by_address(NULL, match, phys_base);

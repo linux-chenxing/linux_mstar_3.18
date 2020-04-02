@@ -23,6 +23,7 @@
 
 #include <asm/hwcap.h>
 
+#define PTRACE_SET_SYSCALL	23
 
 /*
  * PSR bits
@@ -86,6 +87,13 @@ struct user_hwdebug_state {
 		__u32	pad;
 	}		dbg_regs[16];
 };
+//reference arch/arm64/include/asm/ptrace.h for kdebug 
+#define ARM_cpsr	regs[16]
+#define ARM_pc		pc
+#define ARM_lr		regs[14]
+#define ARM_sp		sp
+#define ARM_fp		regs[11]
+
 
 #endif /* __ASSEMBLY__ */
 

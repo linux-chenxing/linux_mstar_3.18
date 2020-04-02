@@ -27,6 +27,8 @@
  * Returns:
  *	x0 - dest
  */
+
+#ifdef CONFIG_MP_PLATFORM_ARM_64bit_POARTING 
 ENTRY(memcpy)
 	mov	x4, x0
 	subs	x2, x2, #8
@@ -51,3 +53,4 @@ ENTRY(memcpy)
 	strb	w3, [x4]
 5:	ret
 ENDPROC(memcpy)
+#endif

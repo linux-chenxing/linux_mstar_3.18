@@ -160,7 +160,7 @@ static int gart_iommu_attach_dev(struct iommu_domain *domain,
 	struct gart_client *client, *c;
 	int err = 0;
 
-	gart = gart_handle;
+	gart = dev_get_drvdata(dev->parent);
 	if (!gart)
 		return -EINVAL;
 	domain->priv = gart;
@@ -252,7 +252,7 @@ static int gart_iommu_map(struct iommu_domain *domain, unsigned long iova,
 	spin_lock_irqsave(&gart->pte_lock, flags);
 	pfn = __phys_to_pfn(pa);
 	if (!pfn_valid(pfn)) {
-		dev_err(gart->dev, "Invalid page: %08x\n", pa);
+		dev_err(gart->dev, "Invalid page: %pa\n", &pa);
 		spin_unlock_irqrestore(&gart->pte_lock, flags);
 		return -EINVAL;
 	}
@@ -295,8 +295,8 @@ static phys_addr_t gart_iommu_iova_to_phys(struct iommu_domain *domain,
 
 	pa = (pte & GART_PAGE_MASK);
 	if (!pfn_valid(__phys_to_pfn(pa))) {
-		dev_err(gart->dev, "No entry for %08llx:%08x\n",
-			 (unsigned long long)iova, pa);
+		dev_err(gart->dev, "No entry for %08llx:%pa\n",
+			 (unsigned long long)iova, &pa);
 		gart_dump_table(gart);
 		return -EINVAL;
 	}
@@ -442,7 +442,7 @@ static struct platform_driver tegra_gart_driver = {
 	.remove		= tegra_gart_remove,
 	.driver = {
 		.owner	= THIS_MODULE,
-		.name	= "tegra-gart",
+		.name	= "tegra_gart",
 		.pm	= &tegra_gart_pm_ops,
 		.of_match_table = tegra_gart_of_match,
 	},

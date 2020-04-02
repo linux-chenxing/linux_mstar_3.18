@@ -1,0 +1,53 @@
+
+#define A_RIU_PM_BASE   	(0x1F000000)
+
+#define MIU2_BANK	       	 GET_CARD_REG_ADDR(A_RIU_BASE, 0x300)
+
+#define PMGPIO_BANK       GET_CARD_REG_ADDR(A_RIU_PM_BASE, 0x780)
+#define PMGPIO_1				 GET_CARD_REG_ADDR(PMGPIO_BANK,0x01)
+#define PMGPIO_11				 GET_CARD_REG_ADDR(PMGPIO_BANK,0x0b)
+
+#define CHIPTOP_0A   		  GET_CARD_REG_ADDR (A_CHIPTOP_BANK, 0x0a )
+#define CHIPTOP_0C   		  GET_CARD_REG_ADDR (A_CHIPTOP_BANK, 0x0c )
+#define CHIPTOP_10   		GET_CARD_REG_ADDR   (A_CHIPTOP_BANK, 0x10 )
+#define CHIPTOP_1F   		GET_CARD_REG_ADDR   (A_CHIPTOP_BANK, 0x1F )
+#define CHIPTOP_42   		GET_CARD_REG_ADDR   (A_CHIPTOP_BANK, 0x42 )
+#define CHIPTOP_43   		  GET_CARD_REG_ADDR (A_CHIPTOP_BANK, 0x43 )
+#define CHIPTOP_4F   		 GET_CARD_REG_ADDR  (A_CHIPTOP_BANK, 0x4F )
+#define CHIPTOP_50   		 GET_CARD_REG_ADDR  (A_CHIPTOP_BANK, 0x50 )
+#define CHIPTOP_57   		 GET_CARD_REG_ADDR  (A_CHIPTOP_BANK, 0x57 )
+#define CHIPTOP_7B   		   GET_CARD_REG_ADDR(A_CHIPTOP_BANK, 0x7B )
+#define CHIPTOP_5A   		   GET_CARD_REG_ADDR(A_CHIPTOP_BANK, 0x5A )
+
+#define CHIPTOP_64   		   GET_CARD_REG_ADDR(A_CHIPTOP_BANK, 0x64 )
+#define CHIPTOP_6F   		   GET_CARD_REG_ADDR(A_CHIPTOP_BANK, 0x6F )
+#define CHIPTOP_70   		   GET_CARD_REG_ADDR(A_CHIPTOP_BANK, 0x70 )
+
+#define RIU_BASE_FCIE           GET_CARD_REG_ADDR(A_RIU_BASE, 0x10780)
+#define SD_MODE                 	GET_CARD_REG_ADDR(RIU_BASE_FCIE,0x10)
+#define FCIE_2F                 	GET_CARD_REG_ADDR(RIU_BASE_FCIE,0x2F)
+#define FCIE_2D                 	GET_CARD_REG_ADDR(RIU_BASE_FCIE,0x2D)
+
+#define MIU2_7A				  GET_CARD_REG_ADDR(MIU2_BANK, 0x7A)
+
+
+
+
+
+
+#define BIT_GPIO_IN         BIT02
+#define BIT_GPIO_FIQ_MASK   BIT04
+#define BIT_GPIO_FIQ_CLR    BIT06
+#define BIT_GPIO_FIQ_POL    BIT07
+#define BIT_GPIO_FIQ_FINAL  BIT08
+
+#define   CLOCK_GEN_REG		0x69
+#define   _48M					(10<<2)
+#define   _43M					(9<<2)
+#define   _36M					(8<<2)
+#define   _32M					(7<<2)
+#define   _27M					(6<<2)
+#define   _18M					(4<<2)
+#define   _300K				(0<<2)
+
+

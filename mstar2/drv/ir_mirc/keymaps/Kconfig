@@ -1,0 +1,58 @@
+menu "Mstar IR Keymap Select"
+    depends on MIRC_INPUT_DEVICE
+	config IR_KEYMAP_MSTAR_NEC
+		tristate "Mstar NEC keymaps"
+		default y
+		help
+		Mstar nec keymap
+	config IR_KEYMAP_TCL_RCA
+		tristate "TCL RCA keymaps"
+		default y
+		help
+		TCL RCA keymaps
+	config IR_KEYMAP_TCL
+		tristate "TCL keymaps"
+		default y
+		help
+		TCL tv keymaps
+	config IR_KEYMAP_CHANGHONG
+		tristate "Changhong IR keymaps"
+		default y
+		help
+		Changhong tv keymaps
+	config IR_KEYMAP_HISENSE
+		tristate "Hisense IR keymaps"
+		default y
+		help
+		Hisense tv keymaps
+	config IR_KEYMAP_HAIER
+		tristate "Haier IR keymaps"
+		default y
+		help
+		Haier tv keymaps
+	config IR_KEYMAP_KONKA
+		tristate "Konka IR keymaps"
+		default y
+		help
+		Konka tv keymaps
+	config IR_KEYMAP_SKYWORTH
+		tristate "Skyworth IR keymaps"
+		default y
+		help
+		Skyworth tv keymaps
+	config IR_KEYMAP_PANASONIC
+		tristate "Pnasonic IR keymaps"
+		default y
+		help
+		panasonic tv keymaps
+	config IR_KEYMAP_KATHREIN
+		tristate "Kathrein RC6 MODE_6A IR keymaps"
+		default y
+		help
+		Kathrein tv keymaps
+    config IR_KEYMAP_RC5
+        tristate "RC5 IR keymaps"
+        default y
+        help
+        RC5 tv keymaps
+endmenu

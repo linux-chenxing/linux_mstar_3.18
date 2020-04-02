@@ -14,7 +14,13 @@
 
 	.text
 	.align	5
+#ifdef CONFIG_Kasan_Switch_On
+	.weak memchr
+#endif
 ENTRY(memchr)
+#ifdef CONFIG_Kasan_Switch_On
+ENTRY(__memchr)
+#endif
 1:	subs	r2, r2, #1
 	bmi	2f
 	ldrb	r3, [r0], #1
@@ -23,4 +29,7 @@ ENTRY(memchr)
 	sub	r0, r0, #1
 2:	movne	r0, #0
 	mov	pc, lr
+#ifdef CONFIG_Kasan_Switch_On
+ENDPROC(__memchr)
+#endif
 ENDPROC(memchr)

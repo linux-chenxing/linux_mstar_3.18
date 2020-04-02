@@ -1,3 +1,15 @@
+#defined by mstar
+config MSTAR_CHIP
+	bool
+	default y
+
+#defined by mstar for arm-boards
+config HAVE_SCHED_CLOCK
+	bool
+
+source "drivers/mstar2/Kconfig"
+source "mpatch_Kconfig"
+
 config ARM
 	bool
 	default y
@@ -14,6 +26,7 @@ config ARM
 	select GENERIC_IRQ_PROBE
 	select GENERIC_IRQ_SHOW
 	select GENERIC_PCI_IOMAP
+	select GENERIC_SCHED_CLOCK
 	select GENERIC_SMP_IDLE_THREAD
 	select GENERIC_IDLE_POLL_SETUP
 	select GENERIC_STRNCPY_FROM_USER
@@ -23,6 +36,7 @@ config ARM
 	select HAVE_ARCH_KGDB
 	select HAVE_ARCH_SECCOMP_FILTER
 	select HAVE_ARCH_TRACEHOOK
+	select HAVE_ARCH_KASAN
 	select HAVE_BPF_JIT
 	select HAVE_C_RECORDMCOUNT
 	select HAVE_DEBUG_KMEMLEAK
@@ -60,6 +74,7 @@ config ARM
 	select OLD_SIGSUSPEND3
 	select OLD_SIGACTION
 	select HAVE_CONTEXT_TRACKING
+	select ARM_PSCI
 	help
 	  The ARM series is a line of low-power-consumption RISC chip designs
 	  licensed by ARM Ltd and targeted at embedded applications and
@@ -109,6 +124,13 @@ config MIGHT_HAVE_PCI
 config SYS_SUPPORTS_APM_EMULATION
 	bool
 
+config ARCH_SCHED_CLOCK
+        bool
+        help
+          Allow the default sched_clock() to be overloaded at runtime.
+          Use this option if you build a kernel for a platform with
+          multiplee sched_clock sources, one of which will be selected
+          at runtime.
 config HAVE_TCM
 	bool
 	select GENERIC_ALLOCATOR
@@ -139,6 +161,7 @@ config SBUS
 
 config STACKTRACE_SUPPORT
 	bool
+	prompt "Enable STACKTRACE_SUPPORT"
 	default y
 
 config HAVE_LATENCYTOP_SUPPORT
@@ -205,6 +228,10 @@ config NEED_RET_TO_USER
 
 config ARCH_MTD_XIP
 	bool
+
+config ARCH_SUPPORTS_DEBUG_PAGEALLOC
+	def_bool y
+	depends on DEBUG_RODATA
 
 config VECTORS_BASE
 	hex
@@ -284,8 +311,9 @@ config MMU
 #
 choice
 	prompt "ARM system type"
-	default ARCH_VERSATILE if !MMU
-	default ARCH_MULTIPLATFORM if MMU
+	default ARCH_MSTAR
+#	default ARCH_VERSATILE if !MMU
+#	default ARCH_MULTIPLATFORM if MMU
 
 config ARCH_MULTIPLATFORM
 	bool "Allow multiple platforms to be selected"
@@ -346,6 +374,23 @@ config ARCH_VERSATILE
 	select VERSATILE_FPGA_IRQ
 	help
 	  This enables support for ARM Ltd Versatile board.
+
+config ARCH_MSTAR
+	bool "Mstar ARM-based"
+	select ARM_AMBA
+	select ARCH_HAS_CPUFREQ
+	select CLKDEV_LOOKUP
+	select GENERIC_CLOCKEVENTS
+	select ARCH_SCHED_CLOCK
+	select HAVE_CLK
+	select HAVE_SMP
+	select PLAT_MSTAR
+	select MSTAR_CHIP
+	select ARCH_HAS_HOLES_MEMORYMODEL
+	select COMMON_CLK
+	select ARCH_SPARSEMEM_ENABLE
+	help
+	  Support mstar chip porting
 
 config ARCH_AT91
 	bool "Atmel AT91"
@@ -599,6 +644,25 @@ config ARCH_LPC32XX
 	help
 	  Support for the NXP LPC32XX family of processors
 
+config ARCH_TEGRA
+	bool "NVIDIA Tegra"
+	select ARCH_HAS_CPUFREQ
+	select ARCH_REQUIRE_GPIOLIB
+	select CLKDEV_LOOKUP
+	select CLKSRC_MMIO
+	select GENERIC_CLOCKEVENTS
+	select HAVE_CLK
+	select HAVE_SMP
+	select MIGHT_HAVE_CACHE_L2X0
+	select NEED_MACH_MEMORY_H
+	select USE_OF
+	select FIQ
+	select PCI
+	select CPU_IDLE_MULTIPLE_DRIVERS
+	help
+	  This enables support for NVIDIA Tegra based systems (Tegra APX,
+	  Tegra 6xx and Tegra 2 series).
+
 config ARCH_PXA
 	bool "PXA2xx/PXA3xx-based"
 	depends on MMU
@@ -636,8 +700,6 @@ config ARCH_SHMOBILE
 	bool "Renesas SH-Mobile / R-Mobile"
 	select CLKDEV_LOOKUP
 	select GENERIC_CLOCKEVENTS
-	select HAVE_ARM_SCU if SMP
-	select HAVE_ARM_TWD if LOCAL_TIMERS
 	select HAVE_CLK
 	select HAVE_MACH_CLKDEV
 	select HAVE_SMP
@@ -1021,6 +1083,8 @@ source "arch/arm/mach-vexpress/Kconfig"
 source "arch/arm/plat-versatile/Kconfig"
 
 source "arch/arm/mach-virt/Kconfig"
+source "arch/arm/arm-boards/Kconfig"
+source "arch/arm/arm-boards/plat-mstar/Kconfig"
 
 source "arch/arm/mach-vt8500/Kconfig"
 
@@ -1053,6 +1117,8 @@ config PLAT_PXA
 config PLAT_VERSATILE
 	bool
 
+config PLAT_MSTAR
+	bool
 config ARM_TIMER_SP804
 	bool
 	select CLKSRC_MMIO
@@ -1063,6 +1129,7 @@ source arch/arm/mm/Kconfig
 config ARM_NR_BANKS
 	int
 	default 16 if ARCH_EP93XX
+	default 16 if ARCH_TEGRA_4GB_MEMORY
 	default 8
 
 config IWMMXT
@@ -1161,6 +1228,14 @@ config ARM_ERRATA_460075
 	  workaround disables the write-allocate mode for the L2 cache via the
 	  ACTLR register. Note that setting specific bits in the ACTLR register
 	  may not be available in non-secure mode.
+
+config ARM_ERRATA_716044
+	bool "ARM errata: an uncacheable load multiple instruction can cause a deadlock"
+	depends on CPU_V7
+	help
+	 Under some rare circumstances, an uncacheable load multiple
+	 instruction (LDRD, LDM, VLDM, VLD1, VLD2, VLD3, VLD4) can cause
+	 a processor deadlock.
 
 config ARM_ERRATA_742230
 	bool "ARM errata: DMB operation may be faulty"
@@ -1324,6 +1399,36 @@ config ARM_ERRATA_764369
 	  relevant cache maintenance functions and sets a specific bit
 	  in the diagnostic control register of the SCU.
 
+config ARM_ERRATA_720791
+	bool "ARM errata: Dynamic high-level clock gating corrupts the Jazelle instruction stream"
+	depends on CPU_V7
+	help
+	  This option enables the workaround for the 720791 Cortex-A9
+	  (r1p0..r1p2) erratum.  The Jazelle instruction stream may be
+	  corrupted when dynamic high-level clock gating is enabled.
+	  This workaround disables gating the Core clock when the Instruction
+	  side is waiting for a Page Table Walk answer or linefill completion.
+
+config ARM_ERRATA_752520
+	bool "ARM errata: Faulty arbitration between PLD and Cacheable TLB requests may create a system deadlock"
+	depends on CPU_V7
+	help
+	  Under rare circumstances, PLDs may interfere with a Cacheable page table walk,
+	  creating a processor deadlock. The erratum can only happen when the Data Cache
+	  and MMU are enabled, with the TLB descriptors marked as L1 cacheable,
+	  so that Page Table Walks are performed as cache linefills.
+
+config ARM_ERRATA_761320
+	bool "Full cache line writes to the same memory region from at least two processors might deadlock processor"
+	depends on CPU_V7 && SMP
+	help
+	  Under very rare circumstances, full cache line writes
+	  from (at least) 2 processors on cache lines in hazard with
+	  other requests may cause arbitration issues in the SCU,
+	  leading to processor deadlock. This erratum can be
+	  worked around by setting bit[21] of the undocumented
+	  Diagnostic Control Register to 1.
+
 config PL310_ERRATA_769419
 	bool "PL310 errata: no automatic Store Buffer drain"
 	depends on CACHE_L2X0
@@ -1355,6 +1460,36 @@ config ARM_ERRATA_798181
 	  option enables the Linux kernel workaround for this erratum
 	  which sends an IPI to the CPUs that are running the same ASID
 	  as the one being invalidated.
+
+config ARM_ERRATA_799270
+	bool "ARM errata: Writing ACTLR.SMP when the L2 cache has been idle for an extended period may not work correctly"
+	depends on CPU_V7 && SMP
+	help
+	  This option enables the workaround for the 799270 Cortex-A15 (r2p0,
+	  r2p1, r2p2, r2p3, r2p4) erratum. If the L2 cache logic clock is
+	  stopped because of L2 inactivity, setting or clearing the ACTLR.SMP
+	  bit might not be effective. The bit is modified in the ACTLR, meaning
+	  a read of the register returns the updated value. However the logic
+	  that uses that bit retains the previous value. The workaround is to
+	  do a memory read to a memory location with Non-cacheable, Strongly-
+	  ordered, or Device memory attributes. A dependency must be created
+	  between the returning load data and the MCR instruction that sets the
+	  ACTLR.SMP bit.
+
+config ARM_ERRATA_798870
+	bool "ARM errata: A memory read can stall indefinitely in the L2 cache"
+	depends on CPU_V7
+	help
+	  If back-to-back speculative cache line fills (fill A and fill B)
+	  are issued from the L1 data cache of a CPU to the L2 cache, the
+	  second request (fill B) is then cancelled, and the second request
+	  would have detected a hazard against a recent write or eviction
+	  (write B) to the same cache line as fill B, then the L2 logic might
+	  deadlock. The workaround is to let a secondary CPU go through reset
+	  cycle periodically which can restart L2 clock.
+
+config ARM_ERRATA_814220
+        bool "ARM CA7 errata: Cache maintenance by set/way operations can execute out of order"
 
 endmenu
 
@@ -1418,6 +1553,8 @@ config PCI_HOST_ITE8152
 
 source "drivers/pci/Kconfig"
 
+source "drivers/pci/pcie/Kconfig"
+
 source "drivers/pcmcia/Kconfig"
 
 endmenu
@@ -1438,8 +1575,9 @@ config SMP
 	depends on CPU_V6K || CPU_V7
 	depends on GENERIC_CLOCKEVENTS
 	depends on HAVE_SMP
-	depends on MMU
-	select USE_GENERIC_SMP_HELPERS
+	select HAVE_ARM_SCU if !ARCH_MSM_SCORPIONMP && \
+		 (!ARCH_TEGRA || ARCH_TEGRA_HAS_ARM_SCU)
+	depends on MMU || ARM_MPU
 	help
 	  This enables support for systems with more than one CPU. If you have
 	  a system with only one CPU, like most personal computers, say N. If
@@ -1544,6 +1682,49 @@ config PAGE_OFFSET
 	default 0x80000000 if VMSPLIT_2G
 	default 0xC0000000
 
+choice
+	prompt "Task size"
+	depends on MMU
+	default TASK_SIZE_1G_LESS_16M if VMSPLIT_1G
+	default TASK_SIZE_2G_LESS_16M if VMSPLIT_2G
+	default TASK_SIZE_3G_LESS_16M
+
+config TASK_SIZE_1G_LESS_16M
+	bool "Task size is 1GiB less 16MiB"
+	depends on VMSPLIT_1G
+
+config TASK_SIZE_1G_LESS_24M
+	bool "Task size is 1GiB less 24MiB"
+	depends on VMSPLIT_1G
+
+config TASK_SIZE_2G_LESS_16M
+	bool "Task size is 2GiB less 16MiB"
+	depends on VMSPLIT_2G
+
+config TASK_SIZE_2G_LESS_24M
+	bool "Task size is 2GiB less 24MiB"
+	depends on VMSPLIT_2G
+
+config TASK_SIZE_3G_LESS_16M
+	bool "Task size is 3GiB less 16MiB"
+	depends on VMSPLIT_3G
+
+config TASK_SIZE_3G_LESS_24M
+	bool "Task size is 3GiB less 24MiB"
+	depends on VMSPLIT_3G
+
+endchoice
+
+config TASK_SIZE
+	hex
+	depends on MMU
+	default 0x3E800000 if TASK_SIZE_1G_LESS_24M
+	default 0x3F000000 if TASK_SIZE_1G_LESS_16M
+	default 0x7E800000 if TASK_SIZE_2G_LESS_24M
+	default 0x7F000000 if TASK_SIZE_2G_LESS_16M
+	default 0xBE800000 if TASK_SIZE_3G_LESS_24M
+	default 0xBF000000
+
 config NR_CPUS
 	int "Maximum number of CPUs (2-32)"
 	range 2 32
@@ -1553,6 +1734,7 @@ config NR_CPUS
 config HOTPLUG_CPU
 	bool "Support for hot-pluggable CPUs"
 	depends on SMP && HOTPLUG
+        select MP_PLATFORM_DVFS_GET_ERR_STATE_FROM_CPUHOTPLG_DISABLE
 	help
 	  Say Y here to experiment with turning CPUs off and on.  CPUs
 	  can be controlled through /sys/devices/system/cpu.
@@ -1571,6 +1753,8 @@ config LOCAL_TIMERS
 	bool "Use local timer interrupts"
 	depends on SMP
 	default y
+	select HAVE_ARM_TWD if (!ARCH_MSM_SCORPIONMP && !EXYNOS4_MCT && !ARM_ARCH_TIMER \
+								&& !TEGRA_SOC_TIMERS && !ARCH_MSTAR_CA7)
 	help
 	  Enable support for local timers on SMP platforms, rather then the
 	  legacy IPI broadcast method.  Local timers allows the system
@@ -1597,11 +1781,12 @@ config ARCH_NR_GPIO
 source kernel/Kconfig.preempt
 
 config HZ
-	int
+	int "Timer Frequency(HZ)"
 	default 200 if ARCH_EBSA110 || ARCH_S3C24XX || ARCH_S5P64X0 || \
 		ARCH_S5PV210 || ARCH_EXYNOS4
 	default AT91_TIMER_HZ if ARCH_AT91
 	default SHMOBILE_TIMER_HZ if ARCH_SHMOBILE
+	default TEGRA_TIMER_HZ if ARCH_TEGRA
 	default 100
 
 config SCHED_HRTICK
@@ -1681,6 +1866,11 @@ config OABI_COMPAT
 	  in memory differs between the legacy ABI and the new ARM EABI
 	  (only for non "thumb" binaries). This option adds a tiny
 	  overhead to all syscalls and produces a slightly larger kernel.
+
+	  The seccomp filter system will not be available when this is
+	  selected, since there is no way yet to sensibly distinguish
+	  between calling conventions during filtering.
+
 	  If you know you'll be using only pure EABI user space then you
 	  can say N here. If this option is not selected and you attempt
 	  to execute a legacy ABI binary then the result will be
@@ -1697,6 +1887,9 @@ config ARCH_SPARSEMEM_DEFAULT
 	def_bool ARCH_SPARSEMEM_ENABLE
 
 config ARCH_SELECT_MEMORY_MODEL
+	def_bool ARCH_SPARSEMEM_ENABLE
+
+config HOLES_IN_ZONE
 	def_bool ARCH_SPARSEMEM_ENABLE
 
 config HAVE_ARCH_PFN_VALID
@@ -1780,6 +1973,19 @@ config UACCESS_WITH_MEMCPY
 	  However, if the CPU data cache is using a write-allocate mode,
 	  this option is unlikely to provide any performance gain.
 
+config ARM_PLD_64BYTE
+	bool "Use 64-bit preload size for kernel memory copy"
+	depends on CPU_V7
+	help
+	  Config preload size for memcpy, selecting this for Cortex-A15
+
+config USE_LDRDSTRD_OVER_LDMSTM
+	bool "Use 64-bit access instructions to optimize memory copy"
+	depends on CPU_V7
+	help
+	  Cortex-A15 perform better when use LDRD/STRD to access memory.
+	  Selecting this to optimize memory copy routines.
+
 config SECCOMP
 	bool
 	prompt "Enable seccomp to safely compute untrusted bytecode"
@@ -1819,6 +2025,15 @@ config XEN
 	help
 	  Say Y if you want to run Linux in a Virtual Machine on Xen on ARM.
 
+config ARM_FLUSH_CONSOLE_ON_RESTART
+	bool "Force flush the console on restart"
+	help
+	  If the console is locked while the system is rebooted, the messages
+	  in the temporary logbuffer would not have propogated to all the
+	  console drivers. This option forces the console lock to be
+	  released if it failed to be acquired, which will cause all the
+	  pending messages to be flushed.
+
 endmenu
 
 menu "Boot options"
@@ -1847,6 +2062,21 @@ config DEPRECATED_PARAM_STRUCT
 	help
 	  This was deprecated in 2001 and announced to live on for 5 years.
 	  Some old boot loaders still use this way.
+
+config BUILD_ARM_APPENDED_DTB_IMAGE
+	bool "Build a concatenated zImage/dtb by default"
+	depends on OF
+	help
+	  Enabling this option will cause a concatenated zImage and list of
+	  DTBs to be built by default (instead of a standalone zImage.)
+	  The image will built in arch/arm/boot/zImage-dtb
+
+config BUILD_ARM_APPENDED_DTB_IMAGE_NAMES
+	string "Default dtb names"
+	depends on BUILD_ARM_APPENDED_DTB_IMAGE
+	help
+	  Space separated list of names of dtbs to append when
+	  building a concatenated zImage-dtb.
 
 # Compressed boot loader in ROM.  Yes, we really want to ask about
 # TEXT and BSS so we preserve their values in the config files.
@@ -2071,6 +2301,10 @@ config AUTO_ZRELADDR
 	  will be determined at run-time by masking the current IP with
 	  0xf8000000. This assumes the zImage being placed in the first 128MB
 	  from start of memory.
+config MEMORY_START_ADDRESS
+	hex "Physical address of the memory starting"
+	default 0x40000000 if ((MSTAR_EIFFEL || MSTAR_EDISON || MSTAR_EINSTEIN) && ANDROID)
+	default 0x40400000 if ((MSTAR_EIFFEL || MSTAR_EDISON || MSTAR_EINSTEIN) && !ANDROID)
 
 endmenu
 
@@ -2107,6 +2341,14 @@ config CPU_FREQ_S3C24XX_PLL
 	  This also means that the PLL tables for the selected CPU(s) will
 	  be built which may increase the size of the kernel image.
 
+config COMPAT
+	bool "Kernel support for 32-bit EL0"
+	depends on !ARM64_64K_PAGES
+	select COMPAT_BINFMT_ELF
+	select HAVE_UID16
+	select OLD_SIGSUSPEND3
+	select COMPAT_OLD_SIGACTION
+
 config CPU_FREQ_S3C24XX_DEBUG
 	bool "Debug CPUfreq Samsung driver core"
 	depends on CPU_FREQ_S3C24XX
@@ -2128,6 +2370,8 @@ config CPU_FREQ_S3C24XX_DEBUGFS
 endif
 
 source "drivers/cpuidle/Kconfig"
+
+source "drivers/cpuquiet/Kconfig"
 
 endmenu
 
@@ -2228,6 +2472,9 @@ config ARCH_SUSPEND_POSSIBLE
 config ARM_CPU_SUSPEND
 	def_bool PM_SLEEP
 
+config ARCH_HIBERNATION_POSSIBLE
+	def_bool y
+
 endmenu
 
 source "net/Kconfig"
@@ -2237,6 +2484,10 @@ source "drivers/Kconfig"
 source "fs/Kconfig"
 
 source "arch/arm/Kconfig.debug"
+
+source "arch/Kconfig.kdebug"
+
+source "arch/arm/Kconfig.coredump"
 
 source "security/Kconfig"
 

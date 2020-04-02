@@ -36,12 +36,16 @@
 
 #include "mm.h"
 
-static unsigned long phys_initrd_start __initdata = 0;
+static phys_addr_t phys_initrd_start __initdata = 0;
 static unsigned long phys_initrd_size __initdata = 0;
+
+extern unsigned long lx_mem_addr;
+extern unsigned long lx_mem_size;
 
 static int __init early_initrd(char *p)
 {
-	unsigned long start, size;
+	phys_addr_t start;
+	unsigned long size;
 	char *endp;
 
 	start = memparse(p, &endp);
@@ -74,14 +78,6 @@ static int __init parse_tag_initrd2(const struct tag *tag)
 }
 
 __tagtable(ATAG_INITRD2, parse_tag_initrd2);
-
-#ifdef CONFIG_OF_FLATTREE
-void __init early_init_dt_setup_initrd_arch(unsigned long start, unsigned long end)
-{
-	phys_initrd_start = start;
-	phys_initrd_size = end - start;
-}
-#endif /* CONFIG_OF_FLATTREE */
 
 /*
  * This keeps memory configuration data used by a couple memory
@@ -334,6 +330,19 @@ phys_addr_t __init arm_memblock_steal(phys_addr_t size, phys_addr_t align)
 	return phys;
 }
 
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+extern phys_addr_t arm_lowmem_limit;
+void reserve_page_trace_mem(phys_addr_t beg,phys_addr_t end);
+#endif
+
+#ifdef CONFIG_MSTAR_IPAPOOL
+extern void ipa_contiguous_reserve(void);
+#endif
+
+#ifdef CONFIG_MSTAR_MMAHEAP   
+extern void deal_with_reserve_mma_heap();
+#endif
+
 void __init arm_memblock_init(struct meminfo *mi, struct machine_desc *mdesc)
 {
 	int i;
@@ -345,19 +354,25 @@ void __init arm_memblock_init(struct meminfo *mi, struct machine_desc *mdesc)
 #ifdef CONFIG_XIP_KERNEL
 	memblock_reserve(__pa(_sdata), _end - _sdata);
 #else
-	memblock_reserve(__pa(_stext), _end - _stext);
+	memblock_reserve(__pa(_stext), ALIGN(_end - _stext, PMD_SIZE));
 #endif
 #ifdef CONFIG_BLK_DEV_INITRD
+	/* FDT scan will populate initrd_start */
+	if (initrd_start && !phys_initrd_size) {
+		phys_initrd_start = __virt_to_phys(initrd_start);
+		phys_initrd_size = initrd_end - initrd_start;
+	}
+	initrd_start = initrd_end = 0;
 	if (phys_initrd_size &&
 	    !memblock_is_region_memory(phys_initrd_start, phys_initrd_size)) {
-		pr_err("INITRD: 0x%08lx+0x%08lx is not a memory region - disabling initrd\n",
-		       phys_initrd_start, phys_initrd_size);
+		pr_err("INITRD: 0x%08llx+0x%08lx is not a memory region - disabling initrd\n",
+		       (u64)phys_initrd_start, phys_initrd_size);
 		phys_initrd_start = phys_initrd_size = 0;
 	}
 	if (phys_initrd_size &&
 	    memblock_is_region_reserved(phys_initrd_start, phys_initrd_size)) {
-		pr_err("INITRD: 0x%08lx+0x%08lx overlaps in-use memory region - disabling initrd\n",
-		       phys_initrd_start, phys_initrd_size);
+		pr_err("INITRD: 0x%08llx+0x%08lx overlaps in-use memory region - disabling initrd\n",
+		       (u64)phys_initrd_start, phys_initrd_size);
 		phys_initrd_start = phys_initrd_size = 0;
 	}
 	if (phys_initrd_size) {
@@ -376,11 +391,37 @@ void __init arm_memblock_init(struct meminfo *mi, struct machine_desc *mdesc)
 	if (mdesc->reserve)
 		mdesc->reserve();
 
+// first reserve for mstar,
+//not place call this deal_with_reserve_mma_heap function in the end of arm_memblock_init.
+#ifdef CONFIG_MSTAR_MMAHEAP
+        deal_with_reserve_mma_heap();
+#endif
+
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+	reserve_page_trace_mem(PHYS_OFFSET, arm_lowmem_limit);
+#endif
 	/*
 	 * reserve memory for DMA contigouos allocations,
 	 * must come from DMA area inside low memory
 	 */
-	dma_contiguous_reserve(min(arm_dma_limit, arm_lowmem_limit));
+#ifndef CONFIG_MP_CMA_PATCH_CMA_DEFAULT_BUFFER_LIMITTED_TO_LX0
+    // this is original case, we only find default cma_buffer in lowmem, not only in LX1
+    printk("\033[35mFunction = %s, Line = %d, find cma_default buffer at whole lowmem\033[m\n", __PRETTY_FUNCTION__, __LINE__);
+    dma_contiguous_reserve(min(arm_dma_limit, arm_lowmem_limit));
+#else
+    // this is to limit cma default buffer at LX_MEM(LX0), but if LX_MEM acrosses sections(1GB), mi->bank[0] will be splited to mi->bank[0] and mi->bank[1], --> this is for clippers
+    printk("\033[35mFunction = %s, Line = %d, find cma_default buffer at only LX1\033[m\n", __PRETTY_FUNCTION__, __LINE__);
+    dma_contiguous_reserve(min((lx_mem_addr+lx_mem_size), min(arm_dma_limit, arm_lowmem_limit)));
+#endif
+
+#ifdef CONFIG_MSTAR_CHIP
+	/* Reserve 16K for put magic Key,new magic mechanism*/
+	memblock_reserve(PHYS_OFFSET, 16 * 1024);
+#endif
+
+#ifdef CONFIG_MSTAR_IPAPOOL        
+        ipa_contiguous_reserve();
+#endif
 
 	arm_memblock_steal_permitted = false;
 	memblock_allow_resize();
@@ -442,7 +483,7 @@ static inline void
 free_memmap(unsigned long start_pfn, unsigned long end_pfn)
 {
 	struct page *start_pg, *end_pg;
-	unsigned long pg, pgend;
+	phys_addr_t pg, pgend;
 
 	/*
 	 * Convert start_pfn/end_pfn to a struct page pointer.
@@ -454,8 +495,8 @@ free_memmap(unsigned long start_pfn, unsigned long end_pfn)
 	 * Convert to physical addresses, and
 	 * round start upwards and end downwards.
 	 */
-	pg = (unsigned long)PAGE_ALIGN(__pa(start_pg));
-	pgend = (unsigned long)__pa(end_pg) & PAGE_MASK;
+	pg = PAGE_ALIGN(__pa(start_pg));
+	pgend = __pa(end_pg) & PAGE_MASK;
 
 	/*
 	 * If there are free pages between these,
@@ -724,6 +765,7 @@ void __init mem_init(void)
 
 void free_initmem(void)
 {
+#ifndef CONFIG_CPA
 #ifdef CONFIG_HAVE_TCM
 	extern char __tcm_start, __tcm_end;
 
@@ -734,6 +776,7 @@ void free_initmem(void)
 	poison_init_mem(__init_begin, __init_end - __init_begin);
 	if (!machine_is_integrator() && !machine_is_cintegrator())
 		free_initmem_default(0);
+#endif
 }
 
 #ifdef CONFIG_BLK_DEV_INITRD
@@ -742,10 +785,12 @@ static int keep_initrd;
 
 void free_initrd_mem(unsigned long start, unsigned long end)
 {
+#ifndef CONFIG_CPA
 	if (!keep_initrd) {
 		poison_init_mem((void *)start, PAGE_ALIGN(end) - start);
 		free_reserved_area(start, end, 0, "initrd");
 	}
+#endif
 }
 
 static int __init keepinitrd_setup(char *__unused)

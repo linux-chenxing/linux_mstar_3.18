@@ -1,0 +1,9 @@
+# <- this is for comment kernel total file size must be larger than 4MB
+### direct write linux kernel image
+tftp 0x20200000 uImage
+spi wrc.p 0x20200000 KL 0 $(filesize)
+
+setenv bootcmd spi rdc.p 0x205FFFC0 KL 0 0x180000 \; bootm 0x205FFFC0
+saveenv
+
+# <- this is end of file symbol

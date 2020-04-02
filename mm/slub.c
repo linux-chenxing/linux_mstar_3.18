@@ -20,6 +20,9 @@
 #include <linux/proc_fs.h>
 #include <linux/notifier.h>
 #include <linux/seq_file.h>
+#ifdef CONFIG_Kasan_Switch_On
+#include <linux/kasan.h>
+#endif
 #include <linux/kmemcheck.h>
 #include <linux/cpu.h>
 #include <linux/cpuset.h>
@@ -450,14 +453,36 @@ static int slub_debug;
 
 static char *slub_debug_slabs;
 static int disable_higher_order_debug;
+#ifdef CONFIG_Kasan_Switch_On
+/*
+ * slub is about to manipulate internal object metadata.  This memory lies
+ * outside the range of the allocated object, so accessing it would normally
+ * be reported by kasan as a bounds error.  metadata_access_enable() is used
+ * to tell kasan that these accesses are OK.
+ */
+static inline void metadata_access_enable(void)
+{
+	kasan_disable_current();
+}
 
+static inline void metadata_access_disable(void)
+{
+	kasan_enable_current();
+}
+#endif
 /*
  * Object debugging
  */
 static void print_section(char *text, u8 *addr, unsigned int length)
 {
+#ifdef CONFIG_Kasan_Switch_On
+	metadata_access_enable();
+#endif
 	print_hex_dump(KERN_ERR, text, DUMP_PREFIX_ADDRESS, 16, 1, addr,
 			length, 1);
+#ifdef CONFIG_Kasan_Switch_On
+	metadata_access_disable();
+#endif
 }
 
 static struct track *get_track(struct kmem_cache *s, void *object,
@@ -487,7 +512,13 @@ static void set_track(struct kmem_cache *s, void *object,
 		trace.max_entries = TRACK_ADDRS_COUNT;
 		trace.entries = p->addrs;
 		trace.skip = 3;
+#ifdef CONFIG_Kasan_Switch_On
+		metadata_access_enable();
+#endif
 		save_stack_trace(&trace);
+#ifdef CONFIG_Kasan_Switch_On
+		metadata_access_disable();
+#endif
 
 		/* See rant in lockdep.c */
 		if (trace.nr_entries != 0 &&
@@ -612,9 +643,14 @@ static void print_trailer(struct kmem_cache *s, struct page *page, u8 *p)
 
 	dump_stack();
 }
-
+#ifndef CONFIG_Kasan_Switch_On
 static void object_err(struct kmem_cache *s, struct page *page,
 			u8 *object, char *reason)
+#endif
+#ifdef CONFIG_Kasan_Switch_On
+void object_err(struct kmem_cache *s, struct page *page,
+			u8 *object, char *reason)
+#endif
 {
 	slab_bug(s, "%s", reason);
 	print_trailer(s, page, object);
@@ -659,8 +695,13 @@ static int check_bytes_and_report(struct kmem_cache *s, struct page *page,
 {
 	u8 *fault;
 	u8 *end;
-
+#ifdef CONFIG_Kasan_Switch_On
+	metadata_access_enable();
+#endif
 	fault = memchr_inv(start, value, bytes);
+#ifdef CONFIG_Kasan_Switch_On
+	metadata_access_disable();
+#endif
 	if (!fault)
 		return 1;
 
@@ -752,8 +793,13 @@ static int slab_pad_check(struct kmem_cache *s, struct page *page)
 	remainder = length % s->size;
 	if (!remainder)
 		return 1;
-
+#ifdef CONFIG_Kasan_Switch_On
+	metadata_access_enable();
+#endif
 	fault = memchr_inv(end - remainder, POISON_INUSE, remainder);
+#ifdef CONFIG_Kasan_Switch_On
+	metadata_access_disable();
+#endif
 	if (!fault)
 		return 1;
 	while (end > fault && end[-1] == POISON_INUSE)
@@ -933,6 +979,9 @@ static inline void slab_post_alloc_hook(struct kmem_cache *s, gfp_t flags, void 
 	flags &= gfp_allowed_mask;
 	kmemcheck_slab_alloc(s, flags, object, slab_ksize(s));
 	kmemleak_alloc_recursive(object, s->object_size, 1, s->flags, flags);
+#ifdef CONFIG_Kasan_Switch_On
+	kasan_slab_alloc(s, object);
+#endif
 }
 
 static inline void slab_free_hook(struct kmem_cache *s, void *x)
@@ -956,6 +1005,9 @@ static inline void slab_free_hook(struct kmem_cache *s, void *x)
 #endif
 	if (!(s->flags & SLAB_DEBUG_OBJECTS))
 		debug_check_no_obj_freed(x, s->object_size);
+#ifdef CONFIG_Kasan_Switch_On
+	kasan_slab_free(s, x);
+#endif
 }
 
 /*
@@ -1289,6 +1341,9 @@ static struct page *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 	 */
 	alloc_gfp = (flags | __GFP_NOWARN | __GFP_NORETRY) & ~__GFP_NOFAIL;
 
+#ifdef CONFIG_MP_CMA_PATCH_SMALLER_SLAB_PAGE
+	oo = s->min;
+#endif
 	page = alloc_slab_page(alloc_gfp, node, oo);
 	if (unlikely(!page)) {
 		oo = s->min;
@@ -1336,8 +1391,15 @@ static void setup_object(struct kmem_cache *s, struct page *page,
 				void *object)
 {
 	setup_object_debug(s, page, object);
-	if (unlikely(s->ctor))
+	if (unlikely(s->ctor)) {
+#ifdef CONFIG_Kasan_Switch_On
+		kasan_unpoison_object_data(s, object);
+#endif
 		s->ctor(object);
+#ifdef CONFIG_Kasan_Switch_On
+		kasan_poison_object_data(s, object);
+#endif
+	}
 }
 
 static struct page *new_slab(struct kmem_cache *s, gfp_t flags, int node)
@@ -1367,6 +1429,9 @@ static struct page *new_slab(struct kmem_cache *s, gfp_t flags, int node)
 
 	if (unlikely(s->flags & SLAB_POISON))
 		memset(start, POISON_INUSE, PAGE_SIZE << order);
+#ifdef CONFIG_Kasan_Switch_On
+	kasan_poison_slab(page);
+#endif
 
 	last = start;
 	for_each_object(p, s, start, page->objects) {
@@ -2417,6 +2482,9 @@ void *kmem_cache_alloc_trace(struct kmem_cache *s, gfp_t gfpflags, size_t size)
 {
 	void *ret = slab_alloc(s, gfpflags, _RET_IP_);
 	trace_kmalloc(_RET_IP_, ret, size, s->size, gfpflags);
+#ifdef CONFIG_Kasan_Switch_On
+	kasan_kmalloc(s, ret, size);
+#endif
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc_trace);
@@ -2451,6 +2519,9 @@ void *kmem_cache_alloc_node_trace(struct kmem_cache *s,
 
 	trace_kmalloc_node(_RET_IP_, ret,
 			   size, s->size, gfpflags, node);
+#ifdef CONFIG_Kasan_Switch_On
+	kasan_kmalloc(s, ret, size);
+#endif
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc_node_trace);
@@ -2838,6 +2909,11 @@ static void early_kmem_cache_node_alloc(int node)
 	init_object(kmem_cache_node, n, SLUB_RED_ACTIVE);
 	init_tracking(kmem_cache_node, n);
 #endif
+
+#ifdef CONFIG_Kasan_Switch_On
+	kasan_kmalloc(kmem_cache_node, n, sizeof(struct kmem_cache_node));
+#endif
+
 	init_kmem_cache_node(n);
 	inc_slabs_node(kmem_cache_node, node, page->objects);
 
@@ -3234,6 +3310,9 @@ void *__kmalloc(size_t size, gfp_t flags)
 	ret = slab_alloc(s, flags, _RET_IP_);
 
 	trace_kmalloc(_RET_IP_, ret, size, s->size, flags);
+#ifdef CONFIG_Kasan_Switch_On
+	kasan_kmalloc(s, ret, size);
+#endif
 
 	return ret;
 }
@@ -3251,6 +3330,10 @@ static void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 		ptr = page_address(page);
 
 	kmemleak_alloc(ptr, size, 1, flags);
+#ifdef CONFIG_Kasan_Switch_On
+	kasan_kmalloc_large(ptr, size);
+#endif
+
 	return ptr;
 }
 
@@ -3277,13 +3360,21 @@ void *__kmalloc_node(size_t size, gfp_t flags, int node)
 	ret = slab_alloc_node(s, flags, node, _RET_IP_);
 
 	trace_kmalloc_node(_RET_IP_, ret, size, s->size, flags, node);
+#ifdef CONFIG_Kasan_Switch_On
+	kasan_kmalloc(s, ret, size);
+#endif
 
 	return ret;
 }
 EXPORT_SYMBOL(__kmalloc_node);
 #endif
 
+#ifndef CONFIG_Kasan_Switch_On
 size_t ksize(const void *object)
+#endif
+#ifdef CONFIG_Kasan_Switch_On
+static size_t __ksize(const void *object)
+#endif
 {
 	struct page *page;
 
@@ -3299,6 +3390,17 @@ size_t ksize(const void *object)
 
 	return slab_ksize(page->slab_cache);
 }
+
+#ifdef CONFIG_Kasan_Switch_On
+size_t ksize(const void *object)
+{
+	size_t size = __ksize(object);
+	/* We assume that ksize callers could use whole allocated area,
+	   so we need unpoison this area. */
+	kasan_krealloc(object, size);
+	return size;
+}
+#endif
 EXPORT_SYMBOL(ksize);
 
 #ifdef CONFIG_SLUB_DEBUG
@@ -3349,8 +3451,16 @@ void kfree(const void *x)
 
 	page = virt_to_head_page(x);
 	if (unlikely(!PageSlab(page))) {
+#if defined (CONFIG_MP_CMA_PATCH_MSTAR_KMALLOC) && defined(CONFIG_CMA)
+		if(is_default_cma_buffer((void *)(page_to_pfn(page) << PAGE_SHIFT))){
+			printk(CMA_ERR "\033[0;32;31m [Mstar kmalloc] ERROR %s %d 0x%p is_default_cma_buffer have to use mstar_kfree\033[m\n",__func__,__LINE__,x);
+		}
+#endif
 		BUG_ON(!PageCompound(page));
 		kmemleak_free(x);
+#ifdef CONFIG_Kasan_Switch_On
+		kasan_kfree_large(x);
+#endif
 		__free_memcg_kmem_pages(page, compound_order(page));
 		return;
 	}

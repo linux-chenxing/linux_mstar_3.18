@@ -1,3 +1,12 @@
+
+config MSTAR_CHIP
+	bool
+	default y
+
+
+source "drivers/mstar2/Kconfig"
+source "mpatch_Kconfig"
+
 config MIPS
 	bool
 	default y
@@ -52,6 +61,10 @@ config ZONE_DMA
 choice
 	prompt "System type"
 	default SGI_IP22
+
+config MSTAR_CHIP
+	bool "Mstar Chip Family"
+	select SYS_SUPPORTS_ZBOOT
 
 config MIPS_ALCHEMY
 	bool "Alchemy processor based machines"
@@ -860,6 +873,9 @@ source "arch/mips/netlogic/Kconfig"
 
 endmenu
 
+config MIPS_BOARDS_GEN
+	bool
+
 config RWSEM_GENERIC_SPINLOCK
 	bool
 	default y
@@ -964,6 +980,7 @@ config SYS_HAS_EARLY_PRINTK
 config HOTPLUG_CPU
 	bool "Support for hot-pluggable CPUs"
 	depends on SMP && HOTPLUG && SYS_SUPPORTS_HOTPLUG_CPU
+        select MP_PLATFORM_DVFS_GET_ERR_STATE_FROM_CPUHOTPLG_DISABLE
 	help
 	  Say Y here to allow turning CPUs off and on. CPUs can be
 	  controlled through /sys/devices/system/cpu.
@@ -2177,7 +2194,6 @@ source "mm/Kconfig"
 config SMP
 	bool "Multi-Processing support"
 	depends on SYS_SUPPORTS_SMP
-	select USE_GENERIC_SMP_HELPERS
 	help
 	  This enables support for systems with more than one CPU. If you have
 	  a system with only one CPU, like most personal computers, say N. If

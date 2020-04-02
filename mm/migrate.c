@@ -44,6 +44,9 @@
 
 #include "internal.h"
 
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+extern void show_page_trace(unsigned long pfn);
+#endif
 /*
  * migrate_prep() needs to be called before we start compiling a list of pages
  * to be migrated using isolate_lru_page(). If scheduling work on other CPUs is
@@ -218,18 +221,16 @@ static void __migration_entry_wait(struct mm_struct *mm, pte_t *ptep,
 
 	page = migration_entry_to_page(entry);
 
-	/*
-	 * Once radix-tree replacement of page migration started, page_count
-	 * *must* be zero. And, we don't want to call wait_on_page_locked()
-	 * against a page without get_page().
-	 * So, we use get_page_unless_zero(), here. Even failed, page fault
-	 * will occur again.
-	 */
-	if (!get_page_unless_zero(page))
-		goto out;
 	pte_unmap_unlock(ptep, ptl);
-	wait_on_page_locked(page);
-	put_page(page);
+	/* don't take ref on page, as it causes
+	 * migration to get aborted in between.
+	 * migration goes ahead after locking the page.
+	 * Wait on page to be unlocked. In case page get
+	 * unlocked, allocated and locked again forever,
+	 * before this function call, it would timeout in
+	 * next tick and exit.
+	 */
+	wait_on_page_locked_timeout(page);
 	return;
 out:
 	pte_unmap_unlock(ptep, ptl);
@@ -317,7 +318,13 @@ static int migrate_page_move_mapping(struct address_space *mapping,
 	if (!mapping) {
 		/* Anonymous page without mapping */
 		if (page_count(page) != 1)
+		{
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+			printk(KERN_ERR "[MIG%d]m1 pgcnt:%d, %ld\n", mode, page_count(page), page_to_pfn(page));
+			show_page_trace(page_to_pfn(page));
+#endif
 			return -EAGAIN;
+		}
 		return MIGRATEPAGE_SUCCESS;
 	}
 
@@ -330,11 +337,38 @@ static int migrate_page_move_mapping(struct address_space *mapping,
 	if (page_count(page) != expected_count ||
 		radix_tree_deref_slot_protected(pslot, &mapping->tree_lock) != page) {
 		spin_unlock_irq(&mapping->tree_lock);
+            {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+                if ((mode == MIGRATE_SYNC) && is_cma_page(page) && !is_cma_page(newpage))
+	            {
+	                static unsigned long last_pfn = 0;
+					static unsigned long retry_cnt = 0;
+					if(last_pfn != page_to_pfn(page))
+					{
+					   last_pfn = page_to_pfn(page);
+					   retry_cnt = 1;
+					   return -EAGAIN;
+					}
+					retry_cnt++;
+					if((retry_cnt %100) == 0)
+					{
+	                     printk(KERN_ERR "[MIG%d]page cnt too big!!, %ld, page_cnt%d, expected count%d, retry%lu\n",mode, page_to_pfn(page),
+						    page_count(page), expected_count, retry_cnt);
+                         show_page_trace( page_to_pfn(page));
+					}
+	            }
+#endif
 		return -EAGAIN;
+	}
 	}
 
 	if (!page_freeze_refs(page, expected_count)) {
 		spin_unlock_irq(&mapping->tree_lock);
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+			printk(KERN_ERR "[MIG%d]m2 pgcnt:%d excnt:%d, %ld\n",mode,
+						page_count(page), expected_count,page_to_pfn(page));
+			show_page_trace(page_to_pfn(page));
+#endif		
 		return -EAGAIN;
 	}
 
@@ -608,8 +642,14 @@ static int writeout(struct address_space *mapping, struct page *page)
 		return -EINVAL;
 
 	if (!clear_page_dirty_for_io(page))
+	    {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+		printk(KERN_ERR "[MIG]m3, %ld\n", page_to_pfn(page));
+		show_page_trace(page_to_pfn(page));
+#endif
 		/* Someone else already triggered a write */
 		return -EAGAIN;
+	    }
 
 	/*
 	 * A dirty page may imply that the underlying filesystem has
@@ -622,6 +662,13 @@ static int writeout(struct address_space *mapping, struct page *page)
 	remove_migration_ptes(page, page);
 
 	rc = mapping->a_ops->writepage(page, &wbc);
+	if (rc < 0)
+	{
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+		printk(KERN_ERR "[MIG]m4 rc:0x%x, %ld\n", rc, page_to_pfn(page));
+		show_page_trace(page_to_pfn(page));
+#endif
+	}
 
 	if (rc != AOP_WRITEPAGE_ACTIVATE)
 		/* unlocked. Relock */
@@ -649,10 +696,52 @@ static int fallback_migrate_page(struct address_space *mapping,
 	 */
 	if (page_has_private(page) &&
 	    !try_to_release_page(page, GFP_KERNEL))
+	    {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE	    
+	        if ((mode == MIGRATE_SYNC) && is_cma_page(page) && !is_cma_page(newpage))
+	        {
+	            printk(KERN_ERR "[MIG%d]buffer cnt non zero!!\n", mode);
+                dump_stack();
+	        }
+#endif            
 		return -EAGAIN;
+	    }
 
 	return migrate_page(mapping, newpage, page, mode);
 }
+
+#ifdef CONFIG_MP_CMA_PATCH_MIGRATION_FILTER
+int ext4_jnl_migrate_page(struct address_space *mapping,
+	struct page *newpage, struct page *page, enum migrate_mode mode)
+{
+    if (is_cma_page(newpage))
+        return -EBUSY;
+
+	if (PageDirty(page)) {
+		/* Only writeback pages in full synchronous migration */
+		if (mode != MIGRATE_SYNC)
+			return -EBUSY;
+		return writeout(mapping, page);
+	}
+
+	/*
+	 * Buffers may be managed in a filesystem specific way.
+	 * We must have no buffers or drop them.
+	 */
+	if (page_has_private(page) &&
+	    !try_to_release_page(page, GFP_KERNEL))
+	    {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+		printk(KERN_ERR "[MIG%d]m5, %ld\n", mode,page_to_pfn(page));
+		show_page_trace(page_to_pfn(page));
+#endif
+		return -EAGAIN;
+	    }
+
+	return migrate_page(mapping, newpage, page, mode);
+}
+EXPORT_SYMBOL(ext4_jnl_migrate_page);
+#endif
 
 /*
  * Move a page to a newly allocated page
@@ -670,6 +759,7 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 {
 	struct address_space *mapping;
 	int rc;
+//	int return_place = 0;
 
 	/*
 	 * Block others from accessing the page when we get around to
@@ -687,21 +777,47 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 
 	mapping = page_mapping(page);
 	if (!mapping)
+	{
+//		return_place = 1;
 		rc = migrate_page(mapping, newpage, page, mode);
+	}
 	else if (mapping->a_ops->migratepage)
+	{
 		/*
 		 * Most pages have a mapping and most filesystems provide a
 		 * migratepage callback. Anonymous pages are part of swap
 		 * space which also has its own migratepage callback. This
 		 * is the most common path for page migration.
 		 */
+//		return_place = 2;
 		rc = mapping->a_ops->migratepage(mapping,
 						newpage, page, mode);
+	}
 	else
+	{
+//		return_place = 3;
 		rc = fallback_migrate_page(mapping, newpage, page, mode);
+	}
 
 	if (rc != MIGRATEPAGE_SUCCESS) {
+#ifdef CONFIG_MP_CMA_PATCH_FORCE_MIGRATION
+/*		printk("\033[0;32;31m [CMA MIGRATION01] %s %d \033[m\n",__func__,__LINE__);
+		//Mstar CMA workarround patch
+		rc = buffer_migrate_page(mapping, newpage, page, mode);
+		if (rc == MIGRATEPAGE_SUCCESS){
+			if (remap_swapcache)
+				remove_migration_ptes(page, newpage);
+			page->mapping = NULL;
+			goto Exit;
+		}
+
+		printk("\033[0;32;31m [CMA MIGRATION02] %s %d \033[m\n",__func__,__LINE__);
+*/
+#endif
 		newpage->mapping = NULL;
+#ifdef CONFIG_MP_CMA_PATCH_DEBUG_SHOW_ALLOC_CONTIG_RANG_ERROR_MSG
+//		printk("\033[0;32;31m return_place is %d\033[m\n", return_place);
+#endif
 	} else {
 		if (remap_swapcache)
 			remove_migration_ptes(page, newpage);
@@ -709,7 +825,6 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 	}
 
 	unlock_page(newpage);
-
 	return rc;
 }
 
@@ -723,7 +838,11 @@ static int __unmap_and_move(struct page *page, struct page *newpage,
 
 	if (!trylock_page(page)) {
 		if (!force || mode == MIGRATE_ASYNC)
+		{
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+#endif
 			goto out;
+		}
 
 		/*
 		 * It's not safe for direct compaction to call lock_page.
@@ -739,7 +858,11 @@ static int __unmap_and_move(struct page *page, struct page *newpage,
 		 * altogether.
 		 */
 		if (current->flags & PF_MEMALLOC)
+		{
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+#endif
 			goto out;
+		}
 
 		lock_page(page);
 	}
@@ -759,7 +882,13 @@ static int __unmap_and_move(struct page *page, struct page *newpage,
 			goto uncharge;
 		}
 		if (!force)
+		{
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+			printk(KERN_ERR "[MIG%d]m8, %ld\n", mode,page_to_pfn(page));
+			show_page_trace(page_to_pfn(page));
+#endif
 			goto uncharge;
+		}
 		wait_on_page_writeback(page);
 	}
 	/*
@@ -795,6 +924,10 @@ static int __unmap_and_move(struct page *page, struct page *newpage,
 			 */
 			remap_swapcache = 0;
 		} else {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+			printk(KERN_ERR "[MIG%d]m9, %ld\n", mode,page_to_pfn(page));
+			show_page_trace(page_to_pfn(page));
+#endif
 			goto uncharge;
 		}
 	}
@@ -827,7 +960,19 @@ static int __unmap_and_move(struct page *page, struct page *newpage,
 		VM_BUG_ON(PageAnon(page));
 		if (page_has_private(page)) {
 			try_to_free_buffers(page);
+			{
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+				 static int logt = 0;
+				 logt++;
+				printk(KERN_ERR "[MIG%d]m10,%ld\n", mode, page_to_pfn(page));
+				if(logt%23)
+				show_page_trace(page_to_pfn(page));
+#endif
+				if(PageLocked(page))
+				{
+				}
 			goto uncharge;
+			}
 		}
 		goto skip_unmap;
 	}
@@ -838,6 +983,13 @@ static int __unmap_and_move(struct page *page, struct page *newpage,
 skip_unmap:
 	if (!page_mapped(page))
 		rc = move_to_new_page(newpage, page, remap_swapcache, mode);
+	else
+	{
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+		printk("[MIG%d]m20 failed to unmap page %ld\n", mode,page_to_pfn(page));
+		show_page_trace(page_to_pfn(page));
+#endif
+	}
 
 	if (rc && remap_swapcache)
 		remove_migration_ptes(page, page);
@@ -869,6 +1021,16 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 	if (!newpage)
 		return -ENOMEM;
 
+#if defined(CONFIG_MP_CMA_PATCH_MIGRATION_FILTER) || defined(CONFIG_MP_CMA_PATCH_KSM_MIGRATION_FAILURE)    
+    if (page == newpage)
+    {
+#ifdef CONFIG_MP_CMA_PATCH_DEBUG_SHOW_ALLOC_CONTIG_RANG_ERROR_MSG
+        printk("\033[35mFunction = %s, Line = %d, failed @page == newpage\033[m\n", __PRETTY_FUNCTION__, __LINE__);
+#endif
+        return -EBUSY;
+    }
+#endif
+
 	if (page_count(page) == 1) {
 		/* page was freed from under us. So we are done. */
 		goto out;
@@ -876,9 +1038,17 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 
 	if (unlikely(PageTransHuge(page)))
 		if (unlikely(split_huge_page(page)))
+	{
+	        printk(KERN_ERR "unmap_and_move unlikely error for huge page\n");
 			goto out;
+	}
 
 	rc = __unmap_and_move(page, newpage, force, mode);
+	
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE	
+	if(rc == 0)
+		notify_migrate_page(page, newpage);
+#endif
 
 	if (unlikely(rc == MIGRATEPAGE_BALLOON_SUCCESS)) {
 		/*
@@ -1040,6 +1210,12 @@ int migrate_pages(struct list_head *from, new_page_t get_new_page,
 			default:
 				/* Permanent failure */
 				nr_failed++;
+				if (reason == MR_CMA)
+				{
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+                   printk(KERN_ERR "[MIG%d]migrate_pages fail1, rc:%d, %ld\n", mode, rc, page_to_pfn(page));
+#endif
+                            }
 				break;
 			}
 		}
@@ -1082,6 +1258,62 @@ int migrate_huge_page(struct page *hpage, new_page_t get_new_page,
 	}
 out:
 	return rc;
+}
+
+/*
+ * migrate_replace_page
+ *
+ * The function takes one single page and a target page (newpage) and
+ * tries to migrate data to the target page. The caller must ensure that
+ * the source page is locked with one additional get_page() call, which
+ * will be freed during the migration. The caller also must release newpage
+ * if migration fails, otherwise the ownership of the newpage is taken.
+ * Source page is released if migration succeeds.
+ *
+ * Return: error code or 0 on success.
+ */
+int migrate_replace_page(struct page *page, struct page *newpage)
+{
+	struct zone *zone = page_zone(page);
+	unsigned long flags;
+	int ret = -EAGAIN;
+	int pass;
+
+	migrate_prep();
+	spin_lock_irqsave(&zone->lru_lock, flags);
+
+	if (PageLRU(page) &&
+	    __isolate_lru_page(page, ISOLATE_UNEVICTABLE) == 0) {
+		struct lruvec *lruvec = mem_cgroup_page_lruvec(page, zone);
+		del_page_from_lru_list(page, lruvec, page_lru(page));
+		spin_unlock_irqrestore(&zone->lru_lock, flags);
+	} else {
+		spin_unlock_irqrestore(&zone->lru_lock, flags);
+		return -EAGAIN;
+	}
+
+	for (pass = 0; pass < 10 && ret != 0; pass++) {
+		cond_resched();
+
+		if (page_count(page) == 1) {
+			/* page was freed from under us, so we are done */
+			ret = 0;
+			break;
+		}
+		ret = __unmap_and_move(page, newpage, 1, MIGRATE_SYNC);
+	}
+
+	if (ret == 0) {
+		/* take ownership of newpage and add it to lru */
+		putback_lru_page(newpage);
+	} else {
+		/* restore additional reference to the oldpage */
+            /* this may lead to dead loop in get user pages */
+		//get_page(page);
+	}
+
+	putback_lru_page(page);
+	return ret;
 }
 
 #ifdef CONFIG_NUMA

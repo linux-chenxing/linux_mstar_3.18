@@ -28,20 +28,46 @@
 
 #include "cpufreq_governor.h"
 
+/* add this two head file for dvfs_hotplug */
+#include <mstar/mpatch_macro.h>
+#include <chip_dvfs_calibrating.h>
+
 /* On-demand governor macros */
 #define DEF_FREQUENCY_DOWN_DIFFERENTIAL		(10)
 #define DEF_FREQUENCY_UP_THRESHOLD		(80)
 #define DEF_SAMPLING_DOWN_FACTOR		(1)
 #define MAX_SAMPLING_DOWN_FACTOR		(100000)
 #define MICRO_FREQUENCY_DOWN_DIFFERENTIAL	(3)
+#ifdef CONFIG_MP_DVFS_ONDEMAND_HIGH_PERFORMANCE
+#define MICRO_FREQUENCY_UP_THRESHOLD		(80)
+#else
 #define MICRO_FREQUENCY_UP_THRESHOLD		(95)
+#endif
 #define MICRO_FREQUENCY_MIN_SAMPLE_RATE		(10000)
 #define MIN_FREQUENCY_UP_THRESHOLD		(11)
 #define MAX_FREQUENCY_UP_THRESHOLD		(100)
 
+#ifdef CONFIG_MP_DVFS_ONDEMAND_HIGH_PERFORMANCE
+#define DECREASE_CPUFREQ_COUNT	(6)
+#endif
+
 static DEFINE_PER_CPU(struct od_cpu_dbs_info_s, od_cpu_dbs_info);
 
 static struct od_ops od_ops;
+#ifdef CONFIG_MP_DVFS_FORCE_SET_TARGET_FREQ
+unsigned int forcibly_set_target_flag = 0;
+unsigned int over_thermal_flag = 0;
+#endif
+#if defined(CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_MAX_LOAD) || defined(CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_AVERAGE_LOAD)
+extern struct mutex mstar_cpuload_lock;
+extern unsigned int mstar_cpu_load_freq[CONFIG_NR_CPUS];
+#endif
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+extern void update_mstar_cpu_dvfs_hotplug_workload_table(void);
+extern struct mutex mstar_cpuload_threshold;
+extern Cpu_Dvfs_Hotplug_Scenario mstar_cpu_dvfs_hotplug_scenario[CPU_DVFS_HOTPLUG_LEVEL_MAX];
+extern Cpu_Dvfs_Hotplug_Total_Workload_Region mstar_cpu_dvfs_hotplug_workload_table[CPU_DVFS_HOTPLUG_LEVEL_MAX];
+#endif
 
 #ifndef CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND
 static struct cpufreq_governor cpufreq_gov_ondemand;
@@ -159,6 +185,174 @@ static void dbs_freq_increase(struct cpufreq_policy *p, unsigned int freq)
 			CPUFREQ_RELATION_L : CPUFREQ_RELATION_H);
 }
 
+#if defined(CONFIG_MP_DVFS_CPUHOTPLUG) || defined(CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_MAX_LOAD)
+#define CPU_HOTPLUG_MSG KERN_DEBUG
+#endif
+
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+static int mstar_cpu_dvfs_hotplug_scenario_index = 0;
+static void mstar_od_check_cpu(int cpu, unsigned int load_freq)	// the load_freq is cur_freq * cur_load (absolute cpu_load_freq)
+{
+	struct od_cpu_dbs_info_s *dbs_info = &per_cpu(od_cpu_dbs_info, cpu);
+	struct cpufreq_policy *policy = dbs_info->cdbs.cur_policy;
+	struct dbs_data *dbs_data = policy->governor_data;
+	struct od_dbs_tuners *od_tuners = dbs_data->tuners;
+
+	int level_index = -1;
+	unsigned int freq_next = 0;
+	unsigned int region_high, region_min;
+	unsigned int total_cpu_nr = 0;
+	int i = 0;
+	unsigned int mstar_load_freq = 0;
+
+	dbs_info->freq_lo = 0;
+#if defined(CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_MAX_LOAD) && defined(CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_AVERAGE_LOAD)
+#error "you can not define both CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_MAX_LOAD and CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_AVERAGE_LOAD"
+#endif
+
+/* step_1: decide mstar_load_freq(max_cpu_load_freq or cpu0_load_freq) */
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_MAX_LOAD
+	int j = 0;
+	if(cpu == 0)	// use max_cpu_load_freq among all online cpus
+	{
+		mutex_lock(&mstar_cpuload_lock);
+		for_each_online_cpu(i)
+		{
+			if(mstar_load_freq < mstar_cpu_load_freq[i])
+			{
+				j = i;
+				mstar_load_freq = mstar_cpu_load_freq[i];
+			}
+			//printk(CPU_HOTPLUG_MSG "\033[35mFunction = %s, Line = %d, cpu_load_freq of cpu%d is %3u\033[m\n", __PRETTY_FUNCTION__, __LINE__, i, mstar_cpu_load_freq[i]);
+		}
+		mutex_unlock(&mstar_cpuload_lock);
+		printk(CPU_HOTPLUG_MSG "\033[35m[Max Case] Function = %s, Line = %d, max_cpu_load_freq of cpu%d is %3u\033[m\n", __PRETTY_FUNCTION__, __LINE__, j, mstar_load_freq);
+	}
+	else
+		return;
+#elif defined(CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_AVERAGE_LOAD)
+	int cpu_cnt = 0;
+	if(cpu == 0)	// use the average cpu_load_freq among all online cpus
+	{
+		mutex_lock(&mstar_cpuload_lock);
+		for_each_online_cpu(i)
+		{
+			mstar_load_freq += mstar_cpu_load_freq[i];
+			//printk(CPU_HOTPLUG_MSG "\033[35mFunction = %s, Line = %d, cpu_load_freq of cpu%d is %3u\033[m\n", __PRETTY_FUNCTION__, __LINE__, i, mstar_cpu_load_freq[i]);
+			cpu_cnt++;
+		}
+		mutex_unlock(&mstar_cpuload_lock);
+		mstar_load_freq /= cpu_cnt;
+		printk(CPU_HOTPLUG_MSG "\033[35m[Average Case] Function = %s, Line = %d, average_cpu_load_freq among cpu_cnt(%d) is %3u\033[m\n", __PRETTY_FUNCTION__, __LINE__, cpu_cnt, mstar_load_freq);
+	}
+	else
+		return;
+#else
+	mstar_load_freq = load_freq;	// use load_freq, which is the max load_freq of policy->cpus
+
+	if(cpu == 0)
+	{
+		printk(CPU_HOTPLUG_MSG "\033[35m[CPU0 Case] Function = %s, Line = %d, [cpu%d] max_cpu_load_freq is %u\033[m\n", __PRETTY_FUNCTION__, __LINE__, cpu, mstar_load_freq);
+		//printk(CPU_HOTPLUG_MSG "\033[35mFunction = %s, Line = %d, [cpu%d] cpu_load is %3u\033[m\n", __PRETTY_FUNCTION__, __LINE__, cpu, mstar_load_freq/policy->cur);
+	}
+	else
+		return;
+#endif
+/* step_1: decide mstar_load_freq(max_cpu_load_freq or cpu0_load_freq) */
+
+
+/* step_2: use mstar_load_freq to decide the next scenario */
+	/* Check for frequency increase, change to max cpu_freq */
+	if (mstar_load_freq > od_tuners->up_threshold * policy->cur)
+	{
+		level_index = CPU_DVFS_HOTPLUG_LEVEL_MAX - 1;
+
+		if(cpu == 0) // policy->cpu == 0, but the sampling_work owner maybe not cpu0, it will be one of policy->cpus
+		{
+			printk(CPU_HOTPLUG_MSG "\033[31m[MAX_CASE] load:%3u, cur_freq:%7u, num_online_cpus:%d ==> level_index:%2d\033[m\n\n", (mstar_load_freq/policy->cur), policy->cur, num_online_cpus(), level_index);
+			dbs_info->mstar_hotplug_rate_mult = mstar_cpu_dvfs_hotplug_scenario[level_index].sample_rate_mult;		// adjust the mstar_hotplug_rate_mult, which to change the sample_rate
+			mstar_cpu_dvfs_hotplug_scenario_index = level_index;
+		}
+
+		/* according to the cpu_load to decide the cpu_nr and target_freq */
+		total_cpu_nr = mstar_cpu_dvfs_hotplug_scenario[level_index].total_cpu_nr;
+		freq_next = mstar_cpu_dvfs_hotplug_scenario[level_index].target_freq;
+
+		/* combine total_cpu_nr with freq_next, the leftest 4 bits will be total_cpu_nr */
+		freq_next = freq_next | (total_cpu_nr << 28);
+
+		__cpufreq_driver_target(policy, freq_next, CPUFREQ_RELATION_L);
+
+		if(cpu == 0) // policy->cpu == 0, but the sampling_work owner maybe not cpu0, it will be one of policy->cpus
+		{
+			mutex_lock(&mstar_cpuload_threshold);
+			od_tuners->up_threshold = mstar_cpu_dvfs_hotplug_scenario[level_index].mstar_up_threshold;
+			od_tuners->adj_up_threshold = mstar_cpu_dvfs_hotplug_scenario[level_index].mstar_adj_up_threshold;
+			mutex_unlock(&mstar_cpuload_threshold);
+		}
+		return;
+	}
+
+	/*
+	 * The optimal frequency is the frequency that is the lowest that can
+	 * support the current CPU usage without triggering the up policy. To be
+	 * safe, we focus 10 points under the threshold.
+	 */
+	if (mstar_load_freq < od_tuners->adj_up_threshold * policy->cur)
+	{
+		freq_next = mstar_load_freq * num_online_cpus();	// to get the total workload: cpu_nr * cpu_load * cpu_freq
+
+		for(i = 0; i < CPU_DVFS_HOTPLUG_LEVEL_MAX; i++)
+		{
+			region_min = mstar_cpu_dvfs_hotplug_workload_table[i].supported_workload_lower_bound;
+			region_high = mstar_cpu_dvfs_hotplug_workload_table[i].supported_workload_upper_bound;
+
+			if( (region_min <= freq_next) && (freq_next < region_high) )
+				break;
+		}
+		level_index = i;
+
+		if(level_index >= CPU_DVFS_HOTPLUG_LEVEL_MAX)
+		{
+			printk(KERN_ERR "\033[31mFunction = %s, Line = %d, unknown mstar_load_freq %u\033[m\n", __PRETTY_FUNCTION__, __LINE__, mstar_load_freq);
+			BUG_ON(1);
+		}
+
+		if(cpu == 0) // policy->cpu == 0, but the sampling_work owner maybe not cpu0, it will be one of policy->cpus
+		{
+			printk(CPU_HOTPLUG_MSG "\033[31m[NORMAL_CASE] load:%3u, cur_freq:%7u, num_online_cpus:%d ==> level_index:%2d\033[m\n\n", (mstar_load_freq/policy->cur), policy->cur, num_online_cpus(), level_index);
+			dbs_info->mstar_hotplug_rate_mult = mstar_cpu_dvfs_hotplug_scenario[level_index].sample_rate_mult;		// adjust the mstar_hotplug_rate_mult, which to change the sample_rate
+			mstar_cpu_dvfs_hotplug_scenario_index = level_index;
+		}
+
+		/* according to the cpu_load to decide the cpu_nr and target_freq */
+		total_cpu_nr = mstar_cpu_dvfs_hotplug_scenario[level_index].total_cpu_nr;
+		freq_next = mstar_cpu_dvfs_hotplug_scenario[level_index].target_freq;
+
+		/* combine total_cpu_nr with freq_next, the leftest 4 bits will be total_cpu_nr */
+		freq_next = freq_next | (total_cpu_nr << 28);
+
+		__cpufreq_driver_target(policy, freq_next, CPUFREQ_RELATION_L);
+
+		if(cpu == 0) // policy->cpu == 0, but the sampling_work owner maybe not cpu0, it will be one of policy->cpus
+		{
+			mutex_lock(&mstar_cpuload_threshold);
+			od_tuners->up_threshold = mstar_cpu_dvfs_hotplug_scenario[level_index].mstar_up_threshold;
+			od_tuners->adj_up_threshold = mstar_cpu_dvfs_hotplug_scenario[level_index].mstar_adj_up_threshold;
+			mutex_unlock(&mstar_cpuload_threshold);
+		}
+
+		return;
+	}
+/* step_2: use mstar_load_freq to decide the next scenario */
+
+	if(cpu == 0) // policy->cpu == 0, but the sampling_work owner maybe not cpu0, it will be one of policy->cpus
+	{
+		printk(CPU_HOTPLUG_MSG "\033[31m[NO_CHANGE_CASE] load:%3u, cur_freq:%7u, num_online_cpus:%d ==> mstar_cpu_dvfs_hotplug_scenario_index:%2d\033[m\n\n",
+			(mstar_load_freq/policy->cur), policy->cur, num_online_cpus(), mstar_cpu_dvfs_hotplug_scenario_index);
+	}
+}
+#else
 /*
  * Every sampling_rate, we check, if current idle time is less than 20%
  * (default), then we try to increase frequency. Every sampling_rate, we look
@@ -175,22 +369,77 @@ static void od_check_cpu(int cpu, unsigned int load_freq)
 	struct dbs_data *dbs_data = policy->governor_data;
 	struct od_dbs_tuners *od_tuners = dbs_data->tuners;
 
+#ifdef CONFIG_MP_DVFS_ONDEMAND_HIGH_PERFORMANCE
+	static unsigned int cpufreq_cnt = DECREASE_CPUFREQ_COUNT;
+#endif
+
+#ifdef CONFIG_MP_DVFS_FLOW_DEBUG_MESSAGE
+	if(cpu == 0)
+		printk("{");
+#endif
+
 	dbs_info->freq_lo = 0;
 
-	/* Check for frequency increase */
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_MAX_LOAD
+	int i, j = 0;
+	unsigned int mstar_load_freq = 0;
+	if(cpu == 0)	// use max_cpu_load_freq among all online cpus
+	{
+		mutex_lock(&mstar_cpuload_lock);
+		for_each_online_cpu(i)
+		{
+			if(mstar_load_freq < mstar_cpu_load_freq[i])
+			{
+				j = i;
+				mstar_load_freq = mstar_cpu_load_freq[i];
+			}
+			//printk(CPU_HOTPLUG_MSG "\033[35mFunction = %s, Line = %d, cpu_load_freq of cpu%d is %3u\033[m\n", __PRETTY_FUNCTION__, __LINE__, i, mstar_cpu_load_freq[i]);
+		}
+		mutex_unlock(&mstar_cpuload_lock);
+		printk(CPU_HOTPLUG_MSG "\033[35m[Max Case] Function = %s, Line = %d, max_cpu_load_freq of cpu%d is %3u\033[m\n", __PRETTY_FUNCTION__, __LINE__, j, mstar_load_freq);
+	}
+	else
+		return;
+
+	load_freq = mstar_load_freq;
+#endif
+
+
+	/* Check for frequency increase, change to max cpu_freq */
 	if (load_freq > od_tuners->up_threshold * policy->cur) {
-		/* If switching to max speed, apply sampling_down_factor */
+		/* If switching to max speed, apply sampling_down_factor
+		 * Here means the sampling_delay time can be increase or decrease (delay = sampling_rate * rate_mult)
+		 * the next sampling_delay can be changed by changing rate_mult
+		 */
 		if (policy->cur < policy->max)
-			dbs_info->rate_mult =
-				od_tuners->sampling_down_factor;
+		{
+			dbs_info->rate_mult = od_tuners->sampling_down_factor;
+		}
 		dbs_freq_increase(policy, policy->max);
+#ifdef CONFIG_MP_DVFS_FLOW_DEBUG_MESSAGE
+		if(cpu == 0)
+			printk("1}");
+#endif
 		return;
 	}
 
 	/* Check for frequency decrease */
-	/* if we cannot reduce the frequency anymore, break out early */
-	if (policy->cur == policy->min)
+	/* if we cannot reduce the frequency anymore, break out early,
+	 * the exception case is that the setting of forcibly_set_target_flag or over_thermal_flag will cause the set_target_freq continue,
+	 * this exception case usually occurs when T_Sensor callback checking gets a unusual result
+	 */
+	if ( (policy->cur == policy->min)
+#ifdef CONFIG_MP_DVFS_FORCE_SET_TARGET_FREQ
+&& (forcibly_set_target_flag == 0) && (over_thermal_flag == 0)
+#endif
+	)
+	{
+#ifdef CONFIG_MP_DVFS_FLOW_DEBUG_MESSAGE
+		if(cpu == 0)
+			printk("2}");
+#endif
 		return;
+	}
 
 	/*
 	 * The optimal frequency is the frequency that is the lowest that can
@@ -200,7 +449,22 @@ static void od_check_cpu(int cpu, unsigned int load_freq)
 	if (load_freq < od_tuners->adj_up_threshold
 			* policy->cur) {
 		unsigned int freq_next;
-		freq_next = load_freq / od_tuners->adj_up_threshold;
+
+#ifdef CONFIG_MP_DVFS_ONDEMAND_HIGH_PERFORMANCE
+		 if(cpufreq_cnt++ <= DECREASE_CPUFREQ_COUNT)
+     {
+        return;
+     }
+
+		cpufreq_cnt = 0;
+
+#endif
+
+#ifdef CONFIG_MP_DVFS_ONDEMAND_HIGH_PERFORMANCE
+    freq_next = load_freq / od_tuners->adj_up_threshold + policy->cpuinfo.min_freq;	/* lower freq */
+#else
+		freq_next = load_freq / od_tuners->adj_up_threshold;	/* lower freq */
+#endif
 
 		/* No longer fully busy, reset rate_mult */
 		dbs_info->rate_mult = 1;
@@ -211,6 +475,10 @@ static void od_check_cpu(int cpu, unsigned int load_freq)
 		if (!od_tuners->powersave_bias) {
 			__cpufreq_driver_target(policy, freq_next,
 					CPUFREQ_RELATION_L);
+#ifdef CONFIG_MP_DVFS_FLOW_DEBUG_MESSAGE
+			if(cpu == 0)
+				printk("3}");
+#endif
 			return;
 		}
 
@@ -218,7 +486,13 @@ static void od_check_cpu(int cpu, unsigned int load_freq)
 					CPUFREQ_RELATION_L);
 		__cpufreq_driver_target(policy, freq_next, CPUFREQ_RELATION_L);
 	}
+
+#ifdef CONFIG_MP_DVFS_FLOW_DEBUG_MESSAGE
+	if(cpu == 0)
+		printk("4}");
+#endif
 }
+#endif
 
 static void od_dbs_timer(struct work_struct *work)
 {
@@ -256,7 +530,11 @@ static void od_dbs_timer(struct work_struct *work)
 max_delay:
 	if (!delay)
 		delay = delay_for_sampling_rate(od_tuners->sampling_rate
-				* core_dbs_info->rate_mult);
+				* core_dbs_info->rate_mult
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+				* core_dbs_info->mstar_hotplug_rate_mult
+#endif
+				);
 
 	gov_queue_work(dbs_data, dbs_info->cdbs.cur_policy, delay, modify_all);
 	mutex_unlock(&core_dbs_info->cdbs.timer_mutex);
@@ -368,6 +646,9 @@ static ssize_t store_up_threshold(struct dbs_data *dbs_data, const char *buf,
 	struct od_dbs_tuners *od_tuners = dbs_data->tuners;
 	unsigned int input;
 	int ret;
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+	int i = 0;
+#endif
 	ret = sscanf(buf, "%u", &input);
 
 	if (ret != 1 || input > MAX_FREQUENCY_UP_THRESHOLD ||
@@ -375,10 +656,30 @@ static ssize_t store_up_threshold(struct dbs_data *dbs_data, const char *buf,
 		return -EINVAL;
 	}
 	/* Calculate the new adj_up_threshold */
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+	mutex_lock(&mstar_cpuload_threshold);
 	od_tuners->adj_up_threshold += input;
 	od_tuners->adj_up_threshold -= od_tuners->up_threshold;
 
 	od_tuners->up_threshold = input;
+
+	for(i = 0; i < CPU_DVFS_HOTPLUG_LEVEL_MAX; i++)
+	{
+		mstar_cpu_dvfs_hotplug_scenario[i].mstar_up_threshold = od_tuners->up_threshold;
+		mstar_cpu_dvfs_hotplug_scenario[i].mstar_adj_up_threshold = od_tuners->adj_up_threshold;
+	}
+	printk("\033[31mFunction = %s, Line = %d, set get_mstar_up_threshold: %d\033[m\n", __PRETTY_FUNCTION__, __LINE__, od_tuners->up_threshold);
+	printk("\033[31mFunction = %s, Line = %d, set get_mstar_adj_up_threshold: %d\033[m\n", __PRETTY_FUNCTION__, __LINE__, od_tuners->adj_up_threshold);
+
+	mutex_unlock(&mstar_cpuload_threshold);
+
+	update_mstar_cpu_dvfs_hotplug_workload_table();
+#else
+	od_tuners->adj_up_threshold += input;
+	od_tuners->adj_up_threshold -= od_tuners->up_threshold;
+
+	od_tuners->up_threshold = input;
+#endif
 	return count;
 }
 
@@ -512,6 +813,9 @@ static int od_init(struct dbs_data *dbs_data)
 	struct od_dbs_tuners *tuners;
 	u64 idle_time;
 	int cpu;
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+	int i = 0;
+#endif
 
 	tuners = kzalloc(sizeof(struct od_dbs_tuners), GFP_KERNEL);
 	if (!tuners) {
@@ -543,6 +847,22 @@ static int od_init(struct dbs_data *dbs_data)
 			jiffies_to_usecs(10);
 	}
 
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+	mutex_lock(&mstar_cpuload_threshold);
+
+	for(i = 0; i < CPU_DVFS_HOTPLUG_LEVEL_MAX; i++)
+	{
+		mstar_cpu_dvfs_hotplug_scenario[i].mstar_up_threshold = tuners->up_threshold;
+		mstar_cpu_dvfs_hotplug_scenario[i].mstar_adj_up_threshold = tuners->adj_up_threshold;
+	}
+	printk("\033[31mFunction = %s, Line = %d, set get_mstar_up_threshold: %d\033[m\n", __PRETTY_FUNCTION__, __LINE__, tuners->up_threshold);
+	printk("\033[31mFunction = %s, Line = %d, set get_mstar_adj_up_threshold: %d\033[m\n", __PRETTY_FUNCTION__, __LINE__, tuners->adj_up_threshold);
+
+	mutex_unlock(&mstar_cpuload_threshold);
+
+	update_mstar_cpu_dvfs_hotplug_workload_table();
+#endif
+
 	tuners->sampling_down_factor = DEF_SAMPLING_DOWN_FACTOR;
 	tuners->ignore_nice_load = 0;
 	tuners->powersave_bias = default_powersave_bias;
@@ -573,7 +893,11 @@ static struct common_dbs_data od_dbs_cdata = {
 	.get_cpu_cdbs = get_cpu_cdbs,
 	.get_cpu_dbs_info_s = get_cpu_dbs_info_s,
 	.gov_dbs_timer = od_dbs_timer,
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+	.gov_check_cpu = mstar_od_check_cpu,
+#else
 	.gov_check_cpu = od_check_cpu,
+#endif
 	.gov_ops = &od_ops,
 	.init = od_init,
 	.exit = od_exit,

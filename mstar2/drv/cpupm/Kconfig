@@ -1,0 +1,8 @@
+config MSTAR_CPUPM
+
+tristate "MSTAR Cpu Power Manager"
+
+help
+    MStar cpu power manager manager driver
+default n
+    

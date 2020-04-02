@@ -204,6 +204,7 @@ void output_mm_defines(void)
 	BLANK();
 	DEFINE(_PAGE_SHIFT, PAGE_SHIFT);
 	DEFINE(_PAGE_SIZE, PAGE_SIZE);
+	DEFINE(PAGE_SZ,	       	PAGE_SIZE);
 	BLANK();
 }
 

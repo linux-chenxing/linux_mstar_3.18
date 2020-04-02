@@ -2127,7 +2127,7 @@ void dev_kfree_skb_irq(struct sk_buff *skb)
 		sd = &__get_cpu_var(softnet_data);
 		skb->next = sd->completion_queue;
 		sd->completion_queue = skb;
-		raise_softirq_irqoff(NET_TX_SOFTIRQ);
+		raise_softirq_irqoff(NET_TX_SOFTIRQ);	// NET_TX_SOFTIRQ ==> net_tx_action
 		local_irq_restore(flags);
 	}
 }
@@ -3149,6 +3149,40 @@ enqueue:
 	return NET_RX_DROP;
 }
 
+/** 
+ * netif_trace_rtp - print RTP seq number when seq is lost and delay large RTP data packets
+ */
+
+void netif_trace_rtp(struct sk_buff *skb) {
+
+    extern unsigned int trace_rtp_port;
+    extern unsigned int trace_rtp_delay;
+    unsigned char *sockBuf;
+    unsigned short int port;
+    static unsigned int rx_seqNo = 0, rx_oldSeqNo = 0;
+    static struct timeval  prv_txc = {.tv_sec = 0, .tv_usec = 0}; 
+    static struct timeval  cur_txc = {.tv_sec = 0, .tv_usec = 0};
+    unsigned int diff_time = 0;
+
+    sockBuf = skb->data;
+    port = ntohs(*((unsigned short int *)(sockBuf + 0x16)));
+    if (port == trace_rtp_port) {
+        rx_seqNo = ntohs(*((unsigned short int *)(sockBuf + 0x1E)));
+        if (rx_seqNo != (rx_oldSeqNo + 1) && rx_oldSeqNo != 0) {
+            printk(KERN_ERR "\033[40;31m L2:func[%s] pre seqNo: %d current seqNo: %d lost num of seq: %d\033[0m\n", __func__,rx_oldSeqNo, rx_seqNo, rx_seqNo-rx_oldSeqNo-1);
+        }
+
+        do_gettimeofday(&(cur_txc));
+        diff_time = (cur_txc.tv_sec-prv_txc.tv_sec)*1000*1000 + (cur_txc.tv_usec-prv_txc.tv_usec);
+        if (diff_time >= trace_rtp_delay) {
+             printk(KERN_ERR "\033[40;32m L2:func[%s] pre seqNo: %d current seqNo: %d  RTP data delay:%d ms\033[0m\n", __func__,rx_oldSeqNo, rx_seqNo,diff_time/1000);
+        }
+        do_gettimeofday(&(prv_txc));
+        rx_oldSeqNo = rx_seqNo;
+    }
+
+}
+
 /**
  *	netif_rx	-	post buffer to the network code
  *	@skb: buffer to post
@@ -3425,10 +3459,14 @@ static int __netif_receive_skb_core(struct sk_buff *skb, bool pfmemalloc)
 	bool deliver_exact = false;
 	int ret = NET_RX_DROP;
 	__be16 type;
+    extern unsigned int trace_rtp_enable_flag;
 
 	net_timestamp_check(!netdev_tstamp_prequeue, skb);
 
 	trace_netif_receive_skb(skb);
+    if (trace_rtp_enable_flag) {
+        netif_trace_rtp(skb);
+    }
 
 	/* if we've gotten here through NAPI, check netpoll */
 	if (netpoll_receive_skb(skb))

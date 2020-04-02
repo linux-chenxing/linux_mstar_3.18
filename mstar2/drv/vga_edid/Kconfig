@@ -1,0 +1,6 @@
+config MSTAR_VGA_EDID
+        tristate "VGA edid driver"
+        help
+          Say Y here to enable the driver for VGA edid  transmitter.
+
+          If unsure, say Y.

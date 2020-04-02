@@ -32,46 +32,14 @@ struct tps65090_regulator {
 	struct device		*dev;
 	struct regulator_desc	*desc;
 	struct regulator_dev	*rdev;
+
+	int			wait_timeout_us;
 };
 
-static struct regulator_ops tps65090_ext_control_ops = {
-};
-
-static struct regulator_ops tps65090_reg_contol_ops = {
-	.enable		= regulator_enable_regmap,
-	.disable	= regulator_disable_regmap,
-	.is_enabled	= regulator_is_enabled_regmap,
-};
-
-static struct regulator_ops tps65090_ldo_ops = {
-};
-
-#define tps65090_REG_DESC(_id, _sname, _en_reg, _ops)	\
-{							\
-	.name = "TPS65090_RAILS"#_id,			\
-	.supply_name = _sname,				\
-	.id = TPS65090_REGULATOR_##_id,			\
-	.ops = &_ops,					\
-	.enable_reg = _en_reg,				\
-	.enable_mask = BIT(0),				\
-	.type = REGULATOR_VOLTAGE,			\
-	.owner = THIS_MODULE,				\
+static inline struct device *to_tps65090_dev(struct regulator_dev *rdev)
+{
+	return rdev_get_dev(rdev)->parent;
 }
-
-static struct regulator_desc tps65090_regulator_desc[] = {
-	tps65090_REG_DESC(DCDC1, "vsys1",   0x0C, tps65090_reg_contol_ops),
-	tps65090_REG_DESC(DCDC2, "vsys2",   0x0D, tps65090_reg_contol_ops),
-	tps65090_REG_DESC(DCDC3, "vsys3",   0x0E, tps65090_reg_contol_ops),
-	tps65090_REG_DESC(FET1,  "infet1",  0x0F, tps65090_reg_contol_ops),
-	tps65090_REG_DESC(FET2,  "infet2",  0x10, tps65090_reg_contol_ops),
-	tps65090_REG_DESC(FET3,  "infet3",  0x11, tps65090_reg_contol_ops),
-	tps65090_REG_DESC(FET4,  "infet4",  0x12, tps65090_reg_contol_ops),
-	tps65090_REG_DESC(FET5,  "infet5",  0x13, tps65090_reg_contol_ops),
-	tps65090_REG_DESC(FET6,  "infet6",  0x14, tps65090_reg_contol_ops),
-	tps65090_REG_DESC(FET7,  "infet7",  0x15, tps65090_reg_contol_ops),
-	tps65090_REG_DESC(LDO1,  "vsys-l1", 0,    tps65090_ldo_ops),
-	tps65090_REG_DESC(LDO2,  "vsys-l2", 0,    tps65090_ldo_ops),
-};
 
 static inline bool is_dcdc(int id)
 {
@@ -83,6 +51,36 @@ static inline bool is_dcdc(int id)
 	default:
 		return false;
 	}
+}
+
+static int tps65090_reg_enable(struct regulator_dev *rdev)
+{
+	struct tps65090_regulator *ri = rdev_get_drvdata(rdev);
+	struct device *parent = to_tps65090_dev(rdev);
+
+	/* Setup wait_time for current limited timeout, WTFET[1:0]@bits[3:2] */
+	if (ri->wait_timeout_us > 0) {
+		int wait_timeout = ri->wait_timeout_us;
+		int ret;
+		u8 en_reg = ri->desc->enable_reg;
+
+		if (wait_timeout <= 200)
+			ret = tps65090_update_bits(parent, en_reg, 0xc, 0x0);
+		else if (wait_timeout <= 800)
+			ret = tps65090_update_bits(parent, en_reg, 0xc, 0x4);
+		else if (wait_timeout <= 1600)
+			ret = tps65090_update_bits(parent, en_reg, 0xc, 0x8);
+		else
+			ret = tps65090_update_bits(parent, en_reg, 0xc, 0xc);
+
+		if (ret < 0) {
+			dev_err(&rdev->dev, "Error updating reg 0x%x WTFET\n",
+				en_reg);
+			return ret;
+		}
+	}
+
+	return regulator_enable_regmap(rdev);
 }
 
 static int tps65090_config_ext_control(
@@ -105,7 +103,7 @@ static int tps65090_regulator_disable_ext_control(
 		struct tps65090_regulator *ri,
 		struct tps65090_regulator_plat_data *tps_pdata)
 {
-	int ret = 0;
+	int ret;
 	struct device *parent = ri->dev->parent;
 	unsigned int reg_en_reg = ri->desc->enable_reg;
 
@@ -139,6 +137,45 @@ static void tps65090_configure_regulator_config(
 		config->ena_gpio_flags = gpio_flag;
 	}
 }
+
+static struct regulator_ops tps65090_ext_control_ops = {
+};
+
+static struct regulator_ops tps65090_reg_contol_ops = {
+	.enable		= tps65090_reg_enable,
+	.disable	= regulator_disable_regmap,
+	.is_enabled	= regulator_is_enabled_regmap,
+};
+
+static struct regulator_ops tps65090_ldo_ops = {
+};
+
+#define tps65090_REG_DESC(_id, _sname, _en_reg, _ops)	\
+{							\
+	.name = "TPS65090-RAILS-"#_id,			\
+	.supply_name = _sname,				\
+	.id = TPS65090_REGULATOR_##_id,			\
+	.ops = &_ops,					\
+	.enable_reg = _en_reg,				\
+	.enable_mask = BIT(0),				\
+	.type = REGULATOR_VOLTAGE,			\
+	.owner = THIS_MODULE,				\
+}
+
+static struct regulator_desc tps65090_regulator_desc[] = {
+	tps65090_REG_DESC(DCDC1, "vsys1",   0x0C, tps65090_reg_contol_ops),
+	tps65090_REG_DESC(DCDC2, "vsys2",   0x0D, tps65090_reg_contol_ops),
+	tps65090_REG_DESC(DCDC3, "vsys3",   0x0E, tps65090_reg_contol_ops),
+	tps65090_REG_DESC(FET1,  "infet1",  0x0F, tps65090_reg_contol_ops),
+	tps65090_REG_DESC(FET2,  "infet2",  0x10, tps65090_reg_contol_ops),
+	tps65090_REG_DESC(FET3,  "infet3",  0x11, tps65090_reg_contol_ops),
+	tps65090_REG_DESC(FET4,  "infet4",  0x12, tps65090_reg_contol_ops),
+	tps65090_REG_DESC(FET5,  "infet5",  0x13, tps65090_reg_contol_ops),
+	tps65090_REG_DESC(FET6,  "infet6",  0x14, tps65090_reg_contol_ops),
+	tps65090_REG_DESC(FET7,  "infet7",  0x15, tps65090_reg_contol_ops),
+	tps65090_REG_DESC(LDO1,  "vsys-l1", 0,    tps65090_ldo_ops),
+	tps65090_REG_DESC(LDO2,  "vsys-l2", 0,    tps65090_ldo_ops),
+};
 
 #ifdef CONFIG_OF
 static struct of_regulator_match tps65090_matches[] = {
@@ -263,6 +300,8 @@ static int tps65090_regulator_probe(struct platform_device *pdev)
 		ri = &pmic[num];
 		ri->dev = &pdev->dev;
 		ri->desc = &tps65090_regulator_desc[num];
+		if (tps_pdata)
+			ri->wait_timeout_us = tps_pdata->wait_timeout_us;
 
 		/*
 		 * TPS5090 DCDC support the control from external digital input.

@@ -21,6 +21,7 @@
 #include <asm/idle.h>
 #include <asm/mipsregs.h>
 
+#include <mstar/mpatch_macro.h>
 /*
  * Not all of the MIPS CPUs have the "wait" instruction available. Moreover,
  * the implementation of the "wait" feature differs between CPU families. This
@@ -67,9 +68,11 @@ void r4k_wait_irqoff(void)
 		"	wait			\n"
 		"	.set	pop		\n");
 	local_irq_enable();
+#ifndef CONFIG_MP_DEBUG_TOOL_KDEBUG
 	__asm__(
 	"	.globl __pastwait	\n"
 	"__pastwait:			\n");
+#endif /* CONFIG_MP_DEBUG_TOOL_KDEBUG */
 }
 
 /*

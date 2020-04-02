@@ -91,6 +91,12 @@ static gfp_t massage_gfp_flags(const struct device *dev, gfp_t gfp)
 	else
 #endif
 #if defined(CONFIG_ZONE_DMA) && !defined(CONFIG_ZONE_DMA32)
+#ifdef CONFIG_MP_MIPS_DMA_DMA_ALLOC_COHERENT_PATCH
+	// for MALI CASE(dev == NULL)
+	if (dev == NULL)
+		dma_flag = __GFP_DMA;
+	else
+#endif
 	     if (dev->coherent_dma_mask < DMA_BIT_MASK(64))
 		dma_flag = __GFP_DMA;
 	else

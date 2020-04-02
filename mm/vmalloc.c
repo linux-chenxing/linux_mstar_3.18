@@ -31,6 +31,16 @@
 #include <asm/uaccess.h>
 #include <asm/tlbflush.h>
 #include <asm/shmparam.h>
+#include <linux/sizes.h>
+
+#ifdef CONFIG_MP_CMA_PATCH_VM_UNMAP
+#ifdef CONFIG_MP_CMA_PATCH_LOW_MEMEROY_SOLUTION
+unsigned long unmap_watermark = 4 * 1024 * 1024 / PAGE_SIZE; // 4 MB 
+#else
+unsigned long unmap_watermark = 8 * 1024 * 1024 / PAGE_SIZE; // 8 MB 
+#endif
+atomic_t unmap_count = ATOMIC_INIT(0);
+#endif
 
 struct vfree_deferred {
 	struct llist_head list;
@@ -193,9 +203,13 @@ static int vmap_page_range_noflush(unsigned long start, unsigned long end,
 
 	return nr;
 }
-
-static int vmap_page_range(unsigned long start, unsigned long end,
+#if ((1 == MP_CMA_PATCH_POOL_UTOPIA_TO_KERNEL) || (1 == CONFIG_MSTAR_MMAHEAP))
+/*static*/ int vmap_page_range(unsigned long start, unsigned long end,
 			   pgprot_t prot, struct page **pages)
+#else
+static int vmap_page_range(unsigned long start, unsigned long end,
+			   pgprot_t prot, struct page **pages)			   
+#endif
 {
 	int ret;
 
@@ -203,6 +217,10 @@ static int vmap_page_range(unsigned long start, unsigned long end,
 	flush_cache_vmap(start, end);
 	return ret;
 }
+
+#if (1 == CONFIG_MSTAR_MMAHEAP)
+EXPORT_SYMBOL(vmap_page_range);
+#endif
 
 int is_vmalloc_or_module_addr(const void *x)
 {
@@ -552,13 +570,22 @@ static void vmap_debug_free_range(unsigned long start, unsigned long end)
  * code, and it will be simple to change the scale factor if we find that it
  * becomes a problem on bigger systems.
  */
+
+int sysctl_lazy_vfree_pages = 32UL * 1024 * 1024 / PAGE_SIZE;
+
+/*
+ * lazy_vfree_tlb_flush_all_threshold is the maximum size of TLB flush by
+ * area. Beyond that the whole TLB will be flushed.
+ */
+int sysctl_lazy_vfree_tlb_flush_all_threshold = SZ_512M;
+
 static unsigned long lazy_max_pages(void)
 {
 	unsigned int log;
 
 	log = fls(num_online_cpus());
 
-	return log * (32UL * 1024 * 1024 / PAGE_SIZE);
+	return log * sysctl_lazy_vfree_pages;
 }
 
 static atomic_t vmap_lazy_nr = ATOMIC_INIT(0);
@@ -585,10 +612,16 @@ void set_iounmap_nonlazy(void)
  * Returns with *start = min(*start, lowest purged address)
  *              *end = max(*end, highest purged address)
  */
+#if (1 == MP_CMA_PATCH_POOL_UTOPIA_TO_KERNEL) 
+static DEFINE_SPINLOCK(purge_lock);
+#endif
 static void __purge_vmap_area_lazy(unsigned long *start, unsigned long *end,
 					int sync, int force_flush)
 {
+#if (1 == MP_CMA_PATCH_POOL_UTOPIA_TO_KERNEL)
+#else    
 	static DEFINE_SPINLOCK(purge_lock);
+#endif	
 	LIST_HEAD(valist);
 	struct vmap_area *va;
 	struct vmap_area *n_va;
@@ -626,8 +659,13 @@ static void __purge_vmap_area_lazy(unsigned long *start, unsigned long *end,
 	if (nr)
 		atomic_sub(nr, &vmap_lazy_nr);
 
-	if (nr || force_flush)
-		flush_tlb_kernel_range(*start, *end);
+	if (nr || force_flush) {
+		if (nr > (sysctl_lazy_vfree_tlb_flush_all_threshold >> PAGE_SHIFT))
+			flush_tlb_all();
+		else
+			list_for_each_entry(va, &valist, purge_list)
+				flush_tlb_kernel_range(va->va_start, va->va_end);
+	}
 
 	if (nr) {
 		spin_lock(&vmap_area_lock);
@@ -637,6 +675,29 @@ static void __purge_vmap_area_lazy(unsigned long *start, unsigned long *end,
 	}
 	spin_unlock(&purge_lock);
 }
+
+#if (1 == MP_CMA_PATCH_POOL_UTOPIA_TO_KERNEL)
+static void __purge_vmap_area_lazy_simple(unsigned long start, unsigned long end)
+{
+    int nr = 0;
+
+    nr = (end - start) >> PAGE_SHIFT;
+	/*
+	 * If sync is 0 but force_flush is 1, we'll go sync anyway but callers
+	 * should not expect such behaviour. This just simplifies locking for
+	 * the case that isn't actually used at the moment anyway.
+	 */
+    if (!spin_trylock(&purge_lock))
+        return;
+
+    if (nr > (sysctl_lazy_vfree_tlb_flush_all_threshold >> PAGE_SHIFT))
+        flush_tlb_all();
+    else
+        flush_tlb_kernel_range(start, end);
+
+	spin_unlock(&purge_lock);
+}
+#endif
 
 /*
  * Kick off a purge of the outstanding lazy areas. Don't bother if somebody
@@ -701,6 +762,16 @@ static struct vmap_area *find_vmap_area(unsigned long addr)
 
 	return va;
 }
+
+
+#if (1 == MP_CMA_PATCH_POOL_UTOPIA_TO_KERNEL)
+void free_unmap_vmap_start_end(unsigned long start,unsigned long end)
+{
+    flush_cache_vunmap(start, end);
+    vunmap_page_range(start, end);
+    __purge_vmap_area_lazy_simple(start, end);
+}
+#endif
 
 static void free_unmap_vmap_area_addr(unsigned long addr)
 {
@@ -825,6 +896,9 @@ static struct vmap_block *new_vmap_block(gfp_t gfp_mask)
 	INIT_LIST_HEAD(&vb->free_list);
 
 	vb_idx = addr_to_vb_idx(va->va_start);
+#ifdef CONFIG_MP_CMA_PATCH_VM_UNMAP
+	atomic_add(1, &unmap_count);
+#endif
 	spin_lock(&vmap_block_tree_lock);
 	err = radix_tree_insert(&vmap_block_tree, vb_idx, vb);
 	spin_unlock(&vmap_block_tree_lock);
@@ -847,6 +921,9 @@ static void free_vmap_block(struct vmap_block *vb)
 	unsigned long vb_idx;
 
 	vb_idx = addr_to_vb_idx(vb->va->va_start);
+#ifdef CONFIG_MP_CMA_PATCH_VM_UNMAP
+	atomic_sub(1, &unmap_count);
+#endif
 	spin_lock(&vmap_block_tree_lock);
 	tmp = radix_tree_delete(&vmap_block_tree, vb_idx);
 	spin_unlock(&vmap_block_tree_lock);
@@ -1089,6 +1166,11 @@ void vm_unmap_ram(const void *mem, unsigned int count)
 
 	debug_check_no_locks_freed(mem, size);
 	vmap_debug_free_range(addr, addr+size);
+
+#ifdef CONFIG_MP_CMA_PATCH_VM_UNMAP
+	if(atomic_read(&unmap_count) > unmap_watermark)
+		vm_unmap_aliases();
+#endif
 
 	if (likely(count <= VMAP_MAX_ALLOC))
 		vb_free(mem, size);
@@ -1359,6 +1441,9 @@ static struct vm_struct *__get_vm_area_node(unsigned long size,
 	/*
 	 * We always allocate a guard page.
 	 */
+#ifdef CONFIG_Kasan_Switch_On
+	if (!(flags & VM_NO_GUARD))
+#endif
 	size += PAGE_SIZE;
 
 	va = alloc_vmap_area(size, align, start, end, node, gfp_mask);
@@ -1419,6 +1504,9 @@ struct vm_struct *get_vm_area_caller(unsigned long size, unsigned long flags,
 	return __get_vm_area_node(size, 1, flags, VMALLOC_START, VMALLOC_END,
 				  NUMA_NO_NODE, GFP_KERNEL, caller);
 }
+#if defined(CONFIG_MP_PLATFORM_UTOPIA2K_EXPORT_SYMBOL) || defined(CONFIG_MSTAR_MMAHEAP)
+EXPORT_SYMBOL(get_vm_area_caller);
+#endif
 
 /**
  *	find_vm_area  -  find a continuous kernel virtual area
@@ -1461,6 +1549,9 @@ struct vm_struct *remove_vm_area(const void *addr)
 		spin_unlock(&vmap_area_lock);
 
 		vmap_debug_free_range(va->va_start, va->va_end);
+#ifdef CONFIG_Kasan_Switch_On
+		kasan_free_shadow(vm);
+#endif
 		free_unmap_vmap_area(va);
 		vm->size -= PAGE_SIZE;
 
@@ -1663,6 +1754,7 @@ fail:
  *	@end:		vm area range end
  *	@gfp_mask:	flags for the page level allocator
  *	@prot:		protection mask for the allocated pages
+ *	@vm_flags:	additional vm area flags (e.g. %VM_NO_GUARD)
  *	@node:		node to use for allocation or NUMA_NO_NODE
  *	@caller:	caller's return address
  *
@@ -1670,9 +1762,17 @@ fail:
  *	allocator with @gfp_mask flags.  Map them into contiguous
  *	kernel virtual space, using a pagetable protection of @prot.
  */
+#ifndef CONFIG_Kasan_Switch_On
 void *__vmalloc_node_range(unsigned long size, unsigned long align,
 			unsigned long start, unsigned long end, gfp_t gfp_mask,
 			pgprot_t prot, int node, const void *caller)
+#endif
+#ifdef CONFIG_Kasan_Switch_On
+void *__vmalloc_node_range(unsigned long size, unsigned long align,
+			unsigned long start, unsigned long end, gfp_t gfp_mask,
+			pgprot_t prot, unsigned long vm_flags, int node,
+			const void *caller)
+#endif
 {
 	struct vm_struct *area;
 	void *addr;
@@ -1681,9 +1781,15 @@ void *__vmalloc_node_range(unsigned long size, unsigned long align,
 	size = PAGE_ALIGN(size);
 	if (!size || (size >> PAGE_SHIFT) > totalram_pages)
 		goto fail;
-
+#ifndef CONFIG_Kasan_Switch_On
 	area = __get_vm_area_node(size, align, VM_ALLOC | VM_UNLIST,
 				  start, end, node, gfp_mask, caller);
+#endif
+
+#ifdef CONFIG_Kasan_Switch_On
+	area = __get_vm_area_node(size, align, VM_ALLOC | VM_UNLIST |
+				vm_flags, start, end, node, gfp_mask, caller);
+#endif
 	if (!area)
 		goto fail;
 
@@ -1731,8 +1837,14 @@ static void *__vmalloc_node(unsigned long size, unsigned long align,
 			    gfp_t gfp_mask, pgprot_t prot,
 			    int node, const void *caller)
 {
+#ifndef CONFIG_Kasan_Switch_On
 	return __vmalloc_node_range(size, align, VMALLOC_START, VMALLOC_END,
 				gfp_mask, prot, node, caller);
+#endif
+#ifdef CONFIG_Kasan_Switch_On
+	return __vmalloc_node_range(size, align, VMALLOC_START, VMALLOC_END,
+				gfp_mask, prot, 0, node, caller);
+#endif
 }
 
 void *__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot)
@@ -2617,7 +2729,7 @@ static int s_show(struct seq_file *m, void *p)
 		return 0;
 
 	if (!(va->flags & VM_VM_AREA)) {
-		seq_printf(m, "0x%pK-0x%pK %7ld vm_map_ram\n",
+		seq_printf(m, "0x%p-0x%p %7ld vm_map_ram\n",
 			(void *)va->va_start, (void *)va->va_end,
 					va->va_end - va->va_start);
 		return 0;
@@ -2625,7 +2737,7 @@ static int s_show(struct seq_file *m, void *p)
 
 	v = va->vm;
 
-	seq_printf(m, "0x%pK-0x%pK %7ld",
+	seq_printf(m, "0x%p-0x%p %7ld",
 		v->addr, v->addr + v->size, v->size);
 
 	if (v->caller)

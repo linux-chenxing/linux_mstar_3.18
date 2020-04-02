@@ -58,9 +58,11 @@ static inline void flush_anon_page(struct vm_area_struct *vma,
 		__flush_anon_page(page, vmaddr);
 }
 
+extern void __flush_icache_page(struct page *page);
 static inline void flush_icache_page(struct vm_area_struct *vma,
 	struct page *page)
 {
+    __flush_icache_page(page);
 }
 
 extern void (*flush_icache_range)(unsigned long start, unsigned long end);

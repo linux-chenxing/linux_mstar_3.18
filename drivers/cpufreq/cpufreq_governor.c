@@ -8,6 +8,7 @@
  *		(C) 2003 Jun Nakajima <jun.nakajima@intel.com>
  *		(C) 2009 Alexander Clouter <alex@digriz.org.uk>
  *		(c) 2012 Viresh Kumar <viresh.kumar@linaro.org>
+ * Copyright (c) 2014, NVIDIA CORPORATION.  All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -29,13 +30,10 @@
 
 #include "cpufreq_governor.h"
 
-static struct kobject *get_governor_parent_kobj(struct cpufreq_policy *policy)
-{
-	if (have_governor_per_policy())
-		return &policy->kobj;
-	else
-		return cpufreq_global_kobject;
-}
+#if defined(CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_MAX_LOAD) || defined(CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_AVERAGE_LOAD)
+extern struct mutex mstar_cpuload_lock;
+extern unsigned int mstar_cpu_load_freq[CONFIG_NR_CPUS];
+#endif
 
 static struct attribute_group *get_sysfs_attr(struct dbs_data *dbs_data)
 {
@@ -148,6 +146,10 @@ void dbs_check_cpu(struct dbs_data *dbs_data, int cpu)
 
 		load = 100 * (wall_time - idle_time) / wall_time;
 
+#if defined(CONFIG_MSTAR_CPUPM)
+		policy->cpu_load = load;
+#endif
+
 		if (dbs_data->cdata->governor == GOV_ONDEMAND) {
 			int freq_avg = __cpufreq_driver_getavg(policy, j);
 			if (freq_avg <= 0)
@@ -158,6 +160,12 @@ void dbs_check_cpu(struct dbs_data *dbs_data, int cpu)
 
 		if (load > max_load)
 			max_load = load;
+
+#if defined(CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_MAX_LOAD) || defined(CONFIG_MP_DVFS_CPUHOTPLUG_USE_ONLINE_CPU_AVERAGE_LOAD)
+		mutex_lock(&mstar_cpuload_lock);
+		mstar_cpu_load_freq[j] = load;
+		mutex_unlock(&mstar_cpuload_lock);
+#endif
 	}
 
 	dbs_data->cdata->gov_check_cpu(cpu, max_load);
@@ -179,6 +187,13 @@ void gov_queue_work(struct dbs_data *dbs_data, struct cpufreq_policy *policy,
 
 	if (!policy->governor_enabled)
 		return;
+
+#if defined(CONFIG_MSTAR_CPUPM)
+	    {
+	           policy->cpufreq_ktime_us_delay = delay;
+	           policy->cpufreq_ktime_us = ktime_to_us(ktime_get());
+	     }
+#endif
 
 	if (!all_cpus) {
 		__gov_queue_work(smp_processor_id(), dbs_data, delay);
@@ -369,8 +384,18 @@ int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 					kcpustat_cpu(j).cpustat[CPUTIME_NICE];
 
 			mutex_init(&j_cdbs->timer_mutex);
-			INIT_DEFERRABLE_WORK(&j_cdbs->work,
-					     dbs_data->cdata->gov_dbs_timer);
+
+			/* here to initialize a timer for sampling cpu_load,
+			 * and use to do DVFS ondemand
+			 */
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+			printk(KERN_DEBUG "\033[31mFunction = %s, Line = %d, [cpu %d] initialize cpu %d timer\033[m\n", __PRETTY_FUNCTION__, __LINE__, get_cpu(), j);
+#else
+			printk("\033[31mFunction = %s, Line = %d, [cpu %d] initialize cpu %d timer\033[m\n", __PRETTY_FUNCTION__, __LINE__, get_cpu(), j);
+#endif
+			put_cpu();
+
+			INIT_DEFERRABLE_WORK(&j_cdbs->work, dbs_data->cdata->gov_dbs_timer);
 		}
 
 		/*
@@ -383,6 +408,9 @@ int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 			cs_dbs_info->requested_freq = policy->cur;
 		} else {
 			od_dbs_info->rate_mult = 1;
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+			od_dbs_info->mstar_hotplug_rate_mult = 1;
+#endif
 			od_dbs_info->sample_type = OD_NORMAL_SAMPLE;
 			od_ops->powersave_bias_init_cpu(cpu);
 		}
@@ -392,6 +420,12 @@ int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		/* Initiate timer time stamp */
 		cpu_cdbs->time_stamp = ktime_get();
 
+#ifdef CONFIG_MP_DVFS_CPUHOTPLUG
+		printk(KERN_DEBUG "\033[31mFunction = %s, Line = %d, [cpu %d] do first DVFS sampling\033[m\n", __PRETTY_FUNCTION__, __LINE__, get_cpu());
+#else
+		printk("\033[31mFunction = %s, Line = %d, [cpu %d] do first DVFS sampling\033[m\n", __PRETTY_FUNCTION__, __LINE__, get_cpu());
+#endif
+		put_cpu();
 		gov_queue_work(dbs_data, policy,
 				delay_for_sampling_rate(sampling_rate), true);
 		break;
@@ -404,12 +438,18 @@ int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 
 		mutex_lock(&dbs_data->mutex);
 		mutex_destroy(&cpu_cdbs->timer_mutex);
+		cpu_cdbs->cur_policy = NULL;
 
 		mutex_unlock(&dbs_data->mutex);
 
 		break;
 
 	case CPUFREQ_GOV_LIMITS:
+		mutex_lock(&dbs_data->mutex);
+		if (!cpu_cdbs->cur_policy) {
+			mutex_unlock(&dbs_data->mutex);
+			break;
+		}
 		mutex_lock(&cpu_cdbs->timer_mutex);
 		if (policy->max < cpu_cdbs->cur_policy->cur)
 			__cpufreq_driver_target(cpu_cdbs->cur_policy,
@@ -419,6 +459,7 @@ int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 					policy->min, CPUFREQ_RELATION_L);
 		dbs_check_cpu(dbs_data, cpu);
 		mutex_unlock(&cpu_cdbs->timer_mutex);
+		mutex_unlock(&dbs_data->mutex);
 		break;
 	}
 	return 0;

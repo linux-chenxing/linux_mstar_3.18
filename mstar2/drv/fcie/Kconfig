@@ -1,0 +1,21 @@
+config MSTAR_FCIE_HOST
+	bool "SD fcie host driver"
+	depends on MMC
+	default n
+	---help---
+		enable fcie host to support SD card
+
+config MSTAR_FCIE_CARD_DETECT
+	bool "card detection support"
+	depends on MSTAR_FCIE_HOST
+	default y
+	---help---
+		enable card detection for fcie host
+
+config MSTAR_FCIE_WRITE_PROTECT
+	bool "write protect support"
+	depends on MSTAR_FCIE_HOST
+	default n
+	---help---
+		enable write protect detection for fcie host
+

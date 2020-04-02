@@ -7,6 +7,14 @@
 #include <linux/pageblock-flags.h>
 #include <linux/memory.h>
 #include "internal.h"
+#ifdef CONFIG_MP_CMA_PATCH_KSM_MIGRATION_FAILURE
+#include <linux/ksm.h>
+#endif
+
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+extern void show_page_trace(unsigned long pfn);
+#endif
+
 
 int set_migratetype_isolate(struct page *page, bool skip_hwpoisoned_pages)
 {
@@ -212,6 +220,9 @@ __test_page_isolated_in_pageblock(unsigned long pfn, unsigned long end_pfn,
 		else
 			break;
 	}
+#ifdef CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA
+    ZONE_CMA_COHERENCE_CHK(1);
+#endif
 	if (pfn < end_pfn)
 		return 0;
 	return 1;
@@ -254,6 +265,19 @@ struct page *alloc_migrate_target(struct page *page, unsigned long private,
 
 	if (PageHighMem(page))
 		gfp_mask |= __GFP_HIGHMEM;
+#ifdef CONFIG_MP_CMA_PATCH_KSM_MIGRATION_FAILURE
+    if (unlikely(page_mapping(page)&& PageKsm(page)))
+	     gfp_mask &= ~__GFP_MOVABLE;
+#endif
 
+#ifdef CONFIG_MP_CMA_PATCH_MIGRATION_FILTER
+	if(page_mapping(page) && !(mapping_gfp_mask(page_mapping(page))&__GFP_MOVABLE))
+	{
+		   printk(KERN_ERR "WARNING, find unmovable file cache page in alloc_migrate_target, %ld\n", page_to_pfn(page));
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+	     show_page_trace(page_to_pfn(page));
+#endif
+	}
+#endif
 	return alloc_page(gfp_mask);
 }

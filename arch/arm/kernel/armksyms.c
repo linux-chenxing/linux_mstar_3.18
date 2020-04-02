@@ -46,6 +46,13 @@ extern void __aeabi_uidiv(void);
 extern void __aeabi_uidivmod(void);
 extern void __aeabi_ulcmp(void);
 
+#ifdef CONFIG_Kasan_Switch_On
+extern void * __memcpy(void *, const void *, __kernel_size_t);
+extern void * __memmove(void *, const void *, __kernel_size_t);
+extern void * __memchr(const void *, int, __kernel_size_t);
+extern void * __memset(void *, int, __kernel_size_t);
+#endif
+
 extern void fpundefinstr(void);
 
 	/* platform dependent support */
@@ -84,6 +91,12 @@ EXPORT_SYMBOL(memset);
 EXPORT_SYMBOL(memcpy);
 EXPORT_SYMBOL(memmove);
 EXPORT_SYMBOL(memchr);
+#ifdef CONFIG_Kasan_Switch_On
+EXPORT_SYMBOL(__memset);
+EXPORT_SYMBOL(__memcpy);
+EXPORT_SYMBOL(__memmove);
+EXPORT_SYMBOL(__memchr);
+#endif
 EXPORT_SYMBOL(__memzero);
 
 #ifdef CONFIG_MMU

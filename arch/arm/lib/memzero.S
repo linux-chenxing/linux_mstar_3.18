@@ -29,7 +29,10 @@
  * The pointer is now aligned and the length is adjusted.  Try doing the
  * memzero again.
  */
-
+#ifdef CONFIG_Kasan_Switch_On
+	.weak memzero
+ENTRY(memzero)
+#endif
 ENTRY(__memzero)
 	mov	r2, #0			@ 1
 	ands	r3, r0, #3		@ 1 unaligned?
@@ -123,3 +126,6 @@ ENTRY(__memzero)
 	strneb	r2, [r0], #1		@ 1
 	mov	pc, lr			@ 1
 ENDPROC(__memzero)
+#ifdef CONFIG_Kasan_Switch_On
+ENDPROC(memzero)
+#endif

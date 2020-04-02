@@ -412,6 +412,14 @@ extern void free_contig_range(unsigned long pfn, unsigned nr_pages);
 /* CMA stuff */
 extern void init_cma_reserved_pageblock(struct page *page);
 
+#ifdef CONFIG_MP_CMA_PATCH_CMA_AGGRESSIVE_ALLOC			
+extern void adjust_managed_cma_page_count(struct zone *zone, long count); 
+#endif	//CONFIG_MP_CMA_PATCH_CMA_AGGRESSIVE_ALLOC
+
+#ifdef CONFIG_MP_CMA_PATCH_AGRESSIVE_KILL_PROCESS_TO_FREE_CMA_PAGE
+extern void set_early_kill_oom_adj_threshold(short oom_adj);
 #endif
+
+#endif	//CONFIG_CMA
 
 #endif /* __LINUX_GFP_H */

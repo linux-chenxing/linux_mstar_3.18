@@ -1,0 +1,9 @@
+config MSTAR_IPAPOOL
+bool  "IPA POOL"
+depends on CMA 
+select MSTAR_MIU
+default n
+ 
+help
+    MStar IPA POOL driver function
+    

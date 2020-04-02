@@ -5,6 +5,8 @@
  *
  *  Copyright (C) 1991-2002  Linus Torvalds
  *
+ *  Copyright (c) 2014, NVIDIA CORPORATION.  All rights reserved.
+ *
  *  1996-12-23  Modified by Dave Grothe to fix bugs in semaphores and
  *		make semaphores SMP safe
  *  1998-11-19	Implemented schedule_timeout() and related stuff
@@ -73,11 +75,25 @@
 #include <linux/init_task.h>
 #include <linux/binfmts.h>
 #include <linux/context_tracking.h>
+#include <linux/tegra_profiler.h>
+#include <mstar/mpatch_macro.h>
+
+#if (MP_SCHED_POLICY_PATCH==1)
+#include <linux/string.h>
+#endif
+
+#if (MP_DEBUG_TOOL_KDEBUG == 1)
+#ifdef CONFIG_KDEBUGD_FTRACE
+#include <linux/irqflags.h>
+#endif /* CONFIG_KDEBUGD_FTRACE */
+#endif /*MP_DEBUG_TOOL_KDEBUG*/
+
 
 #include <asm/switch_to.h>
 #include <asm/tlb.h>
 #include <asm/irq_regs.h>
 #include <asm/mutex.h>
+#include <asm/relaxed.h>
 #ifdef CONFIG_PARAVIRT
 #include <asm/paravirt.h>
 #endif
@@ -85,6 +101,14 @@
 #include "sched.h"
 #include "../workqueue_internal.h"
 #include "../smpboot.h"
+
+#if (MP_DEBUG_TOOL_KDEBUG == 1)
+#ifdef CONFIG_KDEBUGD
+#include <kdebugd/kdebugd.h>
+#include <kdebugd/sec_topthread.h>
+#include <linux/sort.h>     /* For sort() */
+#endif
+#endif /*MP_DEBUG_TOOL_KDEBUG*/
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
@@ -296,7 +320,18 @@ __read_mostly int scheduler_running;
  */
 int sysctl_sched_rt_runtime = 950000;
 
+/*
+ * Number of sched_yield calls that result in a thread yielding
+ * to itself before a sleep is injected in its next sched_yield call
+ * Setting this to -1 will disable adding sleep in sched_yield
+ */
+const_debug int sysctl_sched_yield_sleep_threshold = 4;
 
+/*
+ * Sleep duration in us used when sched_yield_sleep_threshold
+ * is exceeded.
+ */
+const_debug unsigned int sysctl_sched_yield_sleep_duration = 50;
 
 /*
  * __task_rq_lock - lock the rq @p resides on.
@@ -1079,9 +1114,10 @@ unsigned long wait_task_inactive(struct task_struct *p, long match_state)
 		 * is actually now running somewhere else!
 		 */
 		while (task_running(rq, p)) {
-			if (match_state && unlikely(p->state != match_state))
+			if (match_state && unlikely(cpu_relaxed_read_long
+				(&(p->state)) != match_state))
 				return 0;
-			cpu_relax();
+			cpu_read_relax();
 		}
 
 		/*
@@ -1509,8 +1545,8 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	 * If the owning (remote) cpu is still in the middle of schedule() with
 	 * this task as prev, wait until its done referencing the task.
 	 */
-	while (p->on_cpu)
-		cpu_relax();
+	while (cpu_relaxed_read(&(p->on_cpu)))
+		cpu_read_relax();
 	/*
 	 * Pairs with the smp_wmb() in finish_lock_switch().
 	 */
@@ -1855,6 +1891,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
 	trace_sched_switch(prev, next);
 	sched_info_switch(prev, next);
 	perf_event_task_sched_out(prev, next);
+	quadd_task_sched_out(prev, next);
 	fire_sched_out_preempt_notifiers(prev, next);
 	prepare_lock_switch(rq, next);
 	prepare_arch_switch(next);
@@ -1898,6 +1935,7 @@ static void finish_task_switch(struct rq *rq, struct task_struct *prev)
 	vtime_task_switch(prev);
 	finish_arch_switch(prev);
 	perf_event_task_sched_in(prev, current);
+	quadd_task_sched_in(prev, current);
 	finish_lock_switch(rq, prev);
 	finish_arch_post_lock_switch();
 
@@ -2030,6 +2068,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	 * frame will be invalid.
 	 */
 	finish_task_switch(this_rq(), prev);
+	trace_sched_switch_end(0);
 }
 
 /*
@@ -2081,6 +2120,33 @@ unsigned long this_cpu_load(void)
 	return this->cpu_load[0];
 }
 
+u64 nr_running_integral(unsigned int cpu)
+{
+	unsigned int seqcnt;
+	u64 integral;
+	struct rq *q;
+
+	if (cpu >= nr_cpu_ids)
+		return 0;
+
+	q = cpu_rq(cpu);
+
+	/*
+	 * Update average to avoid reading stalled value if there were
+	 * no run-queue changes for a long time. On the other hand if
+	 * the changes are happening right now, just read current value
+	 * directly.
+	 */
+
+	seqcnt = read_seqcount_begin(&q->ave_seqcnt);
+	integral = do_nr_running_integral(q);
+	if (read_seqcount_retry(&q->ave_seqcnt, seqcnt)) {
+		read_seqcount_begin(&q->ave_seqcnt);
+		integral = q->nr_running_integral;
+	}
+
+	return integral;
+}
 
 /*
  * Global load-average calculations
@@ -2814,7 +2880,11 @@ void __kprobes add_preempt_count(int val)
 	DEBUG_LOCKS_WARN_ON((preempt_count() & PREEMPT_MASK) >=
 				PREEMPT_MASK - 10);
 #endif
+#if (MP_DEBUG_TOOL_KDEBUG == 0) || !defined(CONFIG_KDEBUGD_FTRACE)
 	if (preempt_count() == val)
+#else
+	if (check_preempt_trace() && preempt_count() == val)
+#endif /* CONFIG_KDEBUGD_FTRACE && MP_DEBUG_TOOL_KDEBUG*/
 		trace_preempt_off(CALLER_ADDR0, get_parent_ip(CALLER_ADDR1));
 }
 EXPORT_SYMBOL(add_preempt_count);
@@ -2835,7 +2905,11 @@ void __kprobes sub_preempt_count(int val)
 		return;
 #endif
 
+#if (MP_DEBUG_TOOL_KDEBUG == 0) || !defined(CONFIG_KDEBUGD_FTRACE)
 	if (preempt_count() == val)
+#else
+	if (check_preempt_trace() && preempt_count() == val)
+#endif /* CONFIG_KDEBUGD_FTRACE && MP_DEBUG_TOOL_KDEBUG*/
 		trace_preempt_on(CALLER_ADDR0, get_parent_ip(CALLER_ADDR1));
 	preempt_count() -= val;
 }
@@ -2915,6 +2989,48 @@ pick_next_task(struct rq *rq)
 
 	BUG(); /* the idle class will always have a runnable task */
 }
+
+#if (MP_DEBUG_TOOL_KDEBUG == 1)
+#ifndef CONFIG_SMP
+#ifdef CONFIG_MEMORY_VALIDATOR
+
+static inline void memory_value_watcher(struct task_struct *prev)
+{
+	if (prev && kdbg_mem_watcher.watching && kdbg_mem_watcher.tgid == prev->tgid) {
+		mm_segment_t fs;
+		unsigned int buffer;
+
+		fs = get_fs();
+		set_fs(KERNEL_DS);
+
+		if (!access_ok(VERIFY_READ, (unsigned long *)kdbg_mem_watcher.u_addr,
+					sizeof(unsigned long *))) {
+			set_fs(fs);
+			return;
+		}
+		__get_user(buffer, (unsigned long *)kdbg_mem_watcher.u_addr);
+		set_fs(fs);
+
+		if (kdbg_mem_watcher.buff != buffer) {
+
+			kdbg_mem_watcher.watching = 0;
+
+			printk("==============================================================================\n");
+			printk(" Memory Corruption DETECTED.........!!!!!!!!!!!!!!!!!!\n");
+			printk("==============================================================================\n");
+			printk(" Original : PID:%d value:0x%08x (addr:0x%08x)\n", kdbg_mem_watcher.pid, kdbg_mem_watcher.buff, kdbg_mem_watcher.u_addr);
+			printk(" NOW      : PID:%d value:0x%08x \n" , prev->pid, buffer);
+			printk("          : PID:%d PC:0x%08x\n" , prev->pid, (unsigned)KSTK_EIP(prev));
+			printk("------------------------------------------------------------------------------\n");
+			printk("Caution: The PC value could get invalid-value.\n");
+			printk("         So don't trust that value :)\n");
+			printk("==============================================================================\n");
+		}
+	}
+}
+#endif
+#endif /*CONFIG_SMP*/
+#endif /*MP_DEBUG_TOOL_KDEBUG*/
 
 /*
  * __schedule() is the main scheduler function.
@@ -3017,6 +3133,7 @@ need_resched:
 	if (likely(prev != next)) {
 		rq->nr_switches++;
 		rq->curr = next;
+		prev->yield_count = 0;
 		++*switch_count;
 
 		context_switch(rq, prev, next); /* unlocks the rq */
@@ -3028,8 +3145,10 @@ need_resched:
 		 */
 		cpu = smp_processor_id();
 		rq = cpu_rq(cpu);
-	} else
+	} else {
+		prev->yield_count++;
 		raw_spin_unlock_irq(&rq->lock);
+	}
 
 	post_schedule(rq);
 
@@ -3807,6 +3926,23 @@ int idle_cpu(int cpu)
 	return 1;
 }
 
+int idle_cpu_relaxed(int cpu)
+{
+	struct rq *rq = cpu_rq(cpu);
+
+	if (cpu_relaxed_read_long(&rq->curr) != (size_t)rq->idle)
+		return 0;
+
+	if (cpu_relaxed_read_long(&rq->nr_running))
+		return 0;
+
+#ifdef CONFIG_SMP
+	if (!llist_empty_relaxed(&rq->wake_list))
+		return 0;
+#endif
+
+	return 1;
+}
 /**
  * idle_task - return the idle task for a given cpu.
  * @cpu: the processor in question.
@@ -4041,6 +4177,8 @@ int sched_setscheduler_nocheck(struct task_struct *p, int policy,
 {
 	return __sched_setscheduler(p, policy, param, false);
 }
+EXPORT_SYMBOL_GPL(sched_setscheduler_nocheck);
+
 
 static int
 do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
@@ -4076,7 +4214,18 @@ SYSCALL_DEFINE3(sched_setscheduler, pid_t, pid, int, policy,
 	/* negative values for policy are not valid */
 	if (policy < 0)
 		return -EINVAL;
-
+#if (CONFIG_MP_SCHED_POLICY_CHANGED_AVOIDED)
+        struct task_struct *p;
+        rcu_read_lock();
+        p = find_process_by_pid(pid);
+        if (p) {
+                if (strstr(p->group_leader->comm, "ABenchMark") && policy != SCHED_FIFO) {
+                        rcu_read_unlock();
+                        return 0;
+                }
+        }
+        rcu_read_unlock();
+#endif
 	return do_sched_setscheduler(pid, policy, param);
 }
 
@@ -4108,8 +4257,18 @@ SYSCALL_DEFINE1(sched_getscheduler, pid_t, pid)
 	if (p) {
 		retval = security_task_getscheduler(p);
 		if (!retval)
+#if (MP_SCHED_POLICY_PATCH==1)
+		{	
+            		if(strstr(p->comm, "ABenchMark") != NULL)
+                		retval = 0;
+            		else
+			    retval = p->policy
+				| (p->sched_reset_on_fork ? SCHED_RESET_ON_FORK : 0);
+        	}
+#else 
 			retval = p->policy
 				| (p->sched_reset_on_fork ? SCHED_RESET_ON_FORK : 0);
+#endif
 	}
 	rcu_read_unlock();
 	return retval;
@@ -4138,10 +4297,17 @@ SYSCALL_DEFINE2(sched_getparam, pid_t, pid, struct sched_param __user *, param)
 	retval = security_task_getscheduler(p);
 	if (retval)
 		goto out_unlock;
+#if (MP_SCHED_POLICY_PATCH==1)    
+    	if(strstr(p->comm, "ABenchMark") != NULL)
+        	lp.sched_priority = 0;
+    	else
+	    	lp.sched_priority = p->rt_priority;
 
+    	rcu_read_unlock();
+#else 
 	lp.sched_priority = p->rt_priority;
 	rcu_read_unlock();
-
+#endif
 	/*
 	 * This one might sleep, we cannot do it with a spinlock held ...
 	 */
@@ -4334,6 +4500,8 @@ SYSCALL_DEFINE0(sched_yield)
 	struct rq *rq = this_rq_lock();
 
 	schedstat_inc(rq, yld_count);
+	if (rq->curr->yield_count == sysctl_sched_yield_sleep_threshold)
+		schedstat_inc(rq, yield_sleep_count);
 	current->sched_class->yield_task(rq);
 
 	/*
@@ -4345,7 +4513,11 @@ SYSCALL_DEFINE0(sched_yield)
 	do_raw_spin_unlock(&rq->lock);
 	sched_preempt_enable_no_resched();
 
-	schedule();
+	if (rq->curr->yield_count == sysctl_sched_yield_sleep_threshold)
+		usleep_range(sysctl_sched_yield_sleep_duration,
+				sysctl_sched_yield_sleep_duration + 5);
+	else
+		schedule();
 
 	return 0;
 }
@@ -4648,15 +4820,172 @@ out_unlock:
 
 static const char stat_nam[] = TASK_STATE_TO_CHAR_STR;
 
+#if (MP_DEBUG_TOOL_KDEBUG == 1)
+#ifdef CONFIG_KDEBUGD_MISC
+static void show_task_prio(struct task_struct *p)
+{
+	unsigned state;
+	struct pt_regs *regs;
+	struct vm_area_struct *vma;
+	unsigned long stack_usage = 0;
+	unsigned long stack_size = 0;
+
+	if (p == NULL)
+		return;
+
+	state = (p->state & TASK_REPORT) | p->exit_state;
+	state =  state ? __ffs(state) + 1 : 0;
+	printk("%-16.16s", p->comm);
+#ifdef CONFIG_SMP
+	printk("[%d] ", task_cpu(p));
+#endif
+	printk(" %c", state < sizeof(stat_nam) ? stat_nam[state] : '?');
+
+#if (BITS_PER_LONG == 32)
+	printk(" %08lX ", KSTK_EIP(p));
+#else
+	printk(" %016lx ", KSTK_EIP(p));
+#endif
+	if (p != NULL && p->mm) {
+		regs = task_pt_regs(p);
+		vma = find_vma(p->mm, p->user_ssp);
+		if (vma != NULL) {
+#if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
+			stack_usage =  vma->vm_end - regs->ARM_sp; /* MF?? */
+#elif defined(CONFIG_MIPS)
+			stack_usage =  vma->vm_end - regs->regs[29];
+#else
+#error "Architecture Not Supported!!!"
+#endif
+			stack_size  =  vma->vm_end - vma->vm_start;
+			printk("%4lu/%04lu  ",
+					stack_usage >> 10,
+					stack_size  >> 10);
+		} else {
+			printk(" --------  ");
+		}
+	} else {
+
+		if (p->state == TASK_DEAD || p->state == EXIT_DEAD ||
+				p->state ==	EXIT_ZOMBIE) {
+			printk(KERN_CONT " [dead] ");
+		} else {
+			printk("  [kernel] ");
+		}
+	}
+	printk("%4d %4d  %4d    %u       %u\n",
+			p->pid,
+			p->prio,
+			p->static_prio,
+			p->policy,
+			p->rt.time_slice);
+}
+
+int show_state_prio(void)
+{
+	struct task_struct *g, *p;
+	int do_unlock = 1;
+
+	printk("\n");
+#if (BITS_PER_LONG == 32)
+	printk("                             user(kb/kb)                       \n");
+	printk("  task         ");
+
+#ifdef CONFIG_SMP
+	printk("[CPU]      ");
+#endif
+	printk("PC    stack_usage  pid prio sprio policy time_slice[x%dms]\n", 1000/HZ);
+
+#else
+	printk("                            kb/kb                         \n");
+	printk("  task         ");
+#ifdef CONFIG_SMP
+	printk("[CPU]      ");
+#endif
+	printk("PC    stack_usage  pid prio sprio policy time_slice[x%dms]\n", 1000/HZ);
+#endif
+#ifdef CONFIG_PREEMPT_RT
+	if (!read_trylock(&tasklist_lock)) {
+		printk("hm, tasklist_lock write-locked.\n");
+		printk("ignoring ...\n");
+		do_unlock = 0;
+	}
+#else
+	read_lock(&tasklist_lock);
+#endif
+
+	do_each_thread(g, p) {
+		/*
+		 * reset the NMI-timeout, listing all files on a slow
+		 * console might take alot of time:
+		 */
+		touch_nmi_watchdog();
+		show_task_prio(p);
+	} while_each_thread(g, p);
+
+	if (do_unlock)
+		read_unlock(&tasklist_lock);
+	debug_show_all_locks();
+	printk("----------------------------------------------------------------------\n");
+	/* in kdbg-base.c */
+	task_state_help();
+
+	return 1;
+}
+#endif
+
+#if defined(CONFIG_KDEBUGD_MISC)
+static inline struct task_struct *eldest_child(struct task_struct *p)
+{
+    if (list_empty(&p->children))
+	return NULL;
+    return list_entry(p->children.next, struct task_struct, sibling);
+}
+
+static inline struct task_struct *older_sibling(struct task_struct *p)
+{
+    if (p->sibling.prev == &p->parent->children)
+	return NULL;
+    return list_entry(p->sibling.prev, struct task_struct, sibling);
+}
+
+static inline struct task_struct *younger_sibling(struct task_struct *p)
+{
+    if (p->sibling.next == &p->parent->children)
+	return NULL;
+    return list_entry(p->sibling.next, struct task_struct, sibling);
+}
+#endif
+#endif /*MP_DEBUG_TOOL_KDEBUG*/
+
 void sched_show_task(struct task_struct *p)
 {
 	unsigned long free = 0;
+#if (MP_DEBUG_TOOL_KDEBUG == 0) || !defined(CONFIG_KDEBUGD_MISC)
 	int ppid;
+#endif /*CONFIG_KDEBUGD_MISC && MP_DEBUG_TOOL_KDEBUG*/
 	unsigned state;
 
+#if (MP_DEBUG_TOOL_KDEBUG == 1) && defined(CONFIG_KDEBUGD_MISC) 
+	struct task_struct *relative = NULL;
+	state = (p->state & TASK_REPORT) | p->exit_state;
+	state = state ? __ffs(state) + 1 : 0;
+#else
 	state = p->state ? __ffs(p->state) + 1 : 0;
 	printk(KERN_INFO "%-15.15s %c", p->comm,
 		state < sizeof(stat_nam) - 1 ? stat_nam[state] : '?');
+#endif /*MP_DEBUG_TOOL_KDEBUG && CONFIG_KDEBUGD_MISC*/
+
+#if (MP_DEBUG_TOOL_KDEBUG == 1)
+#ifdef CONFIG_KDEBUGD_MISC
+	printk(KERN_INFO "%-16.16s", p->comm);
+#ifdef CONFIG_SMP
+	printk(KERN_CONT "[%d]", task_cpu(p));
+#endif
+	printk(KERN_CONT " %c [%p]", state < sizeof(stat_nam) ? stat_nam[state] : '?', p);
+#endif
+#endif /*MP_DEBUG_TOOL_KDEBUG*/
+
 #if BITS_PER_LONG == 32
 	if (state == TASK_RUNNING)
 		printk(KERN_CONT " running  ");
@@ -4671,27 +5000,101 @@ void sched_show_task(struct task_struct *p)
 #ifdef CONFIG_DEBUG_STACK_USAGE
 	free = stack_not_used(p);
 #endif
+#if (MP_DEBUG_TOOL_KDEBUG == 1) && defined(CONFIG_KDEBUGD_MISC)
+	printk(KERN_CONT "%5lu %5d 0x%08lx %6d", free,
+			task_pid_nr(p),
+			(unsigned long)task_thread_info(p)->flags,
+			task_pid_nr(p->real_parent));
+#else
 	rcu_read_lock();
 	ppid = task_pid_nr(rcu_dereference(p->real_parent));
 	rcu_read_unlock();
 	printk(KERN_CONT "%5lu %5d %6d 0x%08lx\n", free,
 		task_pid_nr(p), ppid,
 		(unsigned long)task_thread_info(p)->flags);
+#endif /*MP_DEBUG_TOOL_KDEBUG && CONFIG_KDEBUGD_MISC*/
+
+#if (MP_DEBUG_TOOL_KDEBUG == 1)
+#ifdef CONFIG_KDEBUGD_MISC
+	relative = eldest_child(p);
+	if (relative)
+		printk("%7d", relative->pid);
+	else
+		printk("       ");
+
+	relative = younger_sibling(p);
+	if (relative)
+		printk("%8d", relative->pid);
+	else
+		printk("        ");
 
 	print_worker_info(KERN_INFO, p);
+        #if 0 //remove temporarily, this information seems not be need 
 	show_stack(p, NULL);
+        #endif
+#endif/*CONFIG_KDEBUGD_MISC*/
+#endif /*MP_DEBUG_TOOL_KDEBUG*/
+
+        #if 0 //remove temporarily, this information seems not be need 
+#if (MP_DEBUG_TOOL_KDEBUG == 1) && defined(CONFIG_KDEBUGD_MISC) && defined(CONFIG_SHOW_TASK_STATE)
+	if (!kdebugd_nobacktrace) {
+		show_stack(p, NULL);
+		printk("-------------------------------------------------------------------------------------\n");
+	}
+#else
+       show_stack(p, NULL);
+#endif/*MP_DEBUG_TOOL_KDEBUG && CONFIG_KDEBUGD_MISC && CONFIG_SHOW_TASK_STATE*/
+        #endif
 }
+
+EXPORT_SYMBOL(sched_show_task);
+
+#if (MP_DEBUG_TOOL_KDEBUG == 1)
+#ifdef CONFIG_TASK_STATE_BACKTRACE
+void wrap_show_task(struct task_struct *tsk)
+{
+	sched_show_task(tsk);
+        //move show backtrace function here
+        show_stack(tsk, NULL);
+}
+#endif
+#endif /*MP_DEBUG_TOOL_KDEBUG*/
 
 void show_state_filter(unsigned long state_filter)
 {
 	struct task_struct *g, *p;
 
 #if BITS_PER_LONG == 32
+#if (MP_DEBUG_TOOL_KDEBUG == 0) || !defined(CONFIG_KDEBUGD_MISC)
+
 	printk(KERN_INFO
 		"  task                PC stack   pid father\n");
 #else
 	printk(KERN_INFO
+			"                                                                                  sibling\n");
+	printk(KERN_INFO "  task         ");
+#ifdef CONFIG_SMP
+	printk(KERN_CONT "[CPU]    ");
+#else
+	printk(KERN_CONT "    ");
+#endif
+	printk(KERN_CONT "task_struct   PC   stack  pid  flag         father child younger older\n");
+#endif/*MP_DEBUG_TOOL_KDEBUG &&  CONFIG_KDEBUGD_MISC*/
+#else
+#ifndef CONFIG_KDEBUGD_MISC
+	printk(KERN_INFO
 		"  task                        PC stack   pid father\n");
+#else
+	printk(KERN_INFO
+			"                                                                                       sibling\n");
+	printk(KERN_INFO "  task         ");
+#ifdef CONFIG_SMP
+	printk(KERN_CONT "[CPU]    ");
+#endif
+	printk(KERN_CONT "task_struct   PC   stack  pid  flag         father child younger older\n");
+#endif
+
+
 #endif
 	rcu_read_lock();
 	do_each_thread(g, p) {
@@ -5218,6 +5621,7 @@ migration_call(struct notifier_block *nfb, unsigned long action, void *hcpu)
 
 	case CPU_UP_PREPARE:
 		rq->calc_load_update = calc_load_update;
+		rq->next_balance = jiffies;
 		break;
 
 	case CPU_ONLINE:
@@ -6879,9 +7283,6 @@ void __init sched_init_smp(void)
 	hotcpu_notifier(cpuset_cpu_active, CPU_PRI_CPUSET_ACTIVE);
 	hotcpu_notifier(cpuset_cpu_inactive, CPU_PRI_CPUSET_INACTIVE);
 
-	/* RT runtime code needs to handle some hotplug events */
-	hotcpu_notifier(update_runtime, 0);
-
 	init_hrtick();
 
 	/* Move init over to a non-isolated CPU */
@@ -7105,13 +7506,24 @@ static inline int preempt_count_equals(int preempt_offset)
 	return (nested == preempt_offset);
 }
 
+static int __might_sleep_init_called;
+int __init __might_sleep_init(void)
+{
+	__might_sleep_init_called = 1;
+	return 0;
+}
+early_initcall(__might_sleep_init);
+
 void __might_sleep(const char *file, int line, int preempt_offset)
 {
 	static unsigned long prev_jiffy;	/* ratelimiting */
 
 	rcu_sleep_check(); /* WARN_ON_ONCE() by default, no rate limit reqd. */
 	if ((preempt_count_equals(preempt_offset) && !irqs_disabled()) ||
-	    system_state != SYSTEM_RUNNING || oops_in_progress)
+	    oops_in_progress)
+		return;
+	if (system_state != SYSTEM_RUNNING &&
+	    (!__might_sleep_init_called || system_state != SYSTEM_BOOTING))
 		return;
 	if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
 		return;
@@ -7717,6 +8129,23 @@ static void cpu_cgroup_css_offline(struct cgroup *cgrp)
 	sched_offline_group(tg);
 }
 
+static int
+cpu_cgroup_allow_attach(struct cgroup *cgrp, struct cgroup_taskset *tset)
+{
+	const struct cred *cred = current_cred(), *tcred;
+	struct task_struct *task;
+
+	cgroup_taskset_for_each(task, cgrp, tset) {
+		tcred = __task_cred(task);
+
+		if ((current != task) && !capable(CAP_SYS_NICE) &&
+		    cred->euid != tcred->uid && cred->euid != tcred->suid)
+			return -EACCES;
+	}
+
+	return 0;
+}
+
 static int cpu_cgroup_can_attach(struct cgroup *cgrp,
 				 struct cgroup_taskset *tset)
 {
@@ -8083,6 +8512,7 @@ struct cgroup_subsys cpu_cgroup_subsys = {
 	.css_offline	= cpu_cgroup_css_offline,
 	.can_attach	= cpu_cgroup_can_attach,
 	.attach		= cpu_cgroup_attach,
+	.allow_attach	= cpu_cgroup_allow_attach,
 	.exit		= cpu_cgroup_exit,
 	.subsys_id	= cpu_cgroup_subsys_id,
 	.base_cftypes	= cpu_files,

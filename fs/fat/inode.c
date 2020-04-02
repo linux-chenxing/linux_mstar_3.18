@@ -389,6 +389,9 @@ int fat_fill_inode(struct inode *inode, struct msdos_dir_entry *de)
 {
 	struct msdos_sb_info *sbi = MSDOS_SB(inode->i_sb);
 	int error;
+	#if MP_KERNEL_COMPAT_PATCH_FIX_INODE_CLUSTER_LIST
+	int fclus;
+	#endif
 
 	MSDOS_I(inode)->i_pos = 0;
 	inode->i_uid = sbi->options.fs_uid;
@@ -404,7 +407,22 @@ int fat_fill_inode(struct inode *inode, struct msdos_dir_entry *de)
 
 		MSDOS_I(inode)->i_start = fat_get_start(sbi, de);
 		MSDOS_I(inode)->i_logstart = MSDOS_I(inode)->i_start;
-		error = fat_calc_dir_size(inode);
+#if MP_KERNEL_COMPAT_PATCH_FIX_INODE_CLUSTER_LIST
+              if(0 != fat_fix_inode_cluster(inode, &fclus, (inode->i_sb->s_maxbytes >> sbi->cluster_bits)))
+              {
+                  printk("Detect FAT FS ERROR and it has already been fixed\n");
+              }
+ #endif	
+    if (sbi->max_cluster <= MSDOS_I(inode)->i_start)
+		{
+        		printk("invalid dir inode \n");
+
+        		MSDOS_I(inode)->i_start = 0;    //for damaged inode(dir entry)
+        		inode->i_size = 0;
+        		error =  -EPERM;
+    }
+    else
+		    error = fat_calc_dir_size(inode);
 		if (error < 0)
 			return error;
 		MSDOS_I(inode)->mmu_private = inode->i_size;
@@ -423,6 +441,23 @@ int fat_fill_inode(struct inode *inode, struct msdos_dir_entry *de)
 		inode->i_fop = &fat_file_operations;
 		inode->i_mapping->a_ops = &fat_aops;
 		MSDOS_I(inode)->mmu_private = inode->i_size;
+ #if MP_KERNEL_COMPAT_PATCH_FIX_INODE_CLUSTER_LIST
+              if(0 == fat_fix_inode_cluster(inode, &fclus, (int)((inode->i_size+sbi->cluster_size-1)>>sbi->cluster_bits)))
+              {
+                  if(inode->i_size>fclus*sbi->cluster_size || 0==fclus)
+                  {
+                      MSDOS_I(inode)->mmu_private = inode->i_size = fclus*sbi->cluster_size; 
+                     de->size = cpu_to_le32(inode->i_size);
+                     if(0==fclus)
+                     {
+                          MSDOS_I(inode)->i_start = 0;
+                         de->start = de->starthi = 0;
+                     }
+                     fat_sync_inode(inode);
+                  }
+                  //mark_inode_dirty(inode);     
+              }
+ #endif
 	}
 	if (de->attr & ATTR_SYS) {
 		if (sbi->options.sys_immutable)
@@ -1252,6 +1287,7 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 	struct inode *fsinfo_inode = NULL;
 	struct buffer_head *bh;
 	struct fat_boot_sector *b;
+	struct fat_boot_bsx *bsx;
 	struct msdos_sb_info *sbi;
 	u16 logical_sector_size;
 	u32 total_sectors, total_clusters, fat_clusters, rootdir_sectors;
@@ -1275,6 +1311,10 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 	sb->s_magic = MSDOS_SUPER_MAGIC;
 	sb->s_op = &fat_sops;
 	sb->s_export_op = &fat_export_ops;
+#if (1 == MP_FAT_DEBUG_MESSAGE_CONTROL)
+	sb->msg_count = 0;
+	sb->not_msg_flag =false;
+#endif
 	mutex_init(&sbi->nfs_build_inode_lock);
 	ratelimit_state_init(&sbi->ratelimit, DEFAULT_RATELIMIT_INTERVAL,
 			     DEFAULT_RATELIMIT_BURST);
@@ -1398,6 +1438,8 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 			goto out_fail;
 		}
 
+		bsx = (struct fat_boot_bsx *)(bh->b_data + FAT32_BSX_OFFSET);
+
 		fsinfo = (struct fat_boot_fsinfo *)fsinfo_bh->b_data;
 		if (!IS_FSINFO(fsinfo)) {
 			fat_msg(sb, KERN_WARNING, "Invalid FSINFO signature: "
@@ -1413,7 +1455,13 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 		}
 
 		brelse(fsinfo_bh);
+	} else {
+		bsx = (struct fat_boot_bsx *)(bh->b_data + FAT16_BSX_OFFSET);
 	}
+
+	/* interpret volume ID as a little endian 32 bit integer */
+	sbi->vol_id = (((u32)bsx->vol_id[0]) | ((u32)bsx->vol_id[1] << 8) |
+		((u32)bsx->vol_id[2] << 16) | ((u32)bsx->vol_id[3] << 24));
 
 	sbi->dir_per_block = sb->s_blocksize / sizeof(struct msdos_dir_entry);
 	sbi->dir_per_block_bits = ffs(sbi->dir_per_block) - 1;

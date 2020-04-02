@@ -3,6 +3,7 @@
  *  Note that Maxim 8966 and 8997 are mfd and this is its subdevice.
  *
  * Copyright (C) 2011 Samsung Electronics
+ * Copyright (C) 2013, NVIDIA CORPORATION.  All rights reserved.
  * MyungJoo Ham <myungjoo.ham@samsung.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,11 +24,16 @@
 #ifndef __MAX17042_BATTERY_H_
 #define __MAX17042_BATTERY_H_
 
+#include <linux/edp.h>
+
 #define MAX17042_STATUS_BattAbsent	(1 << 3)
 #define MAX17042_BATTERY_FULL	(100)
 #define MAX17042_DEFAULT_SNS_RESISTOR	(10000)
 
 #define MAX17042_CHARACTERIZATION_DATA_SIZE 48
+
+#define MAX_TEMP 700
+#define MIN_TEMP -200
 
 enum max17042_register {
 	MAX17042_STATUS		= 0x00,
@@ -208,6 +214,17 @@ struct max17042_platform_data {
 	 * the datasheet although it can be changed by board designers.
 	 */
 	unsigned int r_sns;
+	bool is_battery_present;
 };
 
+#ifdef CONFIG_BATTERY_MAX17042
+extern int maxim_get_temp(int *deci_celsius);
+#else
+static inline int maxim_get_temp(int *deci_celsius)
+{
+	/* 0 Kelvin */
+	*deci_celsius = -2732;
+	return -ENODEV;
+}
+#endif
 #endif /* __MAX17042_BATTERY_H_ */

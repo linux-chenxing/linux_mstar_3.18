@@ -16,6 +16,14 @@ menuconfig USB_PHY
 	  If you're not sure if this applies to you, it probably doesn't;
 	  say N here.
 
+config USB_OTG_WAKELOCK
+	bool "Hold a wakelock when USB connected"
+	depends on WAKELOCK
+	select USB_OTG_UTILS
+	help
+	  Select this to automatically hold a wakelock when USB is
+	  connected, preventing suspend.
+
 if USB_PHY
 
 #
@@ -176,6 +184,25 @@ config USB_MV_OTG
 
 	  To compile this driver as a module, choose M here.
 
+config MS_OTG_ENABLE
+		boolean
+		#mstar chip:
+		#default y if MSTAR_KAISER 
+		#default y if MSTAR_CLIPPERS
+		default y
+		
+config USB_MS_OTG
+	tristate "Mstar USB OTG support"
+	depends on USB_EHCI_HCD && USB_GADGET_MSB250X && MS_OTG_ENABLE
+	select USB_OTG_UTILS
+	help
+	  Say Y here if you want to build Matar USB OTG transciever
+	  driver in kernel. This driver implements role switch between
+	  EHCI host driver and gadget driver.
+
+	  To compile this driver as a module, choose M here.
+
+
 config USB_MXS_PHY
 	tristate "Freescale MXS USB PHY support"
 	depends on ARCH_MXC || ARCH_MXS
@@ -196,9 +223,16 @@ config USB_RCAR_PHY
 	  To compile this driver as a module, choose M here: the
 	  module will be called rcar-phy.
 
+config USB_TEGRA_OTG
+	boolean "Tegra OTG Driver"
+	depends on USB && ARCH_TEGRA
+	help
+	  Enable this driver on boards which use the internal VBUS and ID
+	  sensing of the Tegra USB PHY.
+
 config USB_ULPI
 	bool "Generic ULPI Transceiver Driver"
-	depends on ARM
+	depends on ARM || ARM64
 	help
 	  Enable this to support ULPI connected USB OTG transceivers which
 	  are likely found on embedded boards.

@@ -4,6 +4,51 @@
 
 comment "MMC/SD/SDIO Host Controller Drivers"
 
+config MMC_MSTAR_MMC_EMMC
+        tristate "MStar eMMC driver"
+        help
+          MStar eMMC driver.
+choice
+	prompt "Default or force slow sown speed mode"
+	default MMC_MSTAR_EMMC_DEFAULT_SPEED
+
+config MMC_MSTAR_EMMC_DEFAULT_SPEED
+	bool "eMMC host default speed mode"
+	depends on MMC_MSTAR_MMC_EMMC
+	help
+	  Left Mstar eMMC host default speed mode to be unchanged.
+
+config MMC_MSTAR_EMMC_FORCE_HS200
+	bool "Force Mstar eMMC host to be HS200"
+	depends on MMC_MSTAR_MMC_EMMC
+	help
+	  Force the Mstar eMMC host controller running with HS200.
+
+config MMC_MSTAR_EMMC_FORCE_DDR52
+	bool "Force Mstar eMMC host to be DDR52"
+	depends on MMC_MSTAR_MMC_EMMC
+	help
+	  Force the Mstar eMMC host controller running with DDR52.
+
+endchoice
+
+config MMC_MSTAR_MMC_EMMC_CHK_VERSION
+        tristate "MStar eMMC driver - check version"
+        depends on MMC_MSTAR_MMC_EMMC
+        help
+          MStar eMMC driver - check version.
+
+config PROFILE_EMMC_IO_LENGTH
+        tristate "Profile eMMC IO Length"
+        depends on MMC_MSTAR_MMC_EMMC
+        help
+          MStar eMMC driver - profile eMMC io length.
+
+config MMC_MSTAR_tSD
+        tristate "Mstar tSD Interface support"
+        help
+          Mstar FCIE SD/SDIO Host Controller Driver.
+          
 config MMC_ARMMMCI
 	tristate "ARM AMBA Multimedia Card Interface support"
 	depends on ARM_AMBA
@@ -175,6 +220,15 @@ config MMC_SDHCI_TEGRA
 	help
 	  This selects the Tegra SD/MMC controller. If you have a Tegra
 	  platform with SD or MMC devices, say Y or M here.
+
+	  If unsure, say N.
+
+config MMC_SDHCI_TEGRA_HS200_DISABLE
+	tristate "Mask HS200 mode support in Tegra SDHCI"
+	depends on MMC_SDHCI_TEGRA
+	help
+	  If you need to disable the default HS200 mode for EMMC and
+	  use DDR50 mode please select this mode.
 
 	  If unsure, say N.
 

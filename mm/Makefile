@@ -1,6 +1,10 @@
 #
 # Makefile for the linux memory manager.
 #
+ifeq ($(CONFIG_Kasan_Switch_On),y)
+KASAN_SANITIZE_slab_common.o := n
+KASAN_SANITIZE_slub.o := n
+endif
 
 mmu-y			:= nommu.o
 mmu-$(CONFIG_MMU)	:= fremap.o highmem.o madvise.o memory.o mincore.o \
@@ -44,6 +48,9 @@ obj-$(CONFIG_PAGE_POISONING) += debug-pagealloc.o
 obj-$(CONFIG_SLAB) += slab.o
 obj-$(CONFIG_SLUB) += slub.o
 obj-$(CONFIG_KMEMCHECK) += kmemcheck.o
+ifeq ($(CONFIG_Kasan_Switch_On),y)
+obj-$(CONFIG_KASAN)	+= kasan/
+endif
 obj-$(CONFIG_FAILSLAB) += failslab.o
 obj-$(CONFIG_MEMORY_HOTPLUG) += memory_hotplug.o
 obj-$(CONFIG_FS_XIP) += filemap_xip.o

@@ -115,7 +115,13 @@ static ssize_t reset_store(struct device *dev,
 	if (bdev)
 		fsync_bdev(bdev);
 
+	//printk("\033[31mFunction = %s, Line = %d, let's reset zram\033[m\n", __PRETTY_FUNCTION__, __LINE__); // joe.liu
+	//dump_mstar_kmalloc_mapping(5);
+	
 	zram_reset_device(zram);
+	
+	//printk("\033[31mFunction = %s, Line = %d, finish reset zram\033[m\n", __PRETTY_FUNCTION__, __LINE__); // joe.liu
+	//dump_mstar_kmalloc_mapping(0);
 	return len;
 }
 

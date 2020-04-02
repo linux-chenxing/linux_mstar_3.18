@@ -1,0 +1,43 @@
+config MSTAR_DVFS
+bool "Mstar Dynamic Voltage and Frequency Scaling"
+depends on CPU_FREQ
+default n
+
+---help---
+    To enable or to disable Mstar dynamic voltage and frequency scaling mechanism
+
+config MSTAR_DVFS_FIXED_CPU_CLOCK
+bool "Enable Fixed CPU Clock Mechanism"
+depends on MSTAR_DVFS
+default n
+
+---help---
+    To enable or to disable fixed CPU clock mechanism
+
+
+config MSTAR_DVFS_BOOT_TIME_MANUAL
+bool "Enable DVFS Boot time manual setting"
+depends on MSTAR_DVFS
+default n
+
+---help---
+    To enable or to disable DVFS Boot time manual setting
+
+config DVFS_BOOT_MODE_TIME
+    int "Mstar DVFS boot time"
+    depends on MSTAR_DVFS_BOOT_TIME_MANUAL
+    default 30
+    range 0 100
+---help---
+    Adjustment boot time value
+
+
+
+config MSTAR_DVFS_KERNEL_IIC
+bool "DVFS using kernel mode IIC"
+depends on MSTAR_DVFS
+default n
+
+---help---
+    Select if DVFS using kernel mode IIC
+

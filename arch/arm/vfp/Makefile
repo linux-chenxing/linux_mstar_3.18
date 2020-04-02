@@ -7,7 +7,11 @@
 # ccflags-y := -DDEBUG
 # asflags-y := -DDEBUG
 
+ifeq ($(CONFIG_CROSS_COMPILE), "arm-linux-gnueabihf-")
+KBUILD_AFLAGS	:=$(KBUILD_AFLAGS:-mhard-float=-Wa,-mfpu=softvfp+vfp -mfloat-abi=hard)
+else
 KBUILD_AFLAGS	:=$(KBUILD_AFLAGS:-msoft-float=-Wa,-mfpu=softvfp+vfp -mfloat-abi=soft)
+endif
 LDFLAGS		+=--no-warn-mismatch
 
 obj-y			+= vfp.o

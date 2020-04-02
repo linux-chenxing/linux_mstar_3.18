@@ -27,6 +27,7 @@
 #include <asm/inst.h>
 #include <asm/local.h>
 
+#include <mstar/mpatch_macro.h>
 #ifdef CONFIG_DEBUG_FS
 
 struct mips_fpu_emulator_stats {
@@ -57,7 +58,15 @@ extern int do_dsemulret(struct pt_regs *xcp);
 extern int fpu_emulator_cop1Handler(struct pt_regs *xcp,
 				    struct mips_fpu_struct *ctx, int has_fpu,
 				    void *__user *fault_addr);
+#ifndef CONFIG_MP_PLATFORM_MIPS
 int process_fpemu_return(int sig, void __user *fault_addr);
+#endif /* CONFIG_MP_PLATFORM_MIPS */
+
+#ifdef CONFIG_MP_DEBUG_TOOL_KDEBUG
+void show_info_kdebug(struct task_struct *task, struct pt_regs * regs);
+#endif /* CONFIG_MP_DEBUG_TOOL_KDEBUG */
+
+
 int mm_isBranchInstr(struct pt_regs *regs, struct mm_decoded_insn dec_insn,
 		     unsigned long *contpc);
 

@@ -24,6 +24,7 @@
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
 #include <linux/io.h>
+#include <asm/tlb.h>
 
 static void __iomem *__ioremap_caller(phys_addr_t phys_addr, size_t size,
 				      pgprot_t prot, void *caller)
@@ -51,8 +52,10 @@ static void __iomem *__ioremap_caller(phys_addr_t phys_addr, size_t size,
 	/*
 	 * Don't allow RAM to be mapped.
 	 */
+#ifndef CONFIG_MP_PLATFORM_PIPE_FLUSH_DOUBLE_CHECK
 	if (WARN_ON(pfn_valid(__phys_to_pfn(phys_addr))))
 		return NULL;
+#endif
 
 	area = get_vm_area_caller(size, VM_IOREMAP, caller);
 	if (!area)
@@ -64,6 +67,13 @@ static void __iomem *__ioremap_caller(phys_addr_t phys_addr, size_t size,
 		vunmap((void *)addr);
 		return NULL;
 	}
+
+	/*
+	 * Flush the caches and tlb to ensure that we're in a
+	 * consistent state.
+	 */
+	flush_cache_all();
+	flush_tlb_all();
 
 	return (void __iomem *)(offset + addr);
 }
@@ -77,8 +87,36 @@ EXPORT_SYMBOL(__ioremap);
 
 void __iounmap(volatile void __iomem *io_addr)
 {
-	void *addr = (void *)(PAGE_MASK & (unsigned long)io_addr);
+	unsigned long addr = (unsigned long)io_addr & PAGE_MASK;
 
-	vunmap(addr);
+	/*
+	 * We could get an address outside vmalloc range in case
+	 * of ioremap_cache() reusing a RAM mapping.
+	 */
+	if (VMALLOC_START <= addr && addr < VMALLOC_END)
+		vunmap((void *)addr);
 }
 EXPORT_SYMBOL(__iounmap);
+
+#ifdef CONFIG_PCI
+int pci_ioremap_io(unsigned int offset, phys_addr_t phys_addr)
+{
+	BUG_ON(offset + SZ_64K > IO_SPACE_LIMIT);
+
+	return ioremap_page_range(PCI_IOBASE + offset,
+				  PCI_IOBASE + offset + SZ_64K,
+				  phys_addr,
+				  __pgprot(PROT_DEVICE_nGnRE));
+}
+EXPORT_SYMBOL_GPL(pci_ioremap_io);
+#endif
+void __iomem *ioremap_cache(phys_addr_t phys_addr, size_t size)
+{
+	/* For normal memory we already have a cacheable mapping. */
+	if (pfn_valid(__phys_to_pfn(phys_addr)))
+		return (void __iomem *)__phys_to_virt(phys_addr);
+
+	return __ioremap_caller(phys_addr, size, __pgprot(PROT_NORMAL),
+				__builtin_return_address(0));
+}
+EXPORT_SYMBOL(ioremap_cache);

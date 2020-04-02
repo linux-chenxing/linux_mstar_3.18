@@ -3,6 +3,17 @@
  *
  * Copyright (C) 2003,2004 Hewlett-Packard Company
  *
+ * Copyright (c) 2013, NVIDIA CORPORATION, All rights reserved.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -20,12 +31,33 @@
 #ifdef CONFIG_PMAC_BACKLIGHT
 #include <asm/backlight.h>
 #endif
+#include <linux/sysedp.h>
+#include <mach/dc.h>
 
 static const char *const backlight_types[] = {
 	[BACKLIGHT_RAW] = "raw",
 	[BACKLIGHT_PLATFORM] = "platform",
 	[BACKLIGHT_FIRMWARE] = "firmware",
 };
+
+struct list_head backlight_devices;
+
+struct backlight_device *get_backlight_device_by_name(char *name)
+{
+	struct list_head *ptr;
+	struct backlight_device *entry = NULL;
+
+	if (!name)
+		return NULL;
+
+	list_for_each(ptr, &backlight_devices) {
+		entry = list_entry(ptr, struct backlight_device, devices_list);
+		if (strcmp(dev_name(&entry->dev), name) == 0)
+			return entry;
+	}
+	return entry;
+}
+EXPORT_SYMBOL(get_backlight_device_by_name);
 
 #if defined(CONFIG_FB) || (defined(CONFIG_FB_MODULE) && \
 			   defined(CONFIG_BACKLIGHT_CLASS_DEVICE_MODULE))
@@ -81,6 +113,44 @@ static inline void backlight_unregister_fb(struct backlight_device *bd)
 {
 }
 #endif /* CONFIG_FB */
+
+#ifdef CONFIG_SYSEDP_FRAMEWORK
+
+/* Return value 0..11 : 0=zero brightness, 11=max brightness */
+static unsigned int backlight_calc_sysedp_state(struct backlight_device *bd)
+{
+	int cur_sd_brightness = atomic_read(&sd_brightness);
+	unsigned long brightness;
+	unsigned int state;
+
+	brightness = bd->props.brightness;
+	brightness = (brightness * cur_sd_brightness)/255;
+	state = 1 + brightness*10 / bd->props.max_brightness;
+	return brightness ? state : 0;
+}
+
+void backlight_update_status(struct backlight_device *bd)
+{
+	unsigned int new_state, prev_state;
+
+	mutex_lock(&bd->update_lock);
+	if (bd->sysedpc) {
+		new_state = backlight_calc_sysedp_state(bd);
+		prev_state = bd->sysedpc->state;
+		if (new_state > prev_state)
+			sysedp_set_state(bd->sysedpc, new_state);
+		if (bd->ops && bd->ops->update_status)
+			bd->ops->update_status(bd);
+		if (new_state < prev_state)
+			sysedp_set_state(bd->sysedpc, new_state);
+	} else {
+		if (bd->ops && bd->ops->update_status)
+			bd->ops->update_status(bd);
+	}
+	mutex_unlock(&bd->update_lock);
+}
+
+#endif
 
 static void backlight_generate_event(struct backlight_device *bd,
 				     enum backlight_update_reason reason)
@@ -217,6 +287,9 @@ static int backlight_suspend(struct device *dev, pm_message_t state)
 		bd->props.state |= BL_CORE_SUSPENDED;
 		backlight_update_status(bd);
 	}
+#ifdef CONFIG_SYSEDP_FRAMEWORK
+	sysedp_set_state(bd->sysedpc, 0);
+#endif
 	mutex_unlock(&bd->ops_lock);
 
 	return 0;
@@ -333,13 +406,16 @@ struct backlight_device *backlight_device_register(const char *name,
 
 	new_bd->ops = ops;
 
+	list_add_tail(&new_bd->devices_list, &backlight_devices);
 #ifdef CONFIG_PMAC_BACKLIGHT
 	mutex_lock(&pmac_backlight_mutex);
 	if (!pmac_backlight)
 		pmac_backlight = new_bd;
 	mutex_unlock(&pmac_backlight_mutex);
 #endif
-
+#ifdef CONFIG_SYSEDP_FRAMEWORK
+	new_bd->sysedpc = sysedp_create_consumer(name, name);
+#endif
 	return new_bd;
 }
 EXPORT_SYMBOL(backlight_device_register);
@@ -366,6 +442,12 @@ void backlight_device_unregister(struct backlight_device *bd)
 	mutex_unlock(&bd->ops_lock);
 
 	backlight_unregister_fb(bd);
+
+#ifdef CONFIG_SYSEDP_FRAMEWORK
+	sysedp_free_consumer(bd->sysedpc);
+	bd->sysedpc = NULL;
+#endif
+
 	device_unregister(&bd->dev);
 }
 EXPORT_SYMBOL(backlight_device_unregister);
@@ -416,6 +498,8 @@ static int __init backlight_class_init(void)
 	backlight_class->dev_attrs = bl_device_attributes;
 	backlight_class->suspend = backlight_suspend;
 	backlight_class->resume = backlight_resume;
+
+	INIT_LIST_HEAD(&backlight_devices);
 	return 0;
 }
 

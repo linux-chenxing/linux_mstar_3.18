@@ -25,15 +25,61 @@
 #include <linux/suspend.h>
 #include <linux/syscore_ops.h>
 #include <linux/ftrace.h>
+#include <linux/rtc.h>
 #include <trace/events/power.h>
 
 #include "power.h"
+#include <mstar/mpatch_macro.h>
+#if defined(CONFIG_MSTAR_PM)
+#include <mdrv_pm.h>
+#endif
+
+#ifdef CONFIG_MP_CMA_PATCH_MBOOT_STR_USE_CMA
+#include <mdrv_cma_pool.h>
+#endif
+
+#ifdef CONFIG_MSTAR_IPAPOOL
+#include <mdrv_ipa_pool.h>
+#endif
+#ifdef CONFIG_MP_R2_STR_ENABLE
+#include "../../drivers/mstar2/include/mdrv_types.h"
+#include "../../drivers/mstar2/include/mdrv_mstypes.h"
+#include "../../drivers/mstar2/drv/mbx/mdrv_mbx.h"
+#include "../../drivers/mstar2/drv/mbx/mapi_mbx.h"
+extern unsigned long get_str_handshake_addr();
+#endif
+#ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND
+#ifdef CONFIG_MSTAR_CPU_calibrating
+extern atomic_t ac_str_cpufreq;
+extern atomic_t disable_dvfs;
+extern int __CPU_calibrating_proc_write(const unsigned long idx);
+extern void change_cpus_timer(char *caller, unsigned int target_freq);
+extern struct mutex mstar_cpufreq_lock;
+#endif
+#endif
 
 const char *const pm_states[PM_SUSPEND_MAX] = {
 	[PM_SUSPEND_FREEZE]	= "freeze",
 	[PM_SUSPEND_STANDBY]	= "standby",
 	[PM_SUSPEND_MEM]	= "mem",
 };
+
+#if (MP_USB_STR_PATCH==1)
+typedef enum
+{
+    E_STR_NONE,
+    E_STR_IN_SUSPEND,
+    E_STR_IN_RESUME
+}EN_STR_STATUS;
+
+static EN_STR_STATUS enStrStatus=E_STR_NONE;
+
+bool is_suspending(void)
+{
+    return (enStrStatus == E_STR_IN_SUSPEND);
+}
+EXPORT_SYMBOL_GPL(is_suspending);
+#endif
 
 static const struct platform_suspend_ops *suspend_ops;
 
@@ -143,7 +189,41 @@ static int suspend_prepare(suspend_state_t state)
 	if (error)
 		goto Finish;
 
+#ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND
+#ifdef CONFIG_MSTAR_CPU_calibrating
+	/* Disable DVFS before suspend */
+	mutex_lock(&mstar_cpufreq_lock);
+    atomic_set(&disable_dvfs, 1);
+    printk("\033[0;32;31m%s %d Disable DVFS in STR\033[m\n",__func__,__LINE__);
+	mutex_unlock(&mstar_cpufreq_lock);
+	
+	/* Reset cpufreq and voltage to default setting */
+    printk("\033[36mFunction = %s, Line = %d,  setting cpufreq to %d\033[m\n", __PRETTY_FUNCTION__, __LINE__, atomic_read(&ac_str_cpufreq)); // joe.liu
+    change_cpus_timer((char *)__FUNCTION__, atomic_read(&ac_str_cpufreq));
+    mdelay(100);
+#endif
+#endif
+
 	error = suspend_freeze_processes();
+
+#ifdef CONFIG_MP_CMA_PATCH_MBOOT_STR_USE_CMA
+	/* allocate all freed cma_memory from a mboot co-buffer cma_region, 
+	 * to prevent the kernel data is still @ the mboot co-buffer cma_region,
+	 * and thus, the kernel data will be corrupted by mboot
+	 */
+
+#ifdef CONFIG_MSTAR_CMAPOOL
+	str_reserve_mboot_cma_buffer();
+#else
+
+#ifdef CONFIG_MSTAR_IPAPOOL
+	str_reserve_mboot_ipa_str_pool_buffer();
+#endif
+
+#endif
+
+#endif
+
 	if (!error)
 		return 0;
 
@@ -151,6 +231,17 @@ static int suspend_prepare(suspend_state_t state)
 	dpm_save_failed_step(SUSPEND_FREEZE);
  Finish:
 	pm_notifier_call_chain(PM_POST_SUSPEND);
+
+#ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND
+#ifdef CONFIG_MSTAR_CPU_calibrating
+	/* Enable DVFS after resume, this is error case */
+	mutex_lock(&mstar_cpufreq_lock);
+    atomic_set(&disable_dvfs, 0);
+    printk("\033[0;32;31m%s %d Enable DVFS in STR (Error case)\033[m\n",__func__,__LINE__);
+	mutex_unlock(&mstar_cpufreq_lock);
+#endif
+#endif
+
 	pm_restore_console();
 	return error;
 }
@@ -219,11 +310,24 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 
 	error = syscore_suspend();
 	if (!error) {
+#if defined(CONFIG_MP_MSTAR_STR_BASE)
+        if(is_mstar_str()){
+            *wakeup = false;
+        }else
+#endif
 		*wakeup = pm_wakeup_pending();
 		if (!(suspend_test(TEST_CORE) || *wakeup)) {
+			printk(KERN_DEBUG "\033[35mFunction = %s, Line = %d, do mstar_pm_enter\033[m\n", __PRETTY_FUNCTION__, __LINE__); // joe.liu
 			error = suspend_ops->enter(state);
+			printk(KERN_DEBUG "\033[35mFunction = %s, Line = %d, leave mstar_pm_enter\033[m\n", __PRETTY_FUNCTION__, __LINE__); // joe.liu
 			events_check_enabled = false;
+#if defined(CONFIG_MP_MSTAR_STR_BASE)
+            set_state_value(STENT_RESUME_FROM_SUSPEND);
+#endif
 		}
+#if (MP_USB_STR_PATCH==1)
+		enStrStatus=E_STR_IN_RESUME;
+#endif
 		syscore_resume();
 	}
 
@@ -231,7 +335,7 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 	BUG_ON(irqs_disabled());
 
  Enable_cpus:
-	enable_nonboot_cpus();
+	enable_nonboot_cpus(); //leo test
 
  Platform_wake:
 	if (need_suspend_ops(state) && suspend_ops->wake)
@@ -307,10 +411,52 @@ int suspend_devices_and_enter(suspend_state_t state)
  */
 static void suspend_finish(void)
 {
+#ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND
+#ifdef CONFIG_MSTAR_CPU_calibrating
+	/* Enable DVFS after resume, add this before suspend_thaw_processes, before user_mode processes wake_up */
+	mutex_lock(&mstar_cpufreq_lock);
+	atomic_set(&disable_dvfs, 0);
+	printk("\033[0;32;31m%s %d Enable DVFS in STR\033[m\n",__func__,__LINE__);
+	mutex_unlock(&mstar_cpufreq_lock);
+#endif
+#endif
+
+#ifdef CONFIG_MP_CMA_PATCH_MBOOT_STR_USE_CMA
+	/* free all pre-allocated cma_memory from a mboot co-buffer cma_region */
+
+#ifdef CONFIG_MSTAR_CMAPOOL
+	str_release_mboot_cma_buffer();
+#else
+
+#ifdef CONFIG_MSTAR_IPAPOOL
+	str_release_mboot_ipa_str_pool_buffer();
+#endif
+
+#endif
+
+#endif
+
 	suspend_thaw_processes();
 	pm_notifier_call_chain(PM_POST_SUSPEND);
 	pm_restore_console();
 }
+
+#ifdef CONFIG_MP_R2_STR_ENABLE
+u32 kernel_read_phys(u64 phys_addr)
+{
+    u32 phys_addr_page = phys_addr & 0xFFFFE000;
+    u32 phys_offset    = phys_addr & 0x00001FFF;
+    u32 map_size       = phys_offset + sizeof(u32);
+    u32 ret = 0xDEADBEEF;
+    void *mem_mapped = ioremap_nocache(phys_addr_page, map_size);
+    if (NULL != mem_mapped) {
+        ret = (u32)ioread32(((u8*)mem_mapped) + phys_offset);
+        iounmap(mem_mapped);
+    }
+
+    return ret;
+}
+#endif
 
 /**
  * enter_state - Do common work needed to enter system sleep state.
@@ -323,12 +469,29 @@ static void suspend_finish(void)
 static int enter_state(suspend_state_t state)
 {
 	int error;
-
+#if defined(CONFIG_MP_MSTAR_STR_BASE)
+    int bresumefromsuspend=0;
+#endif
+#ifdef CONFIG_MP_R2_STR_ENABLE
+volatile unsigned long u64TEESTRBOOTFLAG;
+#endif
 	if (!valid_state(state))
 		return -ENODEV;
 
 	if (!mutex_trylock(&pm_mutex))
 		return -EBUSY;
+#if defined(CONFIG_MSTAR_PM)
+    extern PM_Result MDrv_PM_CopyBin2Sram(void);
+    MDrv_PM_CopyBin2Sram();
+#endif
+
+#if defined(CONFIG_MP_MSTAR_STR_BASE)
+    set_state_entering();
+#if (MP_USB_STR_PATCH==1)
+	enStrStatus=E_STR_IN_SUSPEND;
+#endif
+try_again:
+#endif
 
 	if (state == PM_SUSPEND_FREEZE)
 		freeze_begin();
@@ -342,6 +505,33 @@ static int enter_state(suspend_state_t state)
 	if (error)
 		goto Unlock;
 
+#ifdef CONFIG_MP_R2_STR_ENABLE
+#define MIU0_BASE               0x20000000
+#define STR_FLAG_SUSPEND_FINISH 0xFFFF8888
+	if(TEEINFO_TYPTE == SECURITY_TEEINFO_OSTYPE_NUTTX) {
+	        printk(KERN_INFO "TEE mode: Nuttx\n");
+        	u64TEESTRBOOTFLAG = get_str_handshake_addr();
+        	if(u64TEESTRBOOTFLAG != 0) {
+
+                	printk(KERN_INFO "PM: Send MBX to TEE for STR_Suspend  ... \n");
+	                //1. Setup Suspend Flag to 0
+        	        printk(KERN_INFO "PM: u64TEESTRBOOTFLAG => Addr = 0x%x  !!!!\n", u64TEESTRBOOTFLAG );
+                	printk(KERN_INFO "PM: u64TEESTRBOOTFLAG => Value = 0x%x !!!! \n",kernel_read_phys(u64TEESTRBOOTFLAG));
+
+	                //2. Send Mailbox to TEE (PA!!!)
+        	        MApi_MBX_NotifyTeetoSuspend(u64TEESTRBOOTFLAG - MIU0_BASE);
+
+                	//3. Waiting TEE to finish susepnd jobs
+	                while( kernel_read_phys(u64TEESTRBOOTFLAG) != STR_FLAG_SUSPEND_FINISH )
+        	        {
+                	        mdelay(400);
+                        	printk(KERN_INFO "PM: Waiting TEE suspend done signal!!! 0x%x \n", kernel_read_phys(u64TEESTRBOOTFLAG));
+	                }
+	        }
+	        else printk(KERN_INFO "Normal STR flow\n");
+	}
+#endif
+
 	if (suspend_test(TEST_FREEZER))
 		goto Finish;
 
@@ -352,10 +542,45 @@ static int enter_state(suspend_state_t state)
 
  Finish:
 	pr_debug("PM: Finishing wakeup.\n");
+ #if defined(CONFIG_MP_MSTAR_STR_BASE)
+    if(STENT_RESUME_FROM_SUSPEND == get_state_value()){
+        clear_state_entering();
+        bresumefromsuspend=1;
+    }
+#endif
 	suspend_finish();
  Unlock:
+ #if defined(CONFIG_MP_MSTAR_STR_BASE)
+ #if defined(CONFIG_MSTAR_STR_ACOFF_ON_ERR)
+    if(error)
+    {
+        extern void mstar_str_notifypmerror_off(void);
+        mstar_str_notifypmerror_off(); //it won't return, wait pm to power off
+    }
+ #endif
+
+    if(is_mstar_str() && bresumefromsuspend==0){
+        schedule_timeout_interruptible(HZ);
+        goto try_again;
+    }
+ #if (MP_USB_STR_PATCH==1)
+	enStrStatus=E_STR_NONE;
+ #endif
+ #endif
 	mutex_unlock(&pm_mutex);
 	return error;
+}
+
+static void pm_suspend_marker(char *annotation)
+{
+	struct timespec ts;
+	struct rtc_time tm;
+
+	getnstimeofday(&ts);
+	rtc_time_to_tm(ts.tv_sec, &tm);
+	pr_info("PM: suspend %s %d-%02d-%02d %02d:%02d:%02d.%09lu UTC\n",
+		annotation, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+		tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec);
 }
 
 /**
@@ -372,6 +597,7 @@ int pm_suspend(suspend_state_t state)
 	if (state <= PM_SUSPEND_ON || state >= PM_SUSPEND_MAX)
 		return -EINVAL;
 
+	pm_suspend_marker("entry");
 	error = enter_state(state);
 	if (error) {
 		suspend_stats.fail++;
@@ -379,6 +605,7 @@ int pm_suspend(suspend_state_t state)
 	} else {
 		suspend_stats.success++;
 	}
+	pm_suspend_marker("exit");
 	return error;
 }
 EXPORT_SYMBOL(pm_suspend);

@@ -105,6 +105,10 @@ static int tegra_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	 */
 	if (rate >> PWM_SCALE_WIDTH)
 		return -EINVAL;
+	/* Due to the PWM divider is zero-based, we need to minus 1 to get
+	 *desired frequency*/
+	if (rate > 0)
+		 rate--;
 
 	val |= rate << PWM_SCALE_SHIFT;
 
@@ -181,6 +185,11 @@ static int tegra_pwm_probe(struct platform_device *pdev)
 	pwm->dev = &pdev->dev;
 
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!r) {
+		dev_err(&pdev->dev, "no memory resources defined\n");
+		return -ENODEV;
+	}
+
 	pwm->mmio_base = devm_ioremap_resource(&pdev->dev, r);
 	if (IS_ERR(pwm->mmio_base))
 		return PTR_ERR(pwm->mmio_base);
@@ -231,6 +240,8 @@ static int tegra_pwm_remove(struct platform_device *pdev)
 static const struct of_device_id tegra_pwm_of_match[] = {
 	{ .compatible = "nvidia,tegra20-pwm" },
 	{ .compatible = "nvidia,tegra30-pwm" },
+	{ .compatible = "nvidia,tegra114-pwm" },
+	{ .compatible = "nvidia,tegra124-pwm" },
 	{ }
 };
 
@@ -245,7 +256,18 @@ static struct platform_driver tegra_pwm_driver = {
 	.remove = tegra_pwm_remove,
 };
 
-module_platform_driver(tegra_pwm_driver);
+static int __init tegra_pwm_init_driver(void)
+{
+	return platform_driver_register(&tegra_pwm_driver);
+}
+
+static void __exit tegra_pwm_exit_driver(void)
+{
+	platform_driver_unregister(&tegra_pwm_driver);
+}
+
+subsys_initcall(tegra_pwm_init_driver);
+module_exit(tegra_pwm_exit_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("NVIDIA Corporation");

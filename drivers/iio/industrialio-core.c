@@ -86,6 +86,8 @@ static const char * const iio_modifier_names[] = {
 static const char * const iio_chan_info_postfix[] = {
 	[IIO_CHAN_INFO_RAW] = "raw",
 	[IIO_CHAN_INFO_PROCESSED] = "input",
+	[IIO_CHAN_INFO_RAW_DUAL] = "raw_dual",
+	[IIO_CHAN_INFO_PROCESSED_DUAL] = "input_dual",
 	[IIO_CHAN_INFO_SCALE] = "scale",
 	[IIO_CHAN_INFO_OFFSET] = "offset",
 	[IIO_CHAN_INFO_CALIBSCALE] = "calibscale",
@@ -368,10 +370,13 @@ static ssize_t iio_read_channel_info(struct device *dev,
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
 	unsigned long long tmp;
-	int val, val2;
+	int ret, val, val2;
 	bool scale_db = false;
-	int ret = indio_dev->info->read_raw(indio_dev, this_attr->c,
-					    &val, &val2, this_attr->address);
+	if (likely(indio_dev && indio_dev->info && indio_dev->info->read_raw))
+		ret = indio_dev->info->read_raw(indio_dev, this_attr->c,
+					&val, &val2, this_attr->address);
+	else
+		ret = -ENODEV;
 
 	if (ret < 0)
 		return ret;
@@ -912,6 +917,53 @@ void iio_device_free(struct iio_dev *dev)
 }
 EXPORT_SYMBOL(iio_device_free);
 
+static void devm_iio_device_release(struct device *dev, void *res)
+{
+	iio_device_free(*(struct iio_dev **)res);
+}
+
+static int devm_iio_device_match(struct device *dev, void *res, void *data)
+{
+	struct iio_dev **r = res;
+	if (!r || !*r) {
+		WARN_ON(!r || !*r);
+		return 0;
+	}
+	return *r == data;
+}
+
+struct iio_dev *devm_iio_device_alloc(struct device *dev, int sizeof_priv)
+{
+	struct iio_dev **ptr, *iio_dev;
+
+	ptr = devres_alloc(devm_iio_device_release, sizeof(*ptr),
+			   GFP_KERNEL);
+	if (!ptr)
+		return NULL;
+
+	/* use raw alloc_dr for kmalloc caller tracing */
+	iio_dev = iio_device_alloc(sizeof_priv);
+	if (iio_dev) {
+		*ptr = iio_dev;
+		devres_add(dev, ptr);
+	} else {
+		devres_free(ptr);
+	}
+
+	return iio_dev;
+}
+EXPORT_SYMBOL_GPL(devm_iio_device_alloc);
+
+void devm_iio_device_free(struct device *dev, struct iio_dev *iio_dev)
+{
+	int rc;
+
+	rc = devres_release(dev, devm_iio_device_release,
+			    devm_iio_device_match, iio_dev);
+	WARN_ON(rc);
+}
+EXPORT_SYMBOL_GPL(devm_iio_device_free);
+
 /**
  * iio_chrdev_open() - chrdev file open for buffer access and ioctls
  **/
@@ -1008,13 +1060,25 @@ int iio_device_register(struct iio_dev *indio_dev)
 	ret = device_add(&indio_dev->dev);
 	if (ret < 0)
 		goto error_unreg_eventset;
+
+	ret = sysfs_create_link(&indio_dev->dev.parent->kobj,
+			&indio_dev->dev.kobj, "iio_device");
+	if (ret) {
+		dev_err(indio_dev->dev.parent,
+			"Failed to create link for iio_device %d\n", ret);
+		goto error_del_device;
+	}
+
 	cdev_init(&indio_dev->chrdev, &iio_buffer_fileops);
 	indio_dev->chrdev.owner = indio_dev->info->driver_module;
 	ret = cdev_add(&indio_dev->chrdev, indio_dev->dev.devt, 1);
 	if (ret < 0)
-		goto error_del_device;
+		goto error_free_syslink;
+
 	return 0;
 
+error_free_syslink:
+	sysfs_remove_link(&indio_dev->dev.parent->kobj, "iio_device");
 error_del_device:
 	device_del(&indio_dev->dev);
 error_unreg_eventset:
@@ -1036,6 +1100,65 @@ void iio_device_unregister(struct iio_dev *indio_dev)
 	device_del(&indio_dev->dev);
 }
 EXPORT_SYMBOL(iio_device_unregister);
+
+static void devm_iio_device_unreg(struct device *dev, void *res)
+{
+	iio_device_unregister(*(struct iio_dev **)res);
+}
+
+/**
+ * devm_iio_device_register - Resource-managed iio_device_register()
+ * @dev:	Device to allocate iio_dev for
+ * @indio_dev:	Device structure filled by the device driver
+ *
+ * Managed iio_device_register.  The IIO device registered with this
+ * function is automatically unregistered on driver detach. This function
+ * calls iio_device_register() internally. Refer to that function for more
+ * information.
+ *
+ * If an iio_dev registered with this function needs to be unregistered
+ * separately, devm_iio_device_unregister() must be used.
+ *
+ * RETURNS:
+ * 0 on success, negative error number on failure.
+ */
+int devm_iio_device_register(struct device *dev, struct iio_dev *indio_dev)
+{
+	struct iio_dev **ptr;
+	int ret;
+
+	ptr = devres_alloc(devm_iio_device_unreg, sizeof(*ptr), GFP_KERNEL);
+	if (!ptr)
+		return -ENOMEM;
+
+	*ptr = indio_dev;
+	ret = iio_device_register(indio_dev);
+	if (!ret)
+		devres_add(dev, ptr);
+	else
+		devres_free(ptr);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(devm_iio_device_register);
+
+/**
+ * devm_iio_device_unregister - Resource-managed iio_device_unregister()
+ * @dev:	Device this iio_dev belongs to
+ * @indio_dev:	the iio_dev associated with the device
+ *
+ * Unregister iio_dev registered with devm_iio_device_register().
+ */
+void devm_iio_device_unregister(struct device *dev, struct iio_dev *indio_dev)
+{
+	int rc;
+
+	rc = devres_release(dev, devm_iio_device_unreg,
+			    devm_iio_device_match, indio_dev);
+	WARN_ON(rc);
+}
+EXPORT_SYMBOL_GPL(devm_iio_device_unregister);
+
 subsys_initcall(iio_init);
 module_exit(iio_exit);
 

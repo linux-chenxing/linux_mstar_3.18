@@ -72,6 +72,7 @@
  *	 A store crossing a page boundary might be executed only partially.
  *	 Undo the partial store in this case.
  */
+#include <linux/context_tracking.h>
 #include <linux/mm.h>
 #include <linux/signal.h>
 #include <linux/smp.h>
@@ -423,6 +424,9 @@ extern void show_registers(struct pt_regs *regs);
 static void emulate_load_store_insn(struct pt_regs *regs,
 	void __user *addr, unsigned int __user *pc)
 {
+#ifdef CONFIG_MP_MIPS_MIPS16E_UNALIGNED_ACCESS_FPU_FIXED
+    int fpu_owner = 1;
+#endif
 	union mips_instruction insn;
 	unsigned long value;
 	unsigned int res;
@@ -603,26 +607,36 @@ static void emulate_load_store_insn(struct pt_regs *regs,
 	case swc1_op:
 	case sdc1_op:
 		die_if_kernel("Unaligned FP access in kernel code", regs);
+#ifdef CONFIG_MP_MIPS_MIPS16E_UNALIGNED_ACCESS_FPU_FIXED
+		preempt_disable();
+		fpu_owner = is_fpu_owner();
+#endif
 		BUG_ON(!used_math());
+#ifndef CONFIG_MP_MIPS_MIPS16E_UNALIGNED_ACCESS_FPU_FIXED
 		BUG_ON(!is_fpu_owner());
-
+#endif
 		lose_fpu(1);	/* Save FPU state for the emulator. */
 		res = fpu_emulator_cop1Handler(regs, &current->thread.fpu, 1,
 					       &fault_addr);
-		own_fpu(1);	/* Restore FPU state. */
+#ifdef CONFIG_MP_MIPS_MIPS16E_UNALIGNED_ACCESS_FPU_FIXED
+		if (fpu_owner)
+#endif
+		{
+			own_fpu(1);	/* Restore FPU state. */
+		}
+#ifdef CONFIG_MP_MIPS_MIPS16E_UNALIGNED_ACCESS_FPU_FIXED
+		preempt_enable();
+#endif
 
 		/* Signal if something went wrong. */
+#ifndef CONFIG_MP_PLATFORM_MIPS
 		process_fpemu_return(res, fault_addr);
+#endif /* CONFIG_MP_PLATFORM_MIPS */
 
 		if (res == 0)
 			break;
 		return;
 
-	/*
-	 * COP2 is available to implementor for application specific use.
-	 * It's up to applications to register a notifier chain and do
-	 * whatever they have to do, including possible sending of signals.
-	 */
 	case lwc2_op:
 		cu2_notifier_call_chain(CU2_LWC2_OP, regs);
 		break;
@@ -1043,7 +1057,9 @@ fpu_emul:
 		own_fpu(1);	/* restore FPU state */
 
 		/* If something went wrong, signal */
+#ifndef CONFIG_MP_PLATFORM_MIPS
 		process_fpemu_return(res, fault_addr);
+#endif /* CONFIG_MP_PLATFORM_MIPS */
 
 		if (res == 0)
 			goto success;
@@ -1533,12 +1549,28 @@ fault:
 		return;
 
 	die_if_kernel("Unhandled kernel unaligned access", regs);
+
+#ifdef CONFIG_MP_DEBUG_TOOL_KDEBUG
+	{
+		printk(KERN_ALERT "Unaligned access : sending SIGSEGV to %s, PID:%d\n", current->comm, current->pid);
+		show_info_kdebug(current, regs);
+	}
+#endif
+
 	force_sig(SIGSEGV, current);
 
 	return;
 
 sigbus:
 	die_if_kernel("Unhandled kernel unaligned access", regs);
+
+#ifdef CONFIG_MP_DEBUG_TOOL_KDEBUG
+	{
+		printk(KERN_ALERT "Unaligned access : sending SIGBUS to %s, PID:%d\n", current->comm, current->pid);
+		show_info_kdebug(current, regs);
+	}
+#endif
+
 	force_sig(SIGBUS, current);
 
 	return;
@@ -1546,6 +1578,14 @@ sigbus:
 sigill:
 	die_if_kernel
 	    ("Unhandled kernel unaligned access or invalid instruction", regs);
+
+#ifdef CONFIG_MP_DEBUG_TOOL_KDEBUG
+	{
+		printk(KERN_ALERT "Unaligned access : sending SIGILL to %s, PID:%d\n", current->comm, current->pid);
+		show_info_kdebug(current, regs);
+	}
+#endif
+
 	force_sig(SIGILL, current);
 }
 asmlinkage void do_ade(struct pt_regs *regs)
@@ -1623,6 +1663,15 @@ asmlinkage void do_ade(struct pt_regs *regs)
 
 sigbus:
 	die_if_kernel("Kernel unaligned instruction access", regs);
+
+#ifdef CONFIG_MP_DEBUG_TOOL_KDEBUG
+	{
+		printk(KERN_ALERT "Unaligned instruction access : sending SIGBUS to %s, PID:%d\n",
+				current->comm, current->pid);
+		show_info_kdebug(current, regs);
+	}
+#endif
+
 	force_sig(SIGBUS, current);
 
 	/*

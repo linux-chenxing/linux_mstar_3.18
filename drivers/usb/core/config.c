@@ -16,6 +16,11 @@
 #define USB_MAXCONFIG			8	/* Arbitrary limit */
 
 
+#if (MP_USB_MSTAR==1)
+extern u8 hcd_readb(struct usb_hcd *, size_t);
+extern void hcd_writeb(struct usb_hcd *, u8, size_t);
+#endif
+
 static inline const char *plural(int n)
 {
 	return (n == 1 ? "" : "s");
@@ -266,6 +271,28 @@ static int usb_parse_endpoint(struct device *ddev, int cfgno, int inum,
 	if (to_usb_device(ddev)->speed == USB_SPEED_SUPER)
 		usb_parse_ss_endpoint_companion(ddev, cfgno,
 				inum, asnum, endpoint, buffer, size);
+
+
+#if (MP_USB_MSTAR == 1)
+	/* Set EOF1 for HS device attached on roothub */
+	if ((to_usb_device(ddev)->speed == USB_SPEED_HIGH) && 
+		(to_usb_device(ddev)->descriptor.bDeviceClass != USB_CLASS_HUB) &&
+		usb_endpoint_xfer_isoc(d)) {
+		if (to_usb_device(ddev)->parent) {
+			if (to_usb_device(ddev)->parent->parent == NULL) {
+				/* set EOF1 to 24 us for ISO later */			
+				struct usb_hcd *hcd = bus_to_hcd(to_usb_device(ddev)->bus);
+				
+				if (hcd->ehc_base) {
+					if (((hcd_readb(hcd, 0x34)>>2) & 0x3) != 0x3) {
+						hcd_writeb(hcd, (hcd_readb(hcd, 0x34) | ((1U<<2)|(1U<<3))), 0x34);
+						//printk("[EHCI EOF1-24]\n");
+					}
+				}
+			}
+		}
+	}
+#endif
 
 	/* Skip over any Class Specific or Vendor Specific descriptors;
 	 * find the next endpoint or interface descriptor */

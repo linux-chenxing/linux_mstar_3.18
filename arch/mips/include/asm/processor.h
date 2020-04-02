@@ -326,6 +326,10 @@ unsigned long get_wchan(struct task_struct *p);
 #define KSTK_ESP(tsk) (task_pt_regs(tsk)->regs[29])
 #define KSTK_STATUS(tsk) (task_pt_regs(tsk)->cp0_status)
 
+ #ifndef cpu_read_relax
+ #define cpu_read_relax() cpu_relax()
+ #endif
+
 #define cpu_relax()	barrier()
 
 /*

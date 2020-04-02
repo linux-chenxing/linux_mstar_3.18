@@ -22,10 +22,17 @@
 #define __ASM_OUTERCACHE_H
 
 #include <linux/types.h>
+#include <mstar/mpatch_macro.h>
 
 struct outer_cache_fns {
+	#if (MP_PLATFORM_ARM == 1)
+	int (*is_enable)(void); 
+	#endif	/*MP_PLATFORM_ARM */
 	void (*inv_range)(unsigned long, unsigned long);
 	void (*clean_range)(unsigned long, unsigned long);
+	#if (MP_PLATFORM_ARM == 1)
+	void (*clean_all)(void);
+	#endif /*MP_PLATFORM_ARM*/
 	void (*flush_range)(unsigned long, unsigned long);
 	void (*flush_all)(void);
 	void (*inv_all)(void);
@@ -37,9 +44,9 @@ struct outer_cache_fns {
 	void (*resume)(void);
 };
 
-extern struct outer_cache_fns outer_cache;
-
 #ifdef CONFIG_OUTER_CACHE
+
+extern struct outer_cache_fns outer_cache;
 
 static inline void outer_inv_range(phys_addr_t start, phys_addr_t end)
 {
@@ -83,16 +90,49 @@ static inline void outer_resume(void)
 
 #else
 
+extern void  _chip_flush_miu_pipe(void);
 static inline void outer_inv_range(phys_addr_t start, phys_addr_t end)
-{ }
+{
+#if (MP_PLATFORM_ARM == 1)
+    _chip_flush_miu_pipe();
+#endif //MP_PLATFORM_ARM == 1 for inner L2 cpu, need to add mstar flush piple
+}
 static inline void outer_clean_range(phys_addr_t start, phys_addr_t end)
-{ }
+{
+#if (MP_PLATFORM_ARM == 1)
+    _chip_flush_miu_pipe();
+#endif //MP_PLATFORM_ARM == 1 for inner L2 cpu, need to add mstar flush piple
+}
 static inline void outer_flush_range(phys_addr_t start, phys_addr_t end)
-{ }
-static inline void outer_flush_all(void) { }
-static inline void outer_inv_all(void) { }
-static inline void outer_disable(void) { }
-static inline void outer_resume(void) { }
+{
+#if (MP_PLATFORM_ARM == 1)
+    _chip_flush_miu_pipe();
+#endif //MP_PLATFORM_ARM == 1 for inner L2 cpu, need to add mstar flush piple
+}
+static inline void outer_flush_all(void)
+{
+#if (MP_PLATFORM_ARM == 1)
+    _chip_flush_miu_pipe();
+#endif //MP_PLATFORM_ARM == 1 for inner L2 cpu, need to add mstar flush piple
+}
+static inline void outer_inv_all(void)
+{
+#if (MP_PLATFORM_ARM == 1)
+    _chip_flush_miu_pipe();
+#endif //MP_PLATFORM_ARM == 1 for inner L2 cpu, need to add mstar flush piple
+}
+static inline void outer_disable(void)
+{
+#if (MP_PLATFORM_ARM == 1)
+    _chip_flush_miu_pipe();
+#endif //MP_PLATFORM_ARM == 1 for inner L2 cpu, need to add mstar flush piple
+}
+static inline void outer_resume(void)
+{
+#if (MP_PLATFORM_ARM == 1)
+    _chip_flush_miu_pipe();
+#endif //MP_PLATFORM_ARM == 1 for inner L2 cpu, need to add mstar flush piple
+}
 
 #endif
 

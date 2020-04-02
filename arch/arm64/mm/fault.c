@@ -36,6 +36,9 @@
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/pagefault.h>
+
 static const char *fault_name(unsigned int esr);
 
 /*
@@ -76,6 +79,12 @@ void show_pte(struct mm_struct *mm, unsigned long addr)
 
 	printk("\n");
 }
+
+#if (MP_DEBUG_TOOL_KDEBUG)
+#ifdef CONFIG_SHOW_FAULT_TRACE_INFO
+extern void show_info(struct task_struct *task, struct pt_regs *regs, unsigned long addr);
+#endif /*CONFIG_SHOW_FAULT_TRACE_INFO*/
+#endif /*MP_DEBUG_TOOL_KDEBUG*/
 
 /*
  * The kernel tried to access some page that wasn't present.
@@ -122,6 +131,29 @@ static void __do_user_fault(struct task_struct *tsk, unsigned long addr,
 		show_regs(regs);
 	}
 
+#ifdef CONFIG_DEBUG_USER
+	if (((user_debug & UDBG_SEGV) && (sig == SIGSEGV)) ||
+	    ((user_debug & UDBG_BUS)  && (sig == SIGBUS))) {
+		printk(KERN_DEBUG "%s: unhandled page fault (%d) at 0x%08lx, code 0x%03x\n",
+		       tsk->comm, sig, addr, fsr);
+		show_pte(tsk->mm, addr);
+		show_regs(regs);
+
+#if (MP_DEBUG_TOOL_KDEBUG == 1)
+#ifdef CONFIG_SHOW_FAULT_TRACE_INFO
+	printk(KERN_ALERT "%s: unhandled page fault (%d) at 0x%08lx, code 0x%03x\n",
+							tsk->comm, sig, addr, fsr);
+	
+        #ifdef CONFIG_ANDROID
+                /*prevent kernel coredump message mess up with Android coredump message*/
+        #else
+                show_usr_info(tsk, regs, addr);
+        #endif /*CONFIG_ANDROID*/
+#endif
+#endif /*MP_DEBUG_TOOL_KDEBUG*/
+	}
+#endif
+
 	tsk->thread.fault_address = addr;
 	si.si_signo = sig;
 	si.si_errno = 0;
@@ -130,7 +162,7 @@ static void __do_user_fault(struct task_struct *tsk, unsigned long addr,
 	force_sig_info(sig, &si, tsk);
 }
 
-void do_bad_area(unsigned long addr, unsigned int esr, struct pt_regs *regs)
+static void do_bad_area(unsigned long addr, unsigned int esr, struct pt_regs *regs)
 {
 	struct task_struct *tsk = current;
 	struct mm_struct *mm = tsk->active_mm;
@@ -199,12 +231,7 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 	unsigned long vm_flags = VM_READ | VM_WRITE | VM_EXEC;
 	unsigned int mm_flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
 
-	if (esr & ESR_LNX_EXEC) {
-		vm_flags = VM_EXEC;
-	} else if ((esr & ESR_WRITE) && !(esr & ESR_CM)) {
-		vm_flags = VM_WRITE;
-		mm_flags |= FAULT_FLAG_WRITE;
-	}
+	trace_pagefault_entry(addr);
 
 	tsk = current;
 	mm  = tsk->mm;
@@ -219,6 +246,16 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 	 */
 	if (in_atomic() || !mm)
 		goto no_context;
+
+	if (user_mode(regs))
+		mm_flags |= FAULT_FLAG_USER;
+
+	if (esr & ESR_LNX_EXEC) {
+		vm_flags = VM_EXEC;
+	} else if ((esr & ESR_WRITE) && !(esr & ESR_CM)) {
+		vm_flags = VM_WRITE;
+		mm_flags |= FAULT_FLAG_WRITE;
+	}
 
 	/*
 	 * As per x86, we may deadlock here. However, since the kernel only
@@ -250,7 +287,7 @@ retry:
 	 * would already be released in __lock_page_or_retry in mm/filemap.c.
 	 */
 	if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current))
-		return 0;
+		goto return0;
 
 	/*
 	 * Major/minor page fault accounting is only done on the initial
@@ -286,7 +323,14 @@ retry:
 	 */
 	if (likely(!(fault & (VM_FAULT_ERROR | VM_FAULT_BADMAP |
 			      VM_FAULT_BADACCESS))))
-		return 0;
+		goto return0;
+
+	/*
+	 * If we are in kernel mode at this point, we have no context to
+	 * handle this fault with.
+	 */
+	if (!user_mode(regs))
+		goto no_context;
 
 	if (fault & VM_FAULT_OOM) {
 		/*
@@ -295,15 +339,8 @@ retry:
 		 * oom-killed).
 		 */
 		pagefault_out_of_memory();
-		return 0;
+		goto return0;
 	}
-
-	/*
-	 * If we are in kernel mode at this point, we have no context to
-	 * handle this fault with.
-	 */
-	if (!user_mode(regs))
-		goto no_context;
 
 	if (fault & VM_FAULT_SIGBUS) {
 		/*
@@ -323,10 +360,12 @@ retry:
 	}
 
 	__do_user_fault(tsk, addr, esr, sig, code, regs);
-	return 0;
+	goto return0;
 
 no_context:
 	__do_kernel_fault(mm, addr, esr, regs);
+return0:
+	trace_pagefault_exit(addr);
 	return 0;
 }
 

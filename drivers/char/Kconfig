@@ -6,6 +6,19 @@ menu "Character devices"
 
 source "drivers/tty/Kconfig"
 
+config DEVMEM
+	bool "Memory device driver"
+	default y
+	help
+	  The memory driver provides two character devices, mem and kmem, which
+	  provide access to the system's memory. The mem device is a view of
+	  physical memory, and each byte in the device corresponds to the
+	  matching physical address. The kmem device is the same as mem, but
+	  the addresses correspond to the kernel's virtual address space rather
+	  than physical memory. These devices are standard parts of a Linux
+	  system and most users should say Y here. You might say N if very
+	  security conscience or memory is tight.
+
 config DEVKMEM
 	bool "/dev/kmem virtual device support"
 	default y
@@ -50,6 +63,8 @@ config SGI_MBCS
          say Y or M here, otherwise say N.
 
 source "drivers/tty/serial/Kconfig"
+
+source "drivers/char/diag/Kconfig"
 
 config TTY_PRINTK
 	bool "TTY driver to output user messages via printk"
@@ -584,6 +599,10 @@ config DEVPORT
 	depends on ISA || PCI
 	default y
 
+config DCC_TTY
+	tristate "DCC tty driver"
+	depends on ARM
+
 source "drivers/s390/char/Kconfig"
 
 config MSM_SMD_PKT
@@ -605,5 +624,33 @@ config TILE_SROM
 	  device appear much like a simple EEPROM, and knows
 	  how to partition a single ROM for multiple purposes.
 
-endmenu
+config TEGRA_EFS
+	bool "Character-device interface for efs file system"
+	depends on  ARCH_TEGRA && MTD_NOR_TEGRA_GMI
+	default n
+	help
+	Enable tegra efs helper driver for Nvidia's board.
 
+config TEGRA_GMI_ACCESS_CONTROL
+	bool "Provides access control functionality for multiple devices connected on tegra GMI bus."
+	depends on ARCH_TEGRA && MTD_NOR_TEGRA_GMI
+	---help---
+	  This driver provides access control and priority support for
+	  tegra GMI bus. Nvidia Embedded entertainment boards support multiple
+	  devices connected on the same bus selectable using CS.
+
+config TEGRA_GMI_CHAR
+	bool "Character-device interface for tegra GMI bus"
+	depends on  ARCH_TEGRA
+	select TEGRA_GMI
+	help
+	Enable tegra GMI char driver for Nvidia's board.
+
+config TEGRA_PFLASH
+	bool "Character-device interface for pflash"
+	depends on  ARCH_TEGRA && MTD_NOR_TEGRA_GMI
+	default n
+	help
+	Enable tegra pflash helper driver for Nvidia's board.
+
+endmenu

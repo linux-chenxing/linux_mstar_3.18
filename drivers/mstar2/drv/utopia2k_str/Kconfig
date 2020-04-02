@@ -1,0 +1,7 @@
+config MSTAR_UTOPIA2K_STR
+
+tristate "UTOPIA2K_STR"
+default n
+help
+    MStar Utopia2K STR driver function
+    

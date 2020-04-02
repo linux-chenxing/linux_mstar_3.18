@@ -473,6 +473,15 @@ static const struct driver_info wwan_info = {
 	.manage_power =	usbnet_manage_power,
 };
 
+static const struct driver_info rmnet_info = {
+	.description =	"Mobile Broadband Network Device",
+	.flags =	FLAG_RMNET,
+	.bind =		usbnet_cdc_bind,
+	.unbind =	usbnet_cdc_unbind,
+	.status =	usbnet_cdc_status,
+	.manage_power =	usbnet_manage_power,
+};
+
 /*-------------------------------------------------------------------------*/
 
 #define HUAWEI_VENDOR_ID	0x12D1
@@ -480,6 +489,7 @@ static const struct driver_info wwan_info = {
 #define ZTE_VENDOR_ID		0x19D2
 #define DELL_VENDOR_ID		0x413C
 #define REALTEK_VENDOR_ID	0x0bda
+#define SAMSUNG_VENDOR_ID       0x04e8
 
 static const struct usb_device_id	products [] = {
 /*
@@ -641,9 +651,57 @@ static const struct usb_device_id	products [] = {
 	.driver_info = 0,
 },
 #endif
+#if defined(CONFIG_USB_RTL8152) || defined(CONFIG_USB_RTL8152_MODULE)
+/* Samsung USB Ethernet Adapters */
+{
+       USB_DEVICE_AND_INTERFACE_INFO(SAMSUNG_VENDOR_ID, 0xa101, USB_CLASS_COMM,
+                       USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+       .driver_info = 0,
+},
+#endif
 
-/*
- * WHITELIST!!!
+/* PH450 */
+{
+	.match_flags = USB_DEVICE_ID_MATCH_INT_INFO
+		| USB_DEVICE_ID_MATCH_DEVICE,
+	USB_DEVICE(0x1983, 0x0310),
+	.driver_info = (unsigned long)&rmnet_info,
+}, {
+	.match_flags = USB_DEVICE_ID_MATCH_INT_INFO
+		| USB_DEVICE_ID_MATCH_DEVICE,
+	USB_DEVICE(0x1983, 0x0321),
+	.driver_info = (unsigned long)&rmnet_info,
+}, {
+	.match_flags = USB_DEVICE_ID_MATCH_INT_INFO
+		| USB_DEVICE_ID_MATCH_DEVICE,
+	USB_DEVICE(0x1983, 0x0327),	/* 5AE */
+	.driver_info = (unsigned long)&rmnet_info,
+},
+
+/* Tango module */
+{
+	.match_flags = USB_DEVICE_ID_MATCH_INT_INFO
+		 | USB_DEVICE_ID_MATCH_DEVICE,
+	USB_DEVICE(0x0489,0xE03A),
+	.driver_info = (unsigned long)&rmnet_info,
+},
+
+/* ZM5250 */
+{
+	.match_flags = USB_DEVICE_ID_MATCH_INT_INFO
+		 | USB_DEVICE_ID_MATCH_DEVICE,
+	USB_DEVICE(0x19D2,0x1554),
+	.driver_info = (unsigned long)&rmnet_info,
+},
+
+/* Samsung USB Ethernet Adapters */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(SAMSUNG_VENDOR_ID, 0xa101, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
+/* WHITELIST!!!
  *
  * CDC Ether uses two interfaces, not necessarily consecutive.
  * We match the main interface, ignoring the optional device

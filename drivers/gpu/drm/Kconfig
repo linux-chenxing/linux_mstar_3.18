@@ -32,6 +32,7 @@ config DRM_KMS_HELPER
 	select FB
 	select FRAMEBUFFER_CONSOLE if !EXPERT
 	select FRAMEBUFFER_CONSOLE_DETECT_PRIMARY if FRAMEBUFFER_CONSOLE
+	default y
 	help
 	  FB and CRTC helpers for KMS drivers.
 
@@ -58,6 +59,7 @@ config DRM_TTM
 config DRM_GEM_CMA_HELPER
 	bool
 	depends on DRM
+        default y
 	help
 	  Choose this if you need the GEM CMA helper functions
 
@@ -67,6 +69,7 @@ config DRM_KMS_CMA_HELPER
 	select FB_SYS_FILLRECT
 	select FB_SYS_COPYAREA
 	select FB_SYS_IMAGEBLIT
+	default y
 	help
 	  Choose this if you need the KMS CMA helper functions
 

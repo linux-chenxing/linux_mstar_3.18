@@ -13,6 +13,9 @@
 #include <linux/kobject.h>
 
 #include <linux/kmemleak.h>
+#ifdef CONFIG_Kasan_Switch_On
+#include <linux/kasan.h>
+#endif
 
 enum stat_item {
 	ALLOC_FASTPATH,		/* Allocation from cpu slab */
@@ -115,6 +118,9 @@ kmalloc_order(size_t size, gfp_t flags, unsigned int order)
 	flags |= (__GFP_COMP | __GFP_KMEMCG);
 	ret = (void *) __get_free_pages(flags, order);
 	kmemleak_alloc(ret, size, 1, flags);
+#ifdef CONFIG_Kasan_Switch_On
+	kasan_kmalloc_large(ret, size);
+#endif
 	return ret;
 }
 
@@ -139,7 +145,14 @@ extern void *kmalloc_order_trace(size_t size, gfp_t flags, unsigned int order);
 static __always_inline void *
 kmem_cache_alloc_trace(struct kmem_cache *s, gfp_t gfpflags, size_t size)
 {
+#ifndef CONFIG_Kasan_Switch_On
 	return kmem_cache_alloc(s, gfpflags);
+#endif
+#ifdef CONFIG_Kasan_Switch_On
+	void *ret = kmem_cache_alloc(s, gfpflags);
+	kasan_kmalloc(s, ret, size);
+	return ret;
+#endif
 }
 
 static __always_inline void *
@@ -188,7 +201,15 @@ kmem_cache_alloc_node_trace(struct kmem_cache *s,
 			      gfp_t gfpflags,
 			      int node, size_t size)
 {
+
+#ifndef CONFIG_Kasan_Switch_On
 	return kmem_cache_alloc_node(s, gfpflags, node);
+#endif
+#ifdef CONFIG_Kasan_Switch_On
+	void *ret = kmem_cache_alloc_node(s, gfpflags, node);
+	kasan_kmalloc(s, ret, size);
+	return ret;
+#endif
 }
 #endif
 
@@ -207,5 +228,23 @@ static __always_inline void *kmalloc_node(size_t size, gfp_t flags, int node)
 	return __kmalloc_node(size, flags, node);
 }
 #endif
+#ifdef CONFIG_Kasan_Switch_On
+/**
+ * virt_to_obj - returns address of the beginning of object.
+ * @s: object's kmem_cache
+ * @slab_page: address of slab page
+ * @x: address within object memory range
+ *
+ * Returns address of the beginning of object
+ */
+static inline void *virt_to_obj(struct kmem_cache *s,
+				const void *slab_page,
+				const void *x)
+{
+	return (void *)x - ((x - slab_page) % s->size);
+}
 
+void object_err(struct kmem_cache *s, struct page *page,
+		u8 *object, char *reason);
+#endif
 #endif /* _LINUX_SLUB_DEF_H */

@@ -41,6 +41,7 @@ struct  cs42l73_private {
 	u8 mclksel;
 	u32 mclk;
 	int shutdwn_delay;
+	int pwr_up_delay;
 };
 
 static const struct reg_default cs42l73_reg_defaults[] = {
@@ -1360,6 +1361,7 @@ static int cs42l73_probe(struct snd_soc_codec *codec)
 	struct cs42l73_private *cs42l73 = snd_soc_codec_get_drvdata(codec);
 
 	codec->control_data = cs42l73->regmap;
+	codec->dapm.idle_bias_off = 1;
 
 	ret = snd_soc_codec_set_cache_io(codec, 8, 8, SND_SOC_REGMAP);
 	if (ret < 0) {
@@ -1389,6 +1391,7 @@ static struct snd_soc_codec_driver soc_codec_dev_cs42l73 = {
 	.suspend = cs42l73_suspend,
 	.resume = cs42l73_resume,
 	.set_bias_level = cs42l73_set_bias_level,
+	.idle_bias_off = true,
 
 	.dapm_widgets = cs42l73_dapm_widgets,
 	.num_dapm_widgets = ARRAY_SIZE(cs42l73_dapm_widgets),

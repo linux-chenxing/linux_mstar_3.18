@@ -931,6 +931,10 @@ static int proc_control(struct dev_state *ps, void __user *arg)
 		i = usb_control_msg(dev, pipe, ctrl.bRequest,
 				    ctrl.bRequestType, ctrl.wValue, ctrl.wIndex,
 				    tbuf, ctrl.wLength, tmo);
+#if (MP_USB_MSTAR==1)
+		if (dev->state != USB_STATE_CONFIGURED)
+			msleep(1);
+#endif
 		usb_lock_device(dev);
 		snoop_urb(dev, NULL, pipe, max(i, 0), min(i, 0), COMPLETE,
 			  tbuf, max(i, 0));

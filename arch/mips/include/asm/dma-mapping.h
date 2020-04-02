@@ -10,6 +10,8 @@
 #include <dma-coherence.h>
 #endif
 
+#define DMA_ERROR_CODE	(~0)
+
 extern struct dma_map_ops *mips_dma_map_ops;
 
 static inline struct dma_map_ops *get_dma_ops(struct device *dev)

@@ -19,13 +19,33 @@
 
 #include "mm.h"
 
-#ifdef CONFIG_ARM_LPAE
-#define __pgd_alloc()	kmalloc(PTRS_PER_PGD * sizeof(pgd_t), GFP_KERNEL)
-#define __pgd_free(pgd)	kfree(pgd)
-#else
 #define __pgd_alloc()	(pgd_t *)__get_free_pages(GFP_KERNEL, 2)
 #define __pgd_free(pgd)	free_pages((unsigned long)pgd, 2)
+
+DEFINE_SPINLOCK(pgd_lock);
+LIST_HEAD(pgd_list);
+
+#ifdef CONFIG_MP_PAGE_GLOBAL_DIRECTORY_SPEEDUP
+#define PGD_SIZE    (PTRS_PER_PGD * sizeof(pgd_t))
+#define PGD_CACHE_SIZE 512
+LIST_HEAD(pgd_cache_list);
+DEFINE_SPINLOCK(pgd_cache_list_spin_lock);
+atomic_t pgd_cache_list_cnt = ATOMIC_INIT(0);
 #endif
+
+static inline void pgd_list_add(pgd_t *pgd)
+{
+	struct page *page = virt_to_page(pgd);
+
+	list_add(&page->lru, &pgd_list);
+}
+
+static inline void pgd_list_del(pgd_t *pgd)
+{
+	struct page *page = virt_to_page(pgd);
+
+	list_del(&page->lru);
+}
 
 /*
  * need to get a 16k page for level 1
@@ -36,13 +56,31 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	pud_t *new_pud, *init_pud;
 	pmd_t *new_pmd, *init_pmd;
 	pte_t *new_pte, *init_pte;
+	unsigned long flags;
 
+#ifdef CONFIG_MP_PAGE_GLOBAL_DIRECTORY_SPEEDUP
+	spin_lock_irqsave(&pgd_cache_list_spin_lock, flags);
+	if(atomic_add_unless(&pgd_cache_list_cnt, -1, 0)){
+		struct list_head *list;
+		BUG_ON(list_empty(&pgd_cache_list));
+		list = pgd_cache_list.next;
+		list_del(list);
+		spin_unlock_irqrestore(&pgd_cache_list_spin_lock, flags);
+		new_pgd = (pgd_t *)list;
+	}
+	else{
+		spin_unlock_irqrestore(&pgd_cache_list_spin_lock, flags);
+		new_pgd = __pgd_alloc();
+	}
+#else
 	new_pgd = __pgd_alloc();
+#endif
 	if (!new_pgd)
 		goto no_pgd;
 
 	memset(new_pgd, 0, USER_PTRS_PER_PGD * sizeof(pgd_t));
 
+	spin_lock_irqsave(&pgd_lock, flags);
 	/*
 	 * Copy over the kernel and IO PGD entries
 	 */
@@ -50,7 +88,9 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	memcpy(new_pgd + USER_PTRS_PER_PGD, init_pgd + USER_PTRS_PER_PGD,
 		       (PTRS_PER_PGD - USER_PTRS_PER_PGD) * sizeof(pgd_t));
 
+#if !defined(CONFIG_CPU_CACHE_V7) || !defined(CONFIG_SMP)
 	clean_dcache_area(new_pgd, PTRS_PER_PGD * sizeof(pgd_t));
+#endif
 
 #ifdef CONFIG_ARM_LPAE
 	/*
@@ -58,13 +98,20 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	 */
 	new_pud = pud_alloc(mm, new_pgd + pgd_index(MODULES_VADDR),
 			    MODULES_VADDR);
-	if (!new_pud)
+	if (!new_pud){
+		spin_unlock_irqrestore(&pgd_lock, flags);
 		goto no_pud;
+	}
 
 	new_pmd = pmd_alloc(mm, new_pud, 0);
-	if (!new_pmd)
+	if (!new_pmd){
+		spin_unlock_irqrestore(&pgd_lock, flags);
 		goto no_pmd;
+	}
 #endif
+
+	pgd_list_add(new_pgd);
+	spin_unlock_irqrestore(&pgd_lock, flags);
 
 	if (!vectors_high()) {
 		/*
@@ -100,6 +147,9 @@ no_pte:
 no_pmd:
 	pud_free(mm, new_pud);
 no_pud:
+	spin_lock_irqsave(&pgd_lock, flags);
+	pgd_list_del(new_pgd);
+	spin_unlock_irqrestore(&pgd_lock, flags);
 	__pgd_free(new_pgd);
 no_pgd:
 	return NULL;
@@ -111,9 +161,14 @@ void pgd_free(struct mm_struct *mm, pgd_t *pgd_base)
 	pud_t *pud;
 	pmd_t *pmd;
 	pgtable_t pte;
+	unsigned long flags;
 
 	if (!pgd_base)
 		return;
+
+	spin_lock_irqsave(&pgd_lock, flags);
+	pgd_list_del(pgd_base);
+	spin_unlock_irqrestore(&pgd_lock, flags);
 
 	pgd = pgd_base + pgd_index(0);
 	if (pgd_none_or_clear_bad(pgd))
@@ -155,6 +210,17 @@ no_pgd:
 		pgd_clear(pgd);
 		pud_free(mm, pud);
 	}
+#endif
+#ifdef CONFIG_MP_PAGE_GLOBAL_DIRECTORY_SPEEDUP
+	spin_lock_irqsave(&pgd_cache_list_spin_lock, flags);
+	if(atomic_add_unless(&pgd_cache_list_cnt, 1, PGD_CACHE_SIZE))
+	{
+	   struct list_head *list = (struct list_head *)pgd_base;
+           list_add(list, &pgd_cache_list);
+           spin_unlock_irqrestore(&pgd_cache_list_spin_lock, flags);
+	   return;
+	}
+	   spin_unlock_irqrestore(&pgd_cache_list_spin_lock, flags);
 #endif
 	__pgd_free(pgd_base);
 }

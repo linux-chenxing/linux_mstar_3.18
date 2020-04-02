@@ -13,6 +13,7 @@
  */
 #include <linux/bug.h>
 #include <linux/compiler.h>
+#include <linux/context_tracking.h>
 #include <linux/kexec.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -56,6 +57,11 @@
 #include <asm/types.h>
 #include <asm/stacktrace.h>
 #include <asm/uasm.h>
+
+#ifdef CONFIG_MP_DEBUG_TOOL_KDEBUG
+#include <linux/bootmem.h>
+#include <linux/vmalloc.h>
+#endif
 
 extern void check_wait(void);
 extern asmlinkage void rollback_handle_int(void);
@@ -138,11 +144,471 @@ static void show_backtrace(struct task_struct *task, const struct pt_regs *regs)
 	}
 	printk("Call Trace:\n");
 	do {
+#ifdef CONFIG_MP_DEBUG_TOOL_KDEBUG
+		unsigned long where = pc;
+		pc = unwind_stack(task, &sp, pc, &ra);
+		if (pc <= 0) /* Checking the Reutrning zero on error condition */
+			break;
+		printk("[<%p>] %pS", (void *) where, (void *) where);
+		printk(" from[<%p>] %pS\n", (void *) pc, (void *) pc);
+#else
 		print_ip_sym(pc);
 		pc = unwind_stack(task, &sp, pc, &ra);
+#endif
 	} while (pc);
 	printk("\n");
 }
+
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO))
+void dump_pid_maps(struct task_struct *task)
+{
+	struct task_struct *t;
+	struct mm_struct *mm;
+	struct vm_area_struct *vma;
+	struct file *file;
+	unsigned long long pgoff = 0;
+	unsigned long ino = 0;
+	dev_t dev = 0;
+	int tpid = 0;
+	char path_buf[256];
+
+	printk(KERN_ALERT "-----------------------------------------------------------\n");
+	printk(KERN_ALERT "* dump maps on pid (%d)\n", task->pid);
+	printk(KERN_ALERT "-----------------------------------------------------------\n");
+
+	if (!down_read_trylock(&task->mm->mmap_sem)) {
+		printk(KERN_ALERT "down_read_trylock() failed... do not dump pid maps info\n");
+		return;
+	}
+
+	vma = task->mm->mmap;
+	while (vma) {
+		file = vma->vm_file;
+		if (file) {
+			struct inode *inode = file->f_dentry->d_inode;
+			dev = inode->i_sb->s_dev;
+			ino = inode->i_ino;
+			pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+		} else {
+			dev = 0;
+			ino = 0;
+			pgoff = 0;
+		}
+
+		printk(KERN_ALERT "%08lx-%08lx %c%c%c%c %08llx %02x:%02x %-10lu ",
+				vma->vm_start,
+				vma->vm_end,
+				vma->vm_flags & VM_READ ? 'r' : '-',
+				vma->vm_flags & VM_WRITE ? 'w' : '-',
+				vma->vm_flags & VM_EXEC ? 'x' : '-',
+				vma->vm_flags & VM_MAYSHARE ? 's' : 'p',
+				pgoff,
+				MAJOR(dev), MINOR(dev), ino);
+
+		if (file) {
+			char* p = d_path(&(file->f_path),path_buf, 256);
+			if (!IS_ERR(p)) printk("%s", p);
+		} else {
+			const char *name = arch_vma_name(vma);
+			mm = vma->vm_mm;
+			tpid = 0;
+
+			if (!name) {
+				if (mm) {
+					if (vma->vm_start <= mm->brk &&
+					    vma->vm_end >= mm->start_brk) {
+						name = "[heap]";
+					} else if (vma->vm_start <= mm->start_stack &&
+						   vma->vm_end >= mm->start_stack) {
+						name = "[stack]";
+					} else {
+						t = task;
+						do{
+							if (vma->vm_start <= t->user_ssp &&
+							    vma->vm_end >= t->user_ssp){
+								tpid = t->pid;
+								name = t->comm;
+								break;
+							}
+						}while_each_thread(task, t);
+					}
+				} else {
+					name = "[vdso]";
+				}
+			}
+			if (name) {
+				if (tpid)
+					printk("[tstack: %s: %d]", name, tpid);
+				else
+					printk("%s", name);
+			}
+		}
+		printk( "\n");
+
+		vma = vma->vm_next;
+	}
+	up_read(&task->mm->mmap_sem);
+	printk(KERN_ALERT "-----------------------------------------------------------\n\n");
+}
+/*
+static void dump_mem_kernel(const char *str, unsigned long bottom, unsigned long top)
+{
+	unsigned long p = bottom & ~31;
+	int i;
+
+	printk("%s(0x%08lx to 0x%08lx)\n", str, bottom, top);
+
+	for (p = bottom & ~31; p <= top;) {
+		printk("%04lx: ", p & 0xffff);
+
+		for (i = 0; i < 8; i++, p += 4) {
+
+			if (p < bottom || p > top)
+				printk("         ");
+			else
+				printk("%08lx ", *(unsigned long*)p);
+		}
+		printk ("\n");
+	}
+}
+*/
+static void dump_mem(const char *str, unsigned long bottom, unsigned long top)
+{
+	unsigned long p = bottom & ~31;
+	mm_segment_t fs;
+	int i;
+
+	/*
+	 * We need to switch to kernel mode so that we can use __get_user
+	 * to safely read from kernel space.  Note that we now dump the
+	 * code first, just in case the backtrace kills us.
+	 */
+	fs = get_fs();
+	set_fs(KERNEL_DS);
+
+	printk(KERN_ALERT "%s(0x%08lx to 0x%08lx)\n", str, bottom, top);
+
+	for (p = bottom & ~31; p <= top;) {
+		printk(KERN_ALERT "%04lx: ", p & 0xffff);
+
+		for (i = 0; i < 8; i++, p += 4) {
+			unsigned int val;
+
+			if (p < bottom || p > top)
+				printk("         ");
+			else {
+				__get_user(val, (unsigned long *)p);
+				printk("%08x ", val);
+			}
+		}
+		printk ("\n");
+	}
+
+	set_fs(fs);
+}
+
+/*
+ * VDLP 4.2.x Chelsea Kernel Patch
+ * Show user stack
+ *  : assumes that user program uses frame pointer
+ *  : TODO : consider context safety
+ */
+void show_user_stack(struct task_struct *task, struct pt_regs * regs)
+{
+	struct vm_area_struct *vma;
+
+	vma = find_vma(task->mm, task->user_ssp);
+	if (vma) {
+		printk(KERN_ALERT
+				"task stack info : pid(%d) stack area (0x%08lx ~ 0x%08lx)\n",
+				(int)task->pid, vma->vm_start, vma->vm_end );
+	}
+	else
+	{
+		printk(KERN_ALERT "pid(%d) : printing user stack failed.\n", (int)task->pid);
+		return;
+	}
+
+	if( regs->regs[29] < vma->vm_start )
+	{
+		printk(KERN_ALERT  "pid(%d) : seems stack overflow.\n"
+				"  sp(%lx), stack vma (0x%08lx ~ 0x%08lx)\n"
+				, (int)task->pid, regs->regs[29], vma->vm_start, vma->vm_end );
+		return;
+	}
+
+	printk(KERN_ALERT "-----------------------------------------------------------\n");
+	printk(KERN_ALERT "* dump user stack\n");
+	printk(KERN_ALERT "-----------------------------------------------------------\n");
+	dump_mem( "dump user stack", regs->regs[29], task->user_ssp);
+	printk(KERN_ALERT "-----------------------------------------------------------\n\n");
+}
+
+#ifdef CONFIG_SHOW_EPC_RA_INFO
+void show_epc_ra(struct task_struct* task, struct pt_regs * regs)
+{
+       struct vm_area_struct *epc_vma = NULL;
+       struct vm_area_struct *ra_vma = NULL;
+       unsigned long addr_epc, addr_ra;
+
+       printk("\n");
+       printk("--------------------------------------------------------------------------------------\n");
+       printk("EPC, RA MEMINFO\n");
+       printk("--------------------------------------------------------------------------------------\n");
+
+       addr_epc = regs->cp0_epc - 0x400;   // for 1024 byte
+       addr_ra = regs->regs[31] - 0x800;   // for 2048 byte
+
+       // find vma including epc, ra
+       // calculate a print range according to vma
+       epc_vma = find_vma( task->mm, regs->cp0_epc);
+       if ( epc_vma == NULL )
+       {
+               printk("No VMA for epc\n");
+               return ;
+       }
+       if( addr_epc < epc_vma->vm_start )
+               addr_epc = epc_vma->vm_start;
+
+       ra_vma = find_vma( task->mm, regs->regs[31]);
+       if ( ra_vma == NULL )
+       {
+               printk("No VMA for ra\n");
+               return ;
+       }
+       if( addr_ra < ra_vma->vm_start )
+               addr_ra = ra_vma->vm_start;
+
+       // find a duplicated address range case1
+       if( (addr_ra<=regs->cp0_epc) && (regs->cp0_epc<regs->regs[31]) )
+       {
+               addr_ra = regs->cp0_epc + 0x4;
+       }
+       // find a duplicated address range case2
+       else if( (addr_epc<=regs->regs[31]) && (regs->regs[31]<regs->cp0_epc) )
+       {
+               addr_epc = regs->regs[31] + 0x4;
+       }
+
+
+       // dump
+       printk("epc:%lx, ra:%lx\n", regs->cp0_epc, regs->regs[31]);
+       printk("--------------------------------------------------------------------------------------\n");
+       dump_mem("EPC meminfo ", addr_epc, regs->cp0_epc );
+       printk("--------------------------------------------------------------------------------------\n");
+       dump_mem("RA meminfo ", addr_ra, regs->regs[31]);
+       printk("--------------------------------------------------------------------------------------\n");
+
+       printk("\n");
+}
+
+static void show_epc_ra_kernel(const struct pt_regs * regs)
+{
+       unsigned long addr_epc, addr_ra;
+	int valid_pc = 0, valid_lr = 0;
+	int valid_pc_mod, valid_lr_mod;
+	struct module *mod;
+
+       addr_epc = regs->cp0_epc - 0x400;   // for 1024 byte
+       addr_ra = regs->regs[31] - 0x800;   // for 2048 byte
+
+	valid_pc_mod=((regs->cp0_epc >= VMALLOC_START && regs->cp0_epc < VMALLOC_END)
+#ifdef MODULE_START
+		      || (regs->cp0_epc >= MODULE_START && regs->cp0_epc < MODULE_START)
+#endif
+		      );
+	valid_lr_mod=((regs->regs[31] >= VMALLOC_START && regs->regs[31] < VMALLOC_END)
+#ifdef MODULE_START
+		      || (regs->regs[31] >= MODULE_START && regs->regs[31] < MODULE_START)
+#endif
+		      );
+
+	valid_pc = (TASK_SIZE <= regs->cp0_epc && regs->cp0_epc < (unsigned long)high_memory) || valid_pc_mod;
+	valid_lr = (TASK_SIZE <= regs->regs[31] && regs->regs[31] < (unsigned long)high_memory) || valid_lr_mod;
+
+	/* Adjust the addr_epc according to the correct module virtual memory range. */
+	if(valid_pc) {
+		if (addr_epc < TASK_SIZE)
+			addr_epc = TASK_SIZE;
+		else if (valid_pc_mod) {
+			mod = __module_address(regs->cp0_epc);
+
+			if (!within_module_init(addr_epc, mod) &&
+			    !within_module_core(addr_epc, mod))
+				addr_epc = regs->cp0_epc & PAGE_MASK;
+		}
+	}
+
+	/* Adjust the addr_ra according to the correct module virtual memory range. */
+	if(valid_lr) {
+		if (addr_ra < TASK_SIZE)
+			addr_ra = TASK_SIZE;
+		else if (valid_lr_mod) {
+			mod = __module_address(regs->regs[31]);
+
+			if (!within_module_init(addr_ra, mod) &&
+			    !within_module_core(addr_ra, mod))
+				addr_ra = regs->regs[31] & PAGE_MASK;
+		}
+	}
+
+       if( valid_pc && valid_lr )
+       {
+               // find a duplicated address rage case1
+               if( (addr_ra<=regs->cp0_epc) && (regs->cp0_epc<regs->regs[31]) )
+               {
+                       addr_ra = regs->cp0_epc + 0x4;
+               }
+               // find a duplicated address rage case2
+               else if( (addr_epc<=regs->regs[31]) && (regs->regs[31]<regs->cp0_epc) )
+               {
+                       addr_epc = regs->regs[31] + 0x4;
+               }
+       }
+
+       printk("--------------------------------------------------------------------------------------\n");
+       printk("[VDLP] DISPLAY EPC, RA in KERNEL Level\n");
+       printk("epc:%lx, ra:%lx\n", regs->cp0_epc, regs->regs[31]);
+       printk("--------------------------------------------------------------------------------------\n");
+       if( valid_pc ){
+               dump_mem_kernel("EPC meminfo in kernel", addr_epc, regs->cp0_epc );
+	}
+       else{
+               printk("[VDLP] Invalid pc addr\n");
+	}
+       printk("--------------------------------------------------------------------------------------\n");
+       if( valid_lr ){
+               dump_mem_kernel("RA meminfo in kernel", addr_ra, regs->regs[31]);
+	}
+       else{
+               printk("[VDLP] Invalid lr addr\n");
+	}
+       printk("--------------------------------------------------------------------------------------\n");
+
+       printk("\n");
+}
+
+#ifdef CONFIG_DUMP_RANGE_BASED_ON_REGISTER
+int is_valid_kernel_addr(unsigned long register_value)
+{
+	if(register_value < PAGE_OFFSET || !virt_addr_valid((void*)register_value)){ //includes checking NULL and user address
+		return 0;
+	}
+	else{
+		return 1;
+	}
+}
+
+void show_register_memory_kernel(struct pt_regs * regs)
+{
+	unsigned long start_addr_for_printing = 0, end_addr_for_printing = 0;
+	int register_num;
+
+	printk("--------------------------------------------------------------------------------------\n");
+	printk("REGISTER MEMORY INFO\n");
+	printk("--------------------------------------------------------------------------------------\n");
+
+	for(register_num = 0; register_num<sizeof(regs->regs)/sizeof(regs->regs[0]); register_num++) {
+
+		printk("\n\n* REGISTER : r%d\n",register_num);
+
+		start_addr_for_printing = (regs->regs[register_num] & PAGE_MASK) - 0x1000;               //-4kbyte
+		if(regs->regs[register_num] >= 0xfffff000){    // if virtual address is 0xffffffff, skip dump address to prevent overflow
+                        end_addr_for_printing = 0xffffffff;
+               }else{
+			end_addr_for_printing = (regs->regs[register_num] & PAGE_MASK) + PAGE_SIZE + 0xfff;}     //+about 8kbyte
+		if(!is_valid_kernel_addr(regs->regs[register_num])) {
+
+			printk("# Register value 0x%lx is wrong address.\n", regs->regs[register_num]);
+			printk("# We can't do anything.\n");
+			printk("# So, we search next register.\n");
+
+			continue;
+		}
+		if(!is_valid_kernel_addr(start_addr_for_printing)) {
+
+			printk("# 'start_addr_for_printing' is wrong address.\n");
+			printk("# So, we use just 'regs->regs[register_num] & PAGE_MASK)'\n");
+
+			start_addr_for_printing = (regs->regs[register_num] & PAGE_MASK);
+		}
+		if(!is_valid_kernel_addr(end_addr_for_printing)) {
+
+			printk("# 'end_addr_for_printing' is wrong address.\n");
+			printk("# So, we use 'PAGE_ALIGN(regs->regs[register_num]) + PAGE_SIZE-1'\n");
+
+			end_addr_for_printing = (regs->regs[register_num] & PAGE_MASK) + PAGE_SIZE-1;
+		}
+
+		// dump
+		printk("# r%d register :0x%lx, start_addr : 0x%lx, end_addr : 0x%lx\n", register_num, regs->regs[register_num], start_addr_for_printing, end_addr_for_printing);
+		printk("--------------------------------------------------------------------------------------\n");
+		dump_mem_kernel("meminfo ", start_addr_for_printing, end_addr_for_printing );
+		printk("--------------------------------------------------------------------------------------\n");
+		printk("\n");
+	}
+}
+#endif
+#endif
+
+#ifndef CONFIG_SEPARATE_PRINTK_FROM_USER
+#define sep_printk_start
+#define sep_printk_end
+#else
+extern void _sep_printk_start(void);
+extern void _sep_printk_end(void);
+#define sep_printk_start  _sep_printk_start
+#define sep_printk_end _sep_printk_end
+#endif
+
+#ifdef CONFIG_RUN_TIMER_DEBUG
+extern void show_timer_list(void);
+#endif
+
+void show_info_kdebug(struct task_struct *task, struct pt_regs * regs)
+{
+	static atomic_t prn_once = ATOMIC_INIT(0);
+
+	if(atomic_cmpxchg(&prn_once, 0, 1))
+	{
+		return;
+	}
+
+#ifdef CONFIG_SEPARATE_PRINTK_FROM_USER
+	sep_printk_start();
+#endif
+
+	console_verbose();      /* BSP patch : enable console while show_info_kdebug */
+
+	preempt_disable();
+	/*if(addr)
+	{
+	        show_pte(task->mm, addr);
+	}*/
+#ifdef CONFIG_VDLP_VERSION_INFO
+        printk(KERN_ALERT"================================================================================\n");
+        printk(KERN_ALERT" KERNEL Version : %s\n", DTV_KERNEL_VERSION);
+        printk(KERN_ALERT"================================================================================\n");
+#endif
+
+#ifdef CONFIG_SHOW_EPC_RA_INFO
+        show_epc_ra(task, regs);
+#endif
+#ifdef CONFIG_RUN_TIMER_DEBUG
+		show_timer_list();
+#endif
+
+	show_regs(regs);
+	dump_pid_maps(task);
+	show_user_stack(task, regs);
+	preempt_enable();
+
+#ifdef CONFIG_SEPARATE_PRINTK_FROM_USER
+	sep_printk_end();
+#endif
+}
+EXPORT_SYMBOL(show_info_kdebug);
+#endif /* CONFIG_SHOW_FAULT_TRACE_INFO */
 
 /*
  * This routine abuses get_user()/put_user() to reference pointers
@@ -423,7 +889,9 @@ asmlinkage void do_be(struct pt_regs *regs)
 	const struct exception_table_entry *fixup = NULL;
 	int data = regs->cp0_cause & 4;
 	int action = MIPS_BE_FATAL;
+	enum ctx_state prev_state;
 
+	prev_state = exception_enter();
 	/* XXX For now.	 Fixme, this searches the wrong table ...  */
 	if (data && !user_mode(regs))
 		fixup = search_dbe_tables(exception_epc(regs));
@@ -436,11 +904,11 @@ asmlinkage void do_be(struct pt_regs *regs)
 
 	switch (action) {
 	case MIPS_BE_DISCARD:
-		return;
+		goto out;
 	case MIPS_BE_FIXUP:
 		if (fixup) {
 			regs->cp0_epc = fixup->nextinsn;
-			return;
+			goto out;
 		}
 		break;
 	default:
@@ -455,10 +923,13 @@ asmlinkage void do_be(struct pt_regs *regs)
 	       field, regs->cp0_epc, field, regs->regs[31]);
 	if (notify_die(DIE_OOPS, "bus error", regs, 0, regs_to_trapnr(regs), SIGBUS)
 	    == NOTIFY_STOP)
-		return;
+		goto out;
 
 	die_if_kernel("Oops", regs);
 	force_sig(SIGBUS, current);
+
+out:
+	exception_exit(prev_state);
 }
 
 /*
@@ -673,18 +1144,33 @@ static int simulate_sync(struct pt_regs *regs, unsigned int opcode)
 
 asmlinkage void do_ov(struct pt_regs *regs)
 {
+	enum ctx_state prev_state;
 	siginfo_t info;
 
+	prev_state = exception_enter();
 	die_if_kernel("Integer overflow", regs);
 
 	info.si_code = FPE_INTOVF;
 	info.si_signo = SIGFPE;
 	info.si_errno = 0;
 	info.si_addr = (void __user *) regs->cp0_epc;
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO))	
+	{
+		printk(KERN_ALERT "%s() : sending SIGFPE to %s, PID:%d\n", __func__,  current->comm, current->pid);
+		show_info_kdebug(current, regs);
+	}
+#endif
+
 	force_sig_info(SIGFPE, &info, current);
+	exception_exit(prev_state);
 }
 
-int process_fpemu_return(int sig, void __user *fault_addr)
+#ifdef CONFIG_MP_PLATFORM_MIPS
+static int process_fpemu_return(int sig, void __user *fault_addr, struct pt_regs *regs)
+#else
+static int process_fpemu_return(int sig, void __user *fault_addr)
+#endif // CONFIG_MP_PLATFORM_MIPS
+
 {
 	if (sig == SIGSEGV || sig == SIGBUS) {
 		struct siginfo si = {0};
@@ -698,9 +1184,17 @@ int process_fpemu_return(int sig, void __user *fault_addr)
 		} else {
 			si.si_code = BUS_ADRERR;
 		}
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO))
+		printk(KERN_ALERT "%s() : sending SIG:%d to %s, PID:%d\n", __func__, sig, current->comm, current->pid);
+		show_info_kdebug(current, regs);
+#endif
 		force_sig_info(sig, &si, current);
 		return 1;
 	} else if (sig) {
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO))
+		printk(KERN_ALERT "%s() : sending SIG:%d to %s, PID:%d\n", __func__, sig, current->comm, current->pid);
+		show_info_kdebug(current, regs);
+#endif
 		force_sig(sig, current);
 		return 1;
 	} else {
@@ -713,11 +1207,13 @@ int process_fpemu_return(int sig, void __user *fault_addr)
  */
 asmlinkage void do_fpe(struct pt_regs *regs, unsigned long fcr31)
 {
+	enum ctx_state prev_state;
 	siginfo_t info = {0};
 
+	prev_state = exception_enter();
 	if (notify_die(DIE_FP, "FP exception", regs, 0, regs_to_trapnr(regs), SIGFPE)
 	    == NOTIFY_STOP)
-		return;
+		goto out;
 	die_if_kernel("FP exception in kernel code", regs);
 
 	if (fcr31 & FPU_CSR_UNI_X) {
@@ -751,9 +1247,13 @@ asmlinkage void do_fpe(struct pt_regs *regs, unsigned long fcr31)
 		own_fpu(1);	/* Using the FPU again.	 */
 
 		/* If something went wrong, signal */
+#ifdef CONFIG_MP_PLATFORM_MIPS
+		process_fpemu_return(sig, fault_addr, regs);
+#else
 		process_fpemu_return(sig, fault_addr);
+#endif // CONFIG_MP_PLATFORM_MIPS
 
-		return;
+		goto out;
 	} else if (fcr31 & FPU_CSR_INV_X)
 		info.si_code = FPE_FLTINV;
 	else if (fcr31 & FPU_CSR_DIV_X)
@@ -769,7 +1269,16 @@ asmlinkage void do_fpe(struct pt_regs *regs, unsigned long fcr31)
 	info.si_signo = SIGFPE;
 	info.si_errno = 0;
 	info.si_addr = (void __user *) regs->cp0_epc;
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO))
+	{
+		printk(KERN_ALERT "%s() : sending SIGFPE to %s, PID:%d\n", __func__, current->comm, current->pid);
+		show_info_kdebug(current, regs);
+	}
+#endif
 	force_sig_info(SIGFPE, &info, current);
+
+out:
+	exception_exit(prev_state);
 }
 
 static void do_trap_or_bp(struct pt_regs *regs, unsigned int code,
@@ -804,6 +1313,12 @@ static void do_trap_or_bp(struct pt_regs *regs, unsigned int code,
 		info.si_signo = SIGFPE;
 		info.si_errno = 0;
 		info.si_addr = (void __user *) regs->cp0_epc;
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO))
+		{
+			printk(KERN_ALERT "%s() : sending SIGFPE to %s, PID:%d\n", __func__, current->comm, current->pid);
+			show_info_kdebug(current, regs);
+		}
+#endif
 		force_sig_info(SIGFPE, &info, current);
 		break;
 	case BRK_BUG:
@@ -835,9 +1350,11 @@ static void do_trap_or_bp(struct pt_regs *regs, unsigned int code,
 asmlinkage void do_bp(struct pt_regs *regs)
 {
 	unsigned int opcode, bcode;
+	enum ctx_state prev_state;
 	unsigned long epc;
 	u16 instr[2];
 
+	prev_state = exception_enter();
 	if (get_isa16_mode(regs->cp0_epc)) {
 		/* Calculate EPC. */
 		epc = exception_epc(regs);
@@ -852,7 +1369,7 @@ asmlinkage void do_bp(struct pt_regs *regs)
 				goto out_sigsegv;
 		    bcode = (instr[0] >> 6) & 0x3f;
 		    do_trap_or_bp(regs, bcode, "Break");
-		    return;
+		    goto out;
 		}
 	} else {
 		if (__get_user(opcode, (unsigned int __user *) exception_epc(regs)))
@@ -876,12 +1393,12 @@ asmlinkage void do_bp(struct pt_regs *regs)
 	switch (bcode) {
 	case BRK_KPROBE_BP:
 		if (notify_die(DIE_BREAK, "debug", regs, bcode, regs_to_trapnr(regs), SIGTRAP) == NOTIFY_STOP)
-			return;
+			goto out;
 		else
 			break;
 	case BRK_KPROBE_SSTEPBP:
 		if (notify_die(DIE_SSTEPBP, "single_step", regs, bcode, regs_to_trapnr(regs), SIGTRAP) == NOTIFY_STOP)
-			return;
+			goto out;
 		else
 			break;
 	default:
@@ -889,18 +1406,24 @@ asmlinkage void do_bp(struct pt_regs *regs)
 	}
 
 	do_trap_or_bp(regs, bcode, "Break");
+
+out:
+	exception_exit(prev_state);
 	return;
 
 out_sigsegv:
 	force_sig(SIGSEGV, current);
+	goto out;
 }
 
 asmlinkage void do_tr(struct pt_regs *regs)
 {
 	u32 opcode, tcode = 0;
+	enum ctx_state prev_state;
 	u16 instr[2];
 	unsigned long epc = msk_isa16_mode(exception_epc(regs));
 
+	prev_state = exception_enter();
 	if (get_isa16_mode(regs->cp0_epc)) {
 		if (__get_user(instr[0], (u16 __user *)(epc + 0)) ||
 		    __get_user(instr[1], (u16 __user *)(epc + 2)))
@@ -918,10 +1441,14 @@ asmlinkage void do_tr(struct pt_regs *regs)
 	}
 
 	do_trap_or_bp(regs, tcode, "Trap");
+
+out:
+	exception_exit(prev_state);
 	return;
 
 out_sigsegv:
 	force_sig(SIGSEGV, current);
+	goto out;
 }
 
 asmlinkage void do_ri(struct pt_regs *regs)
@@ -929,17 +1456,19 @@ asmlinkage void do_ri(struct pt_regs *regs)
 	unsigned int __user *epc = (unsigned int __user *)exception_epc(regs);
 	unsigned long old_epc = regs->cp0_epc;
 	unsigned long old31 = regs->regs[31];
+	enum ctx_state prev_state;
 	unsigned int opcode = 0;
 	int status = -1;
 
+	prev_state = exception_enter();
 	if (notify_die(DIE_RI, "RI Fault", regs, 0, regs_to_trapnr(regs), SIGILL)
 	    == NOTIFY_STOP)
-		return;
+		goto out;
 
 	die_if_kernel("Reserved instruction in kernel code", regs);
 
 	if (unlikely(compute_return_epc(regs) < 0))
-		return;
+		goto out;
 
 	if (get_isa16_mode(regs->cp0_epc)) {
 		unsigned short mmop[2] = { 0 };
@@ -972,8 +1501,23 @@ asmlinkage void do_ri(struct pt_regs *regs)
 	if (unlikely(status > 0)) {
 		regs->cp0_epc = old_epc;		/* Undo skip-over.  */
 		regs->regs[31] = old31;
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO))
+		{
+			if(status == SIGILL) {
+				printk(KERN_ALERT "%s() : sending SIGILL to %s, PID:%d\n", __func__, current->comm, current->pid);
+			} else {
+				printk(KERN_ALERT "%s() : sending SIGNAL(%d) to %s, PID:%d\n"
+						, __func__, status
+						, current->comm, current->pid);
+			}
+			show_info_kdebug(current, regs);
+		}
+#endif
 		force_sig(status, current);
 	}
+
+out:
+	exception_exit(prev_state);
 }
 
 /*
@@ -1040,6 +1584,7 @@ static int default_cu2_call(struct notifier_block *nfb, unsigned long action,
 
 asmlinkage void do_cpu(struct pt_regs *regs)
 {
+	enum ctx_state prev_state;
 	unsigned int __user *epc;
 	unsigned long old_epc, old31;
 	unsigned int opcode;
@@ -1047,6 +1592,7 @@ asmlinkage void do_cpu(struct pt_regs *regs)
 	int status;
 	unsigned long __maybe_unused flags;
 
+	prev_state = exception_enter();
 	die_if_kernel("do_cpu invoked from kernel context!", regs);
 
 	cpid = (regs->cp0_cause >> CAUSEB_CE) & 3;
@@ -1060,7 +1606,7 @@ asmlinkage void do_cpu(struct pt_regs *regs)
 		status = -1;
 
 		if (unlikely(compute_return_epc(regs) < 0))
-			return;
+			goto out;
 
 		if (get_isa16_mode(regs->cp0_epc)) {
 			unsigned short mmop[2] = { 0 };
@@ -1093,7 +1639,7 @@ asmlinkage void do_cpu(struct pt_regs *regs)
 			force_sig(status, current);
 		}
 
-		return;
+		goto out;
 
 	case 3:
 		/*
@@ -1127,23 +1673,47 @@ asmlinkage void do_cpu(struct pt_regs *regs)
 			sig = fpu_emulator_cop1Handler(regs,
 						       &current->thread.fpu,
 						       0, &fault_addr);
+
+#ifdef CONFIG_MP_PLATFORM_MIPS
+			if (!process_fpemu_return(sig, fault_addr, regs))
+#else
 			if (!process_fpemu_return(sig, fault_addr))
+#endif  // CONFIG_MP_PLATFORM_MIPS
 				mt_ase_fp_affinity();
 		}
 
-		return;
+		goto out;
 
 	case 2:
 		raw_notifier_call_chain(&cu2_chain, CU2_EXCEPTION, regs);
-		return;
+		goto out;
 	}
 
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO))
+	{
+		printk(KERN_ALERT "%s() : sending SIGILL to %s, PID:%d\n", __func__, current->comm, current->pid);
+		show_info_kdebug(current, regs);
+	}
+#endif
 	force_sig(SIGILL, current);
+
+out:
+	exception_exit(prev_state);
 }
 
 asmlinkage void do_mdmx(struct pt_regs *regs)
 {
+
+	enum ctx_state prev_state;
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO))
+	{
+		printk(KERN_ALERT "%s() : sending SIGILL to %s, PID:%d\n", __func__, current->comm, current->pid);
+		show_info_kdebug(current, regs);
+	}
+#endif
+	prev_state = exception_enter();
 	force_sig(SIGILL, current);
+	exception_exit(prev_state);
 }
 
 /*
@@ -1151,8 +1721,10 @@ asmlinkage void do_mdmx(struct pt_regs *regs)
  */
 asmlinkage void do_watch(struct pt_regs *regs)
 {
+	enum ctx_state prev_state;
 	u32 cause;
 
+	prev_state = exception_enter();
 	/*
 	 * Clear WP (bit 22) bit of cause register so we don't loop
 	 * forever.
@@ -1174,13 +1746,16 @@ asmlinkage void do_watch(struct pt_regs *regs)
 		mips_clear_watch_registers();
 		local_irq_enable();
 	}
+	exception_exit(prev_state);
 }
 
 asmlinkage void do_mcheck(struct pt_regs *regs)
 {
 	const int field = 2 * sizeof(unsigned long);
 	int multi_match = regs->cp0_status & ST0_TS;
+	enum ctx_state prev_state;
 
+	prev_state = exception_enter();
 	show_regs(regs);
 
 	if (multi_match) {
@@ -1202,6 +1777,7 @@ asmlinkage void do_mcheck(struct pt_regs *regs)
 	panic("Caught Machine Check exception - %scaused by multiple "
 	      "matching entries in the TLB.",
 	      (multi_match) ? "" : "not ");
+	exception_exit(prev_state);
 }
 
 asmlinkage void do_mt(struct pt_regs *regs)
@@ -1236,6 +1812,13 @@ asmlinkage void do_mt(struct pt_regs *regs)
 	}
 	die_if_kernel("MIPS MT Thread exception in kernel", regs);
 
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO))
+	{
+		printk(KERN_ALERT "%s() : sending SIGILL to %s, PID:%d\n", __func__, current->comm, current->pid);
+		show_info_kdebug(current, regs);
+	}
+#endif
+
 	force_sig(SIGILL, current);
 }
 
@@ -1244,6 +1827,13 @@ asmlinkage void do_dsp(struct pt_regs *regs)
 {
 	if (cpu_has_dsp)
 		panic("Unexpected DSP exception");
+
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO))
+	{
+		printk(KERN_ALERT "%s() : sending SIGILL to %s, PID:%d\n", __func__, current->comm, current->pid);
+		show_info_kdebug(current, regs);
+	}
+#endif
 
 	force_sig(SIGILL, current);
 }
@@ -1709,6 +2299,10 @@ void __cpuinit per_cpu_trap_init(bool is_boot_cpu)
 		write_c0_status(sr);
 		/* Setting vector spacing enables EI/VI mode  */
 		change_c0_intctl(0x3e0, VECTORSPACING);
+#ifdef CONFIG_MP_PLATFORM_MIPS_EBASE
+	} else if (cpu_has_mips_r2) {
+                write_c0_ebase(ebase);
+#endif /* CONFIG_MP_PLATFORM_MIPS_EBASE */
 	}
 	if (cpu_has_divec) {
 		if (cpu_has_mipsmt) {
@@ -1822,7 +2416,11 @@ void __init trap_init(void)
 		return; /* Already done */
 #endif
 
+#ifdef CONFIG_MP_PLATFORM_MIPS_EBASE
+	if (cpu_has_mips_r2 || cpu_has_veic || cpu_has_vint) {
+#else
 	if (cpu_has_veic || cpu_has_vint) {
+#endif /* CONFIG_MP_PLATFORM_MIPS_EBASE */
 		unsigned long size = 0x200 + VECTORSPACING*64;
 		ebase = (unsigned long)
 			__alloc_bootmem(size, 1 << fls(size), 0);
@@ -1854,6 +2452,9 @@ void __init trap_init(void)
 	for (i = 0; i <= 31; i++)
 		set_except_vector(i, handle_reserved);
 
+	   // extern void dump_tlb_all(void);
+
+
 	/*
 	 * Copy the EJTAG debug exception vector handler code to it's final
 	 * destination.
@@ -1883,6 +2484,7 @@ void __init trap_init(void)
 	 * it different ways.
 	 */
 	parity_protection_init();
+
 
 	/*
 	 * The Data Bus Errors / Instruction Bus Errors are signaled
@@ -1961,4 +2563,6 @@ void __init trap_init(void)
 	sort_extable(__start___dbe_table, __stop___dbe_table);
 
 	cu2_notifier(default_cu2_call, 0x80000000);	/* Run last  */
+
+
 }

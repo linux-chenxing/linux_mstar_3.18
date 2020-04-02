@@ -187,6 +187,14 @@ config GENERIC_CPU_DEVICES
 	bool
 	default n
 
+config HAVE_CPU_AUTOPROBE
+	def_bool ARCH_HAS_CPU_AUTOPROBE
+
+config GENERIC_CPU_AUTOPROBE
+	bool
+	depends on !ARCH_HAS_CPU_AUTOPROBE
+	select HAVE_CPU_AUTOPROBE
+
 config SOC_BUS
 	bool
 
@@ -207,6 +215,7 @@ config CMA
 	depends on HAVE_DMA_CONTIGUOUS && HAVE_MEMBLOCK
 	select MIGRATION
 	select MEMORY_ISOLATION
+	select ARM_HAS_SG_CHAIN
 	help
 	  This enables the Contiguous Memory Allocator which allows drivers
 	  to allocate big physically-contiguous blocks of memory for use with
@@ -282,14 +291,18 @@ config CMA_ALIGNMENT
 
 config CMA_AREAS
 	int "Maximum count of the CMA device-private areas"
-	default 7
+	default 16
 	help
 	  CMA allows to create CMA areas for particular devices. This parameter
 	  sets the maximum number of such device private CMA areas in the
 	  system.
 
-	  If unsure, leave the default value "7".
+	  If unsure, leave the default value "16".
 
 endif
+
+config PLATFORM_ENABLE_IOMMU
+        bool "Make platform devices iommuable"
+	depends on IOMMU_API
 
 endmenu

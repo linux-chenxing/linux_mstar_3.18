@@ -63,6 +63,9 @@
 #define __deprecated			__attribute__((deprecated))
 #define __packed			__attribute__((packed))
 #define __weak				__attribute__((weak))
+#ifdef CONFIG_Kasan_Switch_On
+#define __alias(symbol)			__attribute__((alias(#symbol)))
+#endif
 
 /*
  * it doesn't make sense on ARM (currently the only user of __naked) to trace

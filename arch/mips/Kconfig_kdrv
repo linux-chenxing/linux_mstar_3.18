@@ -1,0 +1,624 @@
+# drivers/MStar/Kconfig
+
+menu "MStar Platform Configuration"
+
+#===================================================
+# MStar Chip Selection
+#===================================================
+choice
+	prompt "MStar Chip Selection"
+	default None
+
+config MSTAR_NONE
+	bool "None"
+
+config MSTAR_CLIPPERS
+        bool "CLIPPERS"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_MUJI
+        bool "MUJI"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the Muji 64 bit mode kernel.
+
+config MSTAR_KANO
+        bool "KANO"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        select MIGHT_HAVE_PCI
+        select PCI
+        help
+          This enables support for the Kano 64 bit mode kernel.
+
+config MSTAR_CURRY
+        bool "CURRY"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        select MIGHT_HAVE_PCI
+        select PCI
+        help
+          This enables support for the Curry 64 bit mode kernel.
+
+config MSTAR_C2P
+        bool "C2P"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        select MIGHT_HAVE_PCI
+        select PCI
+        help
+          This enables support for the C2P 64 bit mode kernel.
+
+config MSTAR_K6
+        bool "K6"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the K6 64 bit mode kernel.
+
+config MSTAR_MONET
+        bool "MONET"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the Monet 64 bit mode kernel.
+
+config MSTAR_MOONEY
+        bool "MOONEY"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the Mooney 64 bit mode kernel.
+
+config MSTAR_MANHATTAN
+        bool "MANHATTAN"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the MANHATTAN 64 bit mode kernel.
+
+
+config MSTAR_MASERATI
+        bool "MASERATI"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the MASERATI 64 bit mode kernel.
+
+
+
+config MSTAR_MONACO
+        bool "MONACO"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_MALDIVES
+        bool "MALDIVES"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_MACAN
+        bool "MACAN"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+        This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_MUSTANG
+        bool "MUSTANG"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_MIAMI
+        bool "MIAMI"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_MADISON
+        bool "MADISON"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_MESSI
+        bool "MESSI"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_K6Lite
+        bool "K6Lite"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_K7U_CA7
+        bool "K7U_CA7"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_K7U_CA53
+        bool "K7U_CA53"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        select MIGHT_HAVE_PCI
+        select PCI
+        help
+          This enables support for the K7U CA53 64 bit mode kernel
+
+config MSTAR_EINSTEIN
+        bool "EINSTEIN"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_NAPOLI
+        bool "NAPOLI"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_KAISER
+        bool "KAISER"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+        select ARM_TIMER_SP804
+        select COMMON_CLKDEV
+        select HAVE_CLK
+        select ICST
+        select PLAT_VERSATILE
+        help
+          This enables support for the ARM Ltd Versatile Express boards.
+
+config MSTAR_KRIS
+        bool "Kris"
+        select BOOT_ELF32
+        select ARCH_SPARSEMEM_ENABLE
+        select DMA_NONCOHERENT
+        select MIPS_BOARDS_GEN
+        select CEVT_R4K
+        select CSRC_R4K
+        select IRQ_CPU
+        select SYS_HAS_CPU_MIPS32_R2
+        select SYS_HAS_EARLY_PRINTK
+        select SYS_SUPPORTS_32BIT_KERNEL
+        select SYS_SUPPORTS_BIG_ENDIAN
+        select SYS_SUPPORTS_LITTLE_ENDIAN
+        select SYS_SUPPORTS_MULTITHREADING
+        select HIGHMEM
+        select ZONE_DMA
+        select MS_USB_MIU1_PATCH
+        select SYS_SUPPORTS_HIGHMEM
+        select CPU_HAS_SYNC
+
+config MSTAR_KIWI
+        bool "KIWI"
+        select BOOT_ELF32
+        select ARCH_SPARSEMEM_ENABLE
+        select DMA_NONCOHERENT
+        select MIPS_BOARDS_GEN
+        select CEVT_R4K
+        select CSRC_R4K
+        select IRQ_CPU
+        select SYS_HAS_CPU_MIPS32_R2
+        select SYS_HAS_EARLY_PRINTK
+        select SYS_SUPPORTS_32BIT_KERNEL
+        select SYS_SUPPORTS_BIG_ENDIAN
+        select SYS_SUPPORTS_LITTLE_ENDIAN
+        select SYS_SUPPORTS_MULTITHREADING
+        select HIGHMEM
+        select ZONE_DMA
+        select MS_USB_MIU1_PATCH
+        select SYS_SUPPORTS_HIGHMEM
+        select CPU_HAS_SYNC
+
+
+endchoice
+
+#===================================================
+# MStar Chip (auto-select)
+# 0: None
+# 1: Titania
+# 2: Triton
+# 3: Titania2
+#===================================================
+config MSTAR_CHIP_TYPE
+	int
+	default 1 if MSTAR_TITANIA
+	default 2 if MSTAR_TRITON
+	default 3 if MSTAR_TITANIA2
+	default 4 if MSTAR_OBERON
+	default 5 if MSTAR_EUCLID
+	default 0
+
+#===================================================
+# MStar Chip Name (auto-select)
+#===================================================
+config MSTAR_CHIP_NAME
+	string
+	default "einstein" if MSTAR_EINSTEIN
+	default "napoli" if MSTAR_NAPOLI
+	default "madison" if MSTAR_MADISON
+	default "messi" if MSTAR_MESSI
+	default "miami" if MSTAR_MIAMI
+	default "clippers" if MSTAR_CLIPPERS
+	default "monaco" if MSTAR_MONACO
+	default "maldives" if MSTAR_MALDIVES
+	default "macan" if MSTAR_MACAN
+	default "mustang" if MSTAR_MUSTANG
+	default "kaiser" if MSTAR_KAISER
+	default "muji" if MSTAR_MUJI
+	default "muji" if MSTAR_MUJI_32
+	default "kano" if MSTAR_KANO
+	default "kano" if MSTAR_KANO_32
+	default "curry" if MSTAR_CURRY
+	default "curry" if MSTAR_CURRY_32
+	default "c2p" if MSTAR_C2P
+	default "c2p" if MSTAR_C2P_32
+	default "k6" if MSTAR_K6
+	default "k6" if MSTAR_K6_32
+	default "monet" if MSTAR_MONET
+	default "mooney" if MSTAR_MOONEY
+	default "monet" if MSTAR_MONET_32
+	default "manhattan" if MSTAR_MANHATTAN
+	default "maserati" if MSTAR_MASERATI
+	default "maserati" if MSTAR_MASERATI_32
+	default "kris" if MSTAR_KRIS
+	default "k6lite" if MSTAR_K6Lite
+	default "k7u_ca7" if MSTAR_K7U_CA7
+	default "k7u_ca53" if MSTAR_K7U_CA53
+	default "kiwi" if MSTAR_KIWI
+	default "error"
+
+#===================================================
+# Titania 2 Chip Revision Selection
+#===================================================
+if MSTAR_TITANIA2
+choice
+	prompt "-- Titania 2 Chip Revision"
+	default None
+
+config MSTAR_TITANIA2_REV_NONE
+	bool "None"
+
+config MSTAR_TITANIA2_REV_U02
+    bool "U02"
+
+config MSTAR_TITANIA2_REV_U03
+    bool "U03"
+
+endchoice
+endif
+
+#===================================================
+#Chip based define
+#===================================================
+config MSTAR_ARM
+    bool "Enable ARM BASE CPU"
+    default n
+config MSTAR_MIPS
+    bool "Enable MIPS BASE CPU"
+	depends on !MSTAR_ARM
+    default n
+
+
+#===================================================
+#Android recovery Flag
+#===================================================
+
+config WRITE_TO_ANDROID_MISC
+    bool "Write Andorid recovery command to partition"
+    default n
+
+choice
+  depends on WRITE_TO_ANDROID_MISC
+	prompt "storage type"
+	default EMMC
+
+config WRITE_TO_ANDROID_MISC_EMMC
+    bool "EMMC"
+
+config WRITE_TO_ANDROID_MISC_NAND
+    bool "NAND"
+endchoice
+
+config LX3_SUPPORT
+    bool "LX3 support"
+    default n
+
+#===================================================
+# USB MIU1 PATCH
+#===================================================
+config MS_USB_MIU1_PATCH
+    bool
+    default n
+
+#===================================================
+# USB NAND PATCH
+#===================================================
+config MS_NAND_MIU1_PATCH
+    bool
+    default n
+
+config MSTAR_COOCAA_AUTH
+    bool "Link with COOCAA Authorization"
+    default n
+
+#===================================================
+# CPU HOTPLUG
+#===================================================
+config MSTAR_CPU_HOTPLUG
+    bool "Enable Mstar cpu hotplug"
+    depends on HOTPLUG_CPU
+    default n
+
+if !MSTAR_NONE
+#==========================================
+# Remove this latter - cc.chen
+#==========================================
+source "drivers/mstar2/Kconfig-Board"
+source "drivers/mstar2/Kconfig-MMap"
+
+
+source "drivers/mstar2/Kconfig-CoredumpReboot"
+source "drivers/mstar2/Kconfig-Kernel"
+
+#===================================================
+# MStar Device Drivers
+#===================================================
+comment "MStar Device Drivers"
+
+config MSTAR_3RD_PARTY
+bool "3rd party device list"
+if MSTAR_3RD_PARTY
+    config MSTAR_TUNER
+    tristate "TUNER"
+    help
+        MStar TUNER driver function
+
+    menu "Tuner device support list"
+    depends on MSTAR_TUNER
+
+        config MSTAR_TUNER_00
+            bool "MSTAR_TUNER_00"
+        config MSTAR_TUNER_01
+            bool "MSTAR_TUNER_01"
+        config MSTAR_TUNER_Si2151
+            bool "MSTAR_TUNER_Si2151"
+        config MSTAR_TUNER_MXL661
+            bool "MSTAR_TUNER_MXL661"
+        config MSTAR_TUNER_AV2012
+            bool "MSTAR_TUNER_AV2012"
+
+    endmenu
+endif
+choice
+    prompt "Mstar IR Frame Select"
+    default IR_Original
+config IR_ORIGINAL_VERSION
+    bool "IR_Original"
+config IR_REFACTOR_VERSION
+    bool "IR_Refactor"
+endchoice
+
+if IR_ORIGINAL_VERSION
+source "drivers/mstar2/drv/ir/Kconfig"
+endif
+if IR_REFACTOR_VERSION
+source "drivers/mstar2/drv/ir_mirc/Kconfig"
+endif
+
+source "drivers/mstar2/drv/iomap/Kconfig"
+source "drivers/mstar2/drv/bdma/Kconfig"
+#source "drivers/mstar/drv/msystem/Kconfig"
+source "drivers/mstar2/drv/mpool/Kconfig"
+#source "drivers/mstar/drv/ramdisk/Kconfig"
+source "drivers/mstar2/drv/gpio/Kconfig"
+source "drivers/mstar2/drv/rtc/Kconfig"
+source "drivers/mstar2/drv/iic/Kconfig"
+source "drivers/mstar2/drv/iic0/Kconfig"
+source "drivers/mstar2/drv/iic1/Kconfig"
+source "drivers/mstar2/drv/tsensor/Kconfig"
+#source "drivers/mstar/drv/hw_sem/Kconfig"
+source "drivers/mstar2/drv/emac/Kconfig"
+source "drivers/mstar2/drv/system/Kconfig"
+source "drivers/mstar2/drv/pwm/Kconfig"
+source "drivers/mstar2/drv/watchdog/Kconfig"
+#source "drivers/mstar/drv/software_ir/Kconfig"
+source "drivers/mstar2/drv/nand/Kconfig"
+#source "drivers/mstar/drv/spinand/Kconfig"
+source "drivers/mstar2/drv/flash/Kconfig"
+source "drivers/mstar2/drv/mbx/Kconfig"
+source "drivers/mstar2/drv/fusion/Kconfig"
+source "drivers/mstar2/drv/fusion_8_10/Kconfig"
+source "drivers/mstar2/drv/fusion_9_03/Kconfig"
+#source "drivers/mstar/drv/firmware/Kconfig"
+#source "drivers/mstar/drv/onenand/Kconfig"
+source "drivers/mstar2/drv/gflip/Kconfig"
+source "drivers/mstar2/drv/timer2/Kconfig"
+source "drivers/mstar2/drv/graphic/Kconfig"
+source "drivers/mstar2/drv/xc/Kconfig"
+#source "drivers/mstar/drv/rfid/Kconfig"
+#source "drivers/mstar/drv/vid_pre_alloc_mem/Kconfig"
+#source "drivers/mstar/drv/msglog/Kconfig"
+#source "drivers/mstar/drv/msgio/Kconfig"
+#source "drivers/mstar/drv/tsp/Kconfig"
+#source "drivers/mstar/drv/shire/Kconfig"
+#source "drivers/mstar/drv/sc/Kconfig"
+#source "drivers/mstar/drv/mpif/Kconfig"
+source "drivers/mstar2/drv/alsa_audio_driver/Kconfig"
+#source "drivers/mstar/drv/uarttp/Kconfig"
+source "drivers/mstar2/drv/semutex/Kconfig"
+source "drivers/mstar2/drv/gmac/Kconfig"
+source "drivers/mstar2/drv/sc/Kconfig"
+#source "drivers/mstar/drv/trustzone/Kconfig"
+#source "drivers/mstar/drv/mstar_fb/Kconfig"
+source "drivers/mstar2/drv/xzram/Kconfig"
+source "drivers/mstar2/drv/sata_host/Kconfig"
+source "drivers/mstar2/drv/ramlog/Kconfig"
+source "drivers/mstar2/drv/vga_edid/Kconfig"
+if MSTAR_CLIPPERS || MSTAR_EINSTEIN || MSTAR_KAISER || MSTAR_KANO || MSTAR_KRIS || MSTAR_KIWI || MSTAR_MADISON || MSTAR_MALDIVES || MSTAR_MANHATTAN || MSTAR_MESSI || MSTAR_MIAMI || MSTAR_MONACO || MSTAR_MONET || MSTAR_MUJI || MSTAR_MUNICH || MSTAR_NAPOLI
+source "drivers/mstar2/drv/sdmmc/Kconfig"
+endif
+if !(MSTAR_CLIPPERS || MSTAR_EINSTEIN || MSTAR_KAISER || MSTAR_KANO || MSTAR_KRIS || MSTAR_MADISON || MSTAR_MALDIVES || MSTAR_MANHATTAN || MSTAR_MESSI || MSTAR_MIAMI || MSTAR_MONACO || MSTAR_MONET || MSTAR_MUJI || MSTAR_MUNICH || MSTAR_NAPOLI)
+source "drivers/mstar2/drv/fcie/Kconfig"
+source "drivers/mstar2/drv/sdio/Kconfig"
+endif
+source "drivers/mstar2/drv/cma_pool/Kconfig"
+#source "drivers/mstar/drv/emac2/Kconfig"
+#source "drivers/mstar/drv/pm_addr/Kconfig"
+#source "drivers/mstar/drv/CPU_setting/Kconfig"
+#source "drivers/mstar/drv/CPU_calibrating/Kconfig"
+source "drivers/mstar2/drv/zdec/Kconfig"
+source "drivers/mstar2/drv/dvfs/Kconfig"
+source "drivers/mstar2/drv/CPU_calibrating/Kconfig"
+source "drivers/mstar2/drv/miu/Kconfig"
+source "drivers/mstar2/drv/ipanic/Kconfig"
+source "drivers/mstar2/drv/env_handler/Kconfig"
+source "drivers/mstar2/drv/ipa_pool/Kconfig"
+source "drivers/mstar2/drv/mma_heap/Kconfig"
+source "drivers/mstar2/drv/utopia2k_str/Kconfig"
+source "drivers/mstar2/drv/pm/Kconfig"
+source "drivers/mstar2/drv/pcmcia/Kconfig"
+config HAS_LDM
+	tristate "Localdimming Enable"
+	help
+		Localdimming Enable
+source "drivers/mstar2/drv/ldm/Kconfig"
+source "drivers/mstar2/drv/clkm/Kconfig"
+source "drivers/mstar2/drv/cpupm/Kconfig"
+source "drivers/mstar2/drv/dlmalloc/Kconfig"
+#source "drivers/mstar2/drv/optee_linuxdriver/Kconfig"
+source "drivers/mstar2/drv/pcie2/Kconfig"
+endif
+
+endmenu

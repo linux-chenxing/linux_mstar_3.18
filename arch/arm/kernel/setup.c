@@ -55,7 +55,9 @@
 #include <asm/unwind.h>
 #include <asm/memblock.h>
 #include <asm/virt.h>
-
+#ifdef CONFIG_Kasan_Switch_On
+#include <asm/kasan.h>
+#endif
 #include "atags.h"
 
 
@@ -778,6 +780,7 @@ void __init hyp_mode_check(void)
 #endif
 }
 
+void __init prom_meminit(void);
 void __init setup_arch(char **cmdline_p)
 {
 	struct machine_desc *mdesc;
@@ -785,7 +788,15 @@ void __init setup_arch(char **cmdline_p)
 	setup_processor();
 	mdesc = setup_machine_fdt(__atags_pointer);
 	if (!mdesc)
+#ifdef CONFIG_ARM64
 		mdesc = setup_machine_tags(__atags_pointer, __machine_arch_type);
+#else
+		mdesc = setup_machine_tags(__atags_pointer, 0);
+#endif
+#ifdef CONFIG_OF
+	else
+		setup_machine_tags(0,__machine_arch_type);
+#endif
 	machine_desc = mdesc;
 	machine_name = mdesc->name;
 
@@ -804,7 +815,7 @@ void __init setup_arch(char **cmdline_p)
 	*cmdline_p = cmd_line;
 
 	parse_early_param();
-
+	prom_meminit();
 	sort(&meminfo.bank, meminfo.nr_banks, sizeof(meminfo.bank[0]), meminfo_cmp, NULL);
 	sanity_check_meminfo();
 	arm_memblock_init(&meminfo, mdesc);
@@ -844,6 +855,9 @@ void __init setup_arch(char **cmdline_p)
 
 	if (mdesc->init_early)
 		mdesc->init_early();
+#ifdef CONFIG_Kasan_Switch_On
+	kasan_init();
+#endif
 }
 
 
@@ -902,7 +916,11 @@ static int c_show(struct seq_file *m, void *v)
 	int i, j;
 	u32 cpuid;
 
+# if defined(CONFIG_REPORT_PRESENT_CPUS)
+	for_each_present_cpu(i) {
+# else
 	for_each_online_cpu(i) {
+# endif
 		/*
 		 * glibc reads /proc/cpuinfo to determine the number of
 		 * online processors, looking for lines beginning with
@@ -912,15 +930,14 @@ static int c_show(struct seq_file *m, void *v)
 		cpuid = is_smp() ? per_cpu(cpu_data, i).cpuid : read_cpuid_id();
 		seq_printf(m, "model name\t: %s rev %d (%s)\n",
 			   cpu_name, cpuid & 15, elf_platform);
-
 #if defined(CONFIG_SMP)
-		seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
-			   per_cpu(cpu_data, i).loops_per_jiffy / (500000UL/HZ),
-			   (per_cpu(cpu_data, i).loops_per_jiffy / (5000UL/HZ)) % 100);
+                seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
+                           per_cpu(cpu_data, i).loops_per_jiffy / (500000UL/HZ),
+                           (per_cpu(cpu_data, i).loops_per_jiffy / (5000UL/HZ)) % 100);
 #else
-		seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
-			   loops_per_jiffy / (500000/HZ),
-			   (loops_per_jiffy / (5000/HZ)) % 100);
+                seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
+                           loops_per_jiffy / (500000/HZ),
+                           (loops_per_jiffy / (5000/HZ)) % 100);
 #endif
 		/* dump out the processor features */
 		seq_puts(m, "Features\t: ");
@@ -957,6 +974,8 @@ static int c_show(struct seq_file *m, void *v)
 	seq_printf(m, "Serial\t\t: %08x%08x\n",
 		   system_serial_high, system_serial_low);
 
+	seq_printf(m, "Processor\t: %s rev %d (%s)\n",
+			   cpu_name, cpuid & 15, elf_platform);
 	return 0;
 }
 

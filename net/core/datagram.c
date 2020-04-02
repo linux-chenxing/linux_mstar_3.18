@@ -56,6 +56,7 @@
 #include <net/sock.h>
 #include <net/tcp_states.h>
 #include <trace/events/skb.h>
+#include <linux/udp.h>
 
 /*
  *	Is a socket 'connection oriented' ?
@@ -303,6 +304,39 @@ int skb_kill_datagram(struct sock *sk, struct sk_buff *skb, unsigned int flags)
 EXPORT_SYMBOL(skb_kill_datagram);
 
 /**
+ * datagram_trace_rtp - print RTP seq number when seq is lost and delay large RTP data packets
+ */
+
+void datagram_trace_rtp(const struct sk_buff *skb) {
+    
+    extern unsigned int trace_rtp_delay;
+    extern unsigned int trace_rtp_port;
+    static unsigned int seqNo = 0,oldSeqNo = 0;
+    static struct timeval  prv_txc1 = {.tv_sec = 0, .tv_usec = 0}; 
+    static struct timeval  cur_txc1 = {.tv_sec = 0, .tv_usec = 0};
+    unsigned int diff_time = 0;
+    unsigned int port = 0;
+    char *sockBuf;
+
+    port = ntohs(*((unsigned short int *)((char *)(skb->data) +2)));
+    if (port == trace_rtp_port) {
+        do_gettimeofday(&(cur_txc1));
+        diff_time = (cur_txc1.tv_sec-prv_txc1.tv_sec)*1000*1000 + (cur_txc1.tv_usec-prv_txc1.tv_usec);
+        sockBuf = skb->data + sizeof(struct udphdr);
+        seqNo = (unsigned int)(sockBuf[2]<<8|sockBuf[3]);
+        if (seqNo != (oldSeqNo + 1) && oldSeqNo != 0) {
+             printk(KERN_ERR "\033[40;31m L4:func[%s] pre seqNo: %d   current seqNo: %d lost num of seq: %d\033[0m\n", __func__,oldSeqNo, seqNo, seqNo-oldSeqNo-1);
+        }
+
+        if (diff_time >= trace_rtp_delay) {
+            printk(KERN_ERR "\033[40;32m L4:func[%s] pre seqNo: %d   current seqNo: %d RTP data delay:%d ms\033[0m\n", __func__,oldSeqNo, seqNo, diff_time/1000);
+        }
+        do_gettimeofday(&(prv_txc1));
+        oldSeqNo = seqNo;
+    }
+}
+
+/**
  *	skb_copy_datagram_iovec - Copy a datagram to an iovec.
  *	@skb: buffer to copy
  *	@offset: offset in the buffer to start copying from
@@ -317,9 +351,12 @@ int skb_copy_datagram_iovec(const struct sk_buff *skb, int offset,
 	int start = skb_headlen(skb);
 	int i, copy = start - offset;
 	struct sk_buff *frag_iter;
+    extern unsigned int trace_rtp_enable_flag;
 
 	trace_skb_copy_datagram_iovec(skb, len);
-
+    if (trace_rtp_enable_flag) {
+        datagram_trace_rtp(skb);    
+    }
 	/* Copy header. */
 	if (copy > 0) {
 		if (copy > len)

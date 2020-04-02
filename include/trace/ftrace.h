@@ -325,7 +325,7 @@ static int notrace __init						\
 ftrace_define_fields_##call(struct ftrace_event_call *event_call)	\
 {									\
 	struct ftrace_raw_##call field;					\
-	int ret;							\
+	int ret =0;							\
 									\
 	tstruct;							\
 									\

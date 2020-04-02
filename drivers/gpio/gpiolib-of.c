@@ -218,6 +218,69 @@ static void of_gpiochip_add_pin_range(struct gpio_chip *chip)
 static void of_gpiochip_add_pin_range(struct gpio_chip *chip) {}
 #endif
 
+void of_gpiochip_init(struct gpio_chip *chip)
+{
+	struct device_node *np = chip->of_node;
+	struct device_node *np_config;
+	int state;
+	char *propname;
+	const char *statename;
+	const __be32 *gpio_nr;
+	int ngpios;
+	unsigned int plen;
+	int offset;
+	int i;
+
+	if (!chip->of_node)
+		return;
+
+	/* For each defined state ID */
+	for (state = 0; ; state++) {
+		/* Retrieve the gpio-init-* property */
+		propname = kasprintf(GFP_KERNEL, "gpio-init-%d", state);
+		np_config  = of_parse_phandle(np, propname, 0);
+		kfree(propname);
+		if (!np_config)
+			break;
+
+		/* Determine whether gpio-init-names property names the state */
+		of_property_read_string_index(np, "gpio-init-names",
+						    state, &statename);
+
+		dev_info(chip->dev, "Initialising GPIO state %d: name %s\n",
+			state, (statename) ? statename : np_config->name);
+
+		gpio_nr = of_get_property(np_config, "gpio-input", &plen);
+		if (gpio_nr) {
+			ngpios = plen/sizeof(u32);
+			for (i = 0; i < ngpios; ++i) {
+				offset = be32_to_cpup(gpio_nr + i);
+				chip->direction_input(chip, offset);
+			}
+		}
+
+		gpio_nr = of_get_property(np_config, "gpio-output-low", &plen);
+		if (gpio_nr) {
+			ngpios = plen/sizeof(u32);
+			for (i = 0; i < ngpios; ++i) {
+				offset = be32_to_cpup(gpio_nr + i);
+				chip->direction_output(chip, offset, 0);
+			}
+		}
+
+		gpio_nr = of_get_property(np_config, "gpio-output-high", &plen);
+		if (gpio_nr) {
+			ngpios = plen/sizeof(u32);
+			for (i = 0; i < ngpios; ++i) {
+				offset = be32_to_cpup(gpio_nr + i);
+				chip->direction_output(chip, offset, 1);
+			}
+		}
+
+		of_node_put(np_config);
+	}
+}
+
 void of_gpiochip_add(struct gpio_chip *chip)
 {
 	if ((!chip->of_node) && (chip->dev))

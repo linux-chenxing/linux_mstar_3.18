@@ -1,0 +1,15 @@
+Makefile	2017-3-1	3634
+[[k	2017-3-2	281
+mboot.bin	2017-3-1	639178
+Image	2017-4-1	4383896
+[[mboot.bak	2017-3-6	184
+uImage	2017-4-1	1555960
+install.sh	2017-3-1	1274
+[[mboot	2017-3-1	178
+[[kernel	2017-3-2	281
+dir.txt	2017-3-1	0
+.uImage.cmd	2017-4-1	224
+.zImage.cmd	2017-4-1	150
+zImage	2017-4-1	1555896
+.Image.cmd	2017-4-1	123
+mkimage	2017-3-1	14832

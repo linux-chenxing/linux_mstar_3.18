@@ -214,9 +214,31 @@ ext4_io_end_t *ext4_init_io_end(struct inode *inode, gfp_t flags)
 static void buffer_io_error(struct buffer_head *bh)
 {
 	char b[BDEVNAME_SIZE];
+#if(1 == MP_FAT_DEBUG_MESSAGE_CONTROL)
+	struct super_block *sb = get_super(bh->b_bdev);
+	if(sb != NULL && sb->s_bdev != NULL && sb->s_bdev->bd_disk != NULL){
+		if((sb->s_bdev->bd_disk->flags & GENHD_FL_UP) == 0){
+			if(false == sb->not_msg_flag && sb->msg_count < 50)
+			{
+				sb->msg_count++;
+			}
+			else if(50 == sb->msg_count && false == sb->not_msg_flag)
+			{
+				sb->not_msg_flag = true;
+			}
+		}
+	}
+	if(false == sb->not_msg_flag)
+	{
+		printk(KERN_ERR "Buffer I/O error on device %s, logical block %llu\n",
+				bdevname(bh->b_bdev,b),
+				(unsigned long long)bh->b_blocknr);
+	}
+#else
 	printk(KERN_ERR "Buffer I/O error on device %s, logical block %llu\n",
 			bdevname(bh->b_bdev, b),
 			(unsigned long long)bh->b_blocknr);
+#endif
 }
 
 static void ext4_end_bio(struct bio *bio, int error)

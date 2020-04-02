@@ -4,6 +4,8 @@
 
 # Object file lists.
 
+GCOV_PROFILE := y
+
 obj-$(CONFIG_USB_SERIAL)			+= usbserial.o
 
 usbserial-y := usb-serial.o generic.o bus.o
@@ -12,6 +14,7 @@ usbserial-$(CONFIG_USB_SERIAL_CONSOLE)	+= console.o
 
 obj-$(CONFIG_USB_SERIAL_AIRCABLE)		+= aircable.o
 obj-$(CONFIG_USB_SERIAL_ARK3116)		+= ark3116.o
+obj-$(CONFIG_USB_SERIAL_BASEBAND)		+= baseband_usb_chr.o
 obj-$(CONFIG_USB_SERIAL_BELKIN)			+= belkin_sa.o
 obj-$(CONFIG_USB_SERIAL_CH341)			+= ch341.o
 obj-$(CONFIG_USB_SERIAL_CP210X)			+= cp210x.o

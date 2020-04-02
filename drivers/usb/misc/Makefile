@@ -27,5 +27,12 @@ obj-$(CONFIG_USB_USS720)		+= uss720.o
 obj-$(CONFIG_USB_SEVSEG)		+= usbsevseg.o
 obj-$(CONFIG_USB_YUREX)			+= yurex.o
 obj-$(CONFIG_USB_HSIC_USB3503)		+= usb3503.o
+obj-$(CONFIG_USB_RENESAS_MODEM)         += boot_hsic_class.o
 
 obj-$(CONFIG_USB_SISUSBVGA)		+= sisusbvga/
+obj-$(CONFIG_USB_NV_SHIELD_LED)	+= usb_nvshieldled.o
+
+obj-$(CONFIG_USB_QCOM_DIAG_BRIDGE)	+= diag_bridge.o
+mdm_bridge-y				:= mdm_ctrl_bridge.o mdm_data_bridge.o
+obj-$(CONFIG_USB_QCOM_MDM_BRIDGE) 	+= mdm_bridge.o
+obj-$(CONFIG_USB_QCOM_KS_BRIDGE)	+= ks_bridge.o

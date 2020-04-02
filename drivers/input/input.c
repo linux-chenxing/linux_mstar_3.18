@@ -256,6 +256,60 @@ static int input_handle_abs_event(struct input_dev *dev,
 	return INPUT_PASS_TO_HANDLERS;
 }
 
+#ifdef CONFIG_MSTAR_DVFS
+#define MP_INPUT_DVFS
+#endif
+
+#ifdef MP_INPUT_DVFS
+#include "chip_dvfs_calibrating.h"
+#include "mdrv_dvfs.h"
+
+// the cpu freq in khz for ir boost
+atomic_t ir_boost_cpu_freq = ATOMIC_INIT(0);
+int read_ir_boost_cpu_freq(void);
+void write_ir_boost_cpu_freq(int);
+
+// the duration in ms of overclocking for ir boost
+atomic_t ir_boost_duration = ATOMIC_INIT(1000);
+int read_ir_boost_duration(void);
+void write_ir_boost_duration(int);
+
+int _CPU_calibrating_proc_write(unsigned long, unsigned long);
+static void ir_boost_start(struct work_struct*);
+static void ir_boost_stop(struct work_struct*);
+static struct work_struct ir_boost_start_work;
+static struct delayed_work ir_boost_stop_work;
+static DECLARE_WORK(ir_boost_start_work, ir_boost_start);
+static DECLARE_DELAYED_WORK(ir_boost_stop_work, ir_boost_stop);
+
+#define IR_BOOST_CLIENT_ID 192
+
+void ir_boost_start(struct work_struct *w)
+{
+    printk(KERN_DEBUG "[ir_boost] starts\n");
+	_CPU_calibrating_proc_write(IR_BOOST_CLIENT_ID, read_ir_boost_cpu_freq());
+	return;
+}
+
+void ir_boost_stop(struct work_struct *w)
+{
+    printk(KERN_DEBUG "[ir_boost] stops\n");
+	_CPU_calibrating_proc_write(IR_BOOST_CLIENT_ID, 0);
+	return;
+}
+
+bool is_ir_boost_running(void)
+{
+	if (delayed_work_pending(&ir_boost_stop_work)) 
+		return true;
+	else
+		return false;
+
+	return false;
+}
+
+#endif
+
 static int input_get_disposition(struct input_dev *dev,
 			  unsigned int type, unsigned int code, int value)
 {
@@ -286,6 +340,25 @@ static int input_get_disposition(struct input_dev *dev,
 				disposition = INPUT_PASS_TO_HANDLERS;
 				break;
 			}
+
+#ifdef MP_INPUT_DVFS
+			// when a key is depressed, we speed up CPU clock
+			// and set a timer for speeding down CPU clock
+			if (value == 1) {
+				if (read_ir_boost_duration() != 0) {
+					if (is_ir_boost_running() == false) {
+						schedule_work_on(cpumask_first(cpu_online_mask), &ir_boost_start_work);
+						schedule_delayed_work_on(cpumask_first(cpu_online_mask),
+								&ir_boost_stop_work, msecs_to_jiffies(read_ir_boost_duration()));
+					} else {
+						printk(KERN_DEBUG "[ir_boost] extend the expiration time\n");
+						cancel_delayed_work(&ir_boost_stop_work);
+						schedule_delayed_work_on(cpumask_first(cpu_online_mask),
+								&ir_boost_stop_work, msecs_to_jiffies(read_ir_boost_duration()));
+					}
+				}
+			}
+#endif
 
 			if (!!test_bit(code, dev->key) != !!value) {
 
@@ -1133,6 +1206,7 @@ static int input_devices_seq_show(struct seq_file *seq, void *v)
 	seq_printf(seq, "P: Phys=%s\n", dev->phys ? dev->phys : "");
 	seq_printf(seq, "S: Sysfs=%s\n", path ? path : "");
 	seq_printf(seq, "U: Uniq=%s\n", dev->uniq ? dev->uniq : "");
+	seq_printf(seq, "E: Enabled=%d\n", dev->enabled);
 	seq_printf(seq, "H: Handlers=");
 
 	list_for_each_entry(handle, &dev->h_list, d_node)
@@ -1249,6 +1323,129 @@ static const struct file_operations input_handlers_fileops = {
 	.release	= seq_release,
 };
 
+#ifdef MP_INPUT_DVFS
+int read_ir_boost_cpu_freq(void)
+{
+    return atomic_read(&ir_boost_cpu_freq);
+}
+
+void write_ir_boost_cpu_freq(int value)
+{
+    atomic_set(&ir_boost_cpu_freq, value);
+}
+
+static atomic_t proc_ir_boost_cpu_freq_is_open = ATOMIC_INIT(0);
+
+static int proc_ir_boost_cpu_freq_seq_show(struct seq_file *seq, void *v)
+{
+	seq_printf(seq, "%u\n", read_ir_boost_cpu_freq());
+	return 0;
+}
+
+static int proc_ir_boost_cpu_freq_open(struct inode *inode, struct file *file)
+{
+	if (atomic_read(&proc_ir_boost_cpu_freq_is_open))
+		return -EACCES;
+
+	single_open(file, proc_ir_boost_cpu_freq_seq_show, NULL);
+
+	atomic_set(&proc_ir_boost_cpu_freq_is_open, 1);
+	return 0;
+}
+
+static int proc_ir_boost_cpu_freq_release(struct inode *inode, struct file * file)
+{
+	WARN_ON(!atomic_read(&proc_ir_boost_cpu_freq_is_open));
+	atomic_set(&proc_ir_boost_cpu_freq_is_open, 0);
+	return 0;
+}
+
+static ssize_t proc_ir_boost_cpu_freq_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
+{
+    const unsigned int BUFFSIZE = 1024;
+	char buffer[BUFFSIZE];
+	if (count >= BUFFSIZE)
+		count = BUFFSIZE - 1;
+
+	if (copy_from_user(buffer, buf, count))
+		return -EFAULT;
+
+	//ir_boost_cpu_freq = simple_strtol(buffer, NULL, 10);
+    write_ir_boost_cpu_freq(simple_strtol(buffer, NULL, 10));
+
+	return count;
+}
+
+static const struct file_operations proc_ir_boost_cpu_freq_fileops = {
+	.owner		= THIS_MODULE,
+	.open		= proc_ir_boost_cpu_freq_open,
+	.write		= proc_ir_boost_cpu_freq_write,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= proc_ir_boost_cpu_freq_release,
+};
+
+static atomic_t proc_ir_boost_duration_is_open = ATOMIC_INIT(0);
+
+int read_ir_boost_duration(void)
+{
+    return atomic_read(&ir_boost_duration);
+}
+
+void write_ir_boost_duration(int value)
+{
+    atomic_set(&ir_boost_duration, value);
+}
+
+static int proc_ir_boost_duration_seq_show(struct seq_file *seq, void *v)
+{
+	seq_printf(seq, "%u\n", read_ir_boost_duration());
+	return 0;
+}
+
+static int proc_ir_boost_duration_open(struct inode *inode, struct file *file)
+{
+	if (atomic_read(&proc_ir_boost_duration_is_open))
+		return -EACCES;
+
+	single_open(file, proc_ir_boost_duration_seq_show, NULL);
+
+	atomic_set(&proc_ir_boost_duration_is_open, 1);
+	return 0;
+}
+
+static int proc_ir_boost_duration_release(struct inode *inode, struct file * file)
+{
+	WARN_ON(!atomic_read(&proc_ir_boost_duration_is_open));
+	atomic_set(&proc_ir_boost_duration_is_open, 0);
+	return 0;
+}
+
+static ssize_t proc_ir_boost_duration_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
+{
+    const unsigned int BUFFSIZE = 1024;
+	char buffer[BUFFSIZE];
+	if (count >= BUFFSIZE)
+		count = BUFFSIZE - 1;
+
+	if (copy_from_user(buffer, buf, count))
+		return -EFAULT;
+
+    write_ir_boost_duration(simple_strtol(buffer, NULL, 10));
+
+	return count;
+}
+
+static const struct file_operations proc_ir_boost_duration_fileops = {
+	.owner		= THIS_MODULE,
+	.open		= proc_ir_boost_duration_open,
+	.write		= proc_ir_boost_duration_write,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= proc_ir_boost_duration_release,
+};
+#endif
+
 static int __init input_proc_init(void)
 {
 	struct proc_dir_entry *entry;
@@ -1267,7 +1464,25 @@ static int __init input_proc_init(void)
 	if (!entry)
 		goto fail2;
 
+#ifdef MP_INPUT_DVFS
+	entry = proc_create("ir_boost_duration", 0, proc_bus_input_dir,
+			    &proc_ir_boost_duration_fileops);
+	if (!entry)
+		goto fail3;
+
+	entry = proc_create("ir_boost_cpu_freq", 0, proc_bus_input_dir,
+			    &proc_ir_boost_cpu_freq_fileops);
+	if (!entry)
+		goto fail4;
+
+        write_ir_boost_cpu_freq(IRBOOST_CPU_FREQ);
+#endif
+
 	return 0;
+#ifdef MP_INPUT_DVFS
+ fail4:	remove_proc_entry("ir_boost_duration", proc_bus_input_dir);
+ fail3:	remove_proc_entry("handlers", proc_bus_input_dir);
+#endif
 
  fail2:	remove_proc_entry("devices", proc_bus_input_dir);
  fail1: remove_proc_entry("bus/input", NULL);
@@ -1378,12 +1593,51 @@ static ssize_t input_dev_show_properties(struct device *dev,
 }
 static DEVICE_ATTR(properties, S_IRUGO, input_dev_show_properties, NULL);
 
+static ssize_t input_dev_set_enabled(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct input_dev *input_dev = to_input_dev(dev);
+	long en;
+	int ret;
+
+	ret = kstrtoul(buf, 0, &en);
+	if (ret)
+		return -EINVAL;
+
+	if (input_dev->enabled == en)
+		return count;
+	input_dev->enabled = !!en;
+
+	if (en) {
+		if (input_dev->enable)
+			count = input_dev->enable(input_dev);
+	} else {
+		if (input_dev->disable)
+			count = input_dev->disable(input_dev);
+	}
+
+	return count;
+}
+static ssize_t input_dev_show_enabled(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct input_dev *input_dev = to_input_dev(dev);
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
+			 input_dev->enabled);
+}
+
+static DEVICE_ATTR(enabled, S_IWUSR | S_IRUGO, input_dev_show_enabled,
+						input_dev_set_enabled);
+
 static struct attribute *input_dev_attrs[] = {
 	&dev_attr_name.attr,
 	&dev_attr_phys.attr,
 	&dev_attr_uniq.attr,
 	&dev_attr_modalias.attr,
 	&dev_attr_properties.attr,
+	&dev_attr_enabled.attr,
 	NULL
 };
 
@@ -1400,6 +1654,7 @@ static ssize_t input_dev_show_id_##name(struct device *dev,		\
 	return scnprintf(buf, PAGE_SIZE, "%04x\n", input_dev->id.name);	\
 }									\
 static DEVICE_ATTR(name, S_IRUGO, input_dev_show_id_##name, NULL)
+
 
 INPUT_DEV_ID_ATTR(bustype);
 INPUT_DEV_ID_ATTR(vendor);

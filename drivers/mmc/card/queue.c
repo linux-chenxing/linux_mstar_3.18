@@ -89,6 +89,12 @@ static int mmc_queue_thread(void *d)
 			mq->mqrq_prev = mq->mqrq_cur;
 			mq->mqrq_cur = tmp;
 		} else {
+			/*
+			 * Since the queue is empty, start synchronous
+			 * background ops if there is a request for it.
+			 */
+			if (mmc_card_need_bkops(mq->card))
+				mmc_start_bkops(mq->card, true);
 			if (kthread_should_stop()) {
 				set_current_state(TASK_RUNNING);
 				break;
@@ -232,14 +238,17 @@ int mmc_init_queue(struct mmc_queue *mq, struct mmc_card *card,
 					"allocate bounce cur buffer\n",
 					mmc_card_name(card));
 			}
-			mqrq_prev->bounce_buf = kmalloc(bouncesz, GFP_KERNEL);
-			if (!mqrq_prev->bounce_buf) {
-				pr_warning("%s: unable to "
-					"allocate bounce prev buffer\n",
-					mmc_card_name(card));
-				kfree(mqrq_cur->bounce_buf);
-				mqrq_cur->bounce_buf = NULL;
-			}
+            else
+            {
+    			mqrq_prev->bounce_buf = kmalloc(bouncesz, GFP_KERNEL);
+    			if (!mqrq_prev->bounce_buf) {
+    				pr_warning("%s: unable to "
+    					"allocate bounce prev buffer\n",
+    					mmc_card_name(card));
+    				kfree(mqrq_cur->bounce_buf);
+    				mqrq_cur->bounce_buf = NULL;
+    			}
+            }
 		}
 
 		if (mqrq_cur->bounce_buf && mqrq_prev->bounce_buf) {

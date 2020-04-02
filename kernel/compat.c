@@ -1154,4 +1154,8 @@ void __user *compat_alloc_user_space(unsigned long len)
 
 	return ptr;
 }
+#ifdef CONFIG_MP_PLATFORM_UTOPIA2K_EXPORT_SYMBOL
+EXPORT_SYMBOL(compat_alloc_user_space);
+#else
 EXPORT_SYMBOL_GPL(compat_alloc_user_space);
+#endif

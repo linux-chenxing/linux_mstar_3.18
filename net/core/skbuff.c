@@ -76,6 +76,23 @@
 struct kmem_cache *skbuff_head_cache __read_mostly;
 static struct kmem_cache *skbuff_fclone_cache __read_mostly;
 
+#ifdef CONFIG_MP_CMA_PATCH_PCI_ALLOC_FREE_WITH_CMA
+extern struct device *pci_cma_device;
+//CMA function
+extern void *mstar_device_kmalloc(struct device *cma_dev, size_t size, gfp_t flags);
+extern void mstar_device_kfree(struct device *cma_dev, const void *addr);
+//Atomic pool function
+extern void *mstar_device_alloc_from_pool(struct device *cma_dev,size_t size, struct page **ret_page);
+extern bool in_mstar_device_pool(struct device *cma_dev,void *start, size_t size);
+extern int mstar_device_free_from_pool(struct device *cma_dev,void *start, size_t size);
+
+//#define PCIE_MEASURE_COUNT
+#ifdef PCIE_MEASURE_COUNT
+atomic_t alloc_skb_cma_c = ATOMIC_INIT(0);
+atomic_t free_skb_cma_c = ATOMIC_INIT(0);
+#endif
+#endif
+
 /**
  *	skb_panic - private function for out-of-line support
  *	@skb:	buffer
@@ -279,6 +296,99 @@ nodata:
 }
 EXPORT_SYMBOL(__alloc_skb);
 
+#ifdef CONFIG_MP_CMA_PATCH_PCI_ALLOC_FREE_WITH_CMA
+struct sk_buff *__alloc_skb_from_cma(struct device *cma_dev, unsigned int size, gfp_t gfp_mask,
+			    int flags, int node)
+{
+	struct kmem_cache *cache;
+	struct skb_shared_info *shinfo;
+	struct sk_buff *skb;
+	u8 *data;
+	bool pfmemalloc = false;
+	struct page *pci_cma_page = NULL;
+
+	cache = (flags & SKB_ALLOC_FCLONE)
+		? skbuff_fclone_cache : skbuff_head_cache;
+
+	if (sk_memalloc_socks() && (flags & SKB_ALLOC_RX))
+		gfp_mask |= __GFP_MEMALLOC;
+
+	/* Get the HEAD */
+	skb = kmem_cache_alloc_node(cache, gfp_mask & ~__GFP_DMA, node);
+	if (!skb)
+		goto out;
+	prefetchw(skb);
+
+	/* We do our best to align skb_shared_info on a separate cache
+	 * line. It usually works because kmalloc(X > SMP_CACHE_BYTES) gives
+	 * aligned memory blocks, unless SLUB/SLAB debug is enabled.
+	 * Both skb->head and skb_shared_info are cache line aligned.
+	 */
+	size = SKB_DATA_ALIGN(size);
+	size += SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+
+	/* we do not want to use alloc_pages, due to this page may be located @ miu1 */
+    data = mstar_device_alloc_from_pool(pci_cma_device,size, &pci_cma_page);
+    if (!data)
+		goto nodata;
+#ifdef PCIE_MEASURE_COUNT
+     atomic_add(1, &alloc_skb_cma_c);
+#endif
+    /* kmalloc(size) might give us more room than requested.
+	 * Put skb_shared_info exactly at the end of allocated zone,
+	 * to allow max possible filling before reallocation.
+	 */
+	size = SKB_WITH_OVERHEAD(size);
+	prefetchw(data + size);
+
+	/*
+	 * Only clear those fields we need to clear, not those that we will
+	 * actually initialise below. Hence, don't put any more fields after
+	 * the tail pointer in struct sk_buff!
+	 */
+	memset(skb, 0, offsetof(struct sk_buff, tail));	/* we only reset data_member before tail */
+	/* Account for allocated memory : skb + skb->head */
+	skb->truesize = SKB_TRUESIZE(size);
+	skb->pfmemalloc = pfmemalloc;
+	atomic_set(&skb->users, 1);
+	skb->head = data;
+	skb->data = data;
+	skb_reset_tail_pointer(skb);
+	skb->end = skb->tail + size;
+#ifdef NET_SKBUFF_DATA_USES_OFFSET
+	skb->mac_header = ~0U;
+	skb->transport_header = ~0U;
+#endif
+
+	/* make sure we initialize shinfo sequentially */
+	shinfo = skb_shinfo(skb);
+	memset(shinfo, 0, offsetof(struct skb_shared_info, dataref));
+	atomic_set(&shinfo->dataref, 1);
+	kmemcheck_annotate_variable(shinfo->destructor_arg);
+
+	if (flags & SKB_ALLOC_FCLONE) {
+		struct sk_buff *child = skb + 1;
+		atomic_t *fclone_ref = (atomic_t *) (child + 1);
+
+		kmemcheck_annotate_bitfield(child, flags1);
+		kmemcheck_annotate_bitfield(child, flags2);
+		skb->fclone = SKB_FCLONE_ORIG;
+		atomic_set(fclone_ref, 1);
+
+		child->fclone = SKB_FCLONE_UNAVAILABLE;
+		child->pfmemalloc = pfmemalloc;
+	}
+out:
+	return skb;
+nodata:
+	kmem_cache_free(cache, skb);
+	skb = NULL;
+	goto out;
+}
+
+EXPORT_SYMBOL(__alloc_skb_from_cma);
+#endif
+
 /**
  * build_skb - build a network buffer
  * @data: data buffer provided by caller
@@ -418,7 +528,7 @@ struct sk_buff *__netdev_alloc_skb(struct net_device *dev,
 	unsigned int fragsz = SKB_DATA_ALIGN(length + NET_SKB_PAD) +
 			      SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
 
-	if (fragsz <= PAGE_SIZE && !(gfp_mask & (__GFP_WAIT | GFP_DMA))) {
+	if(fragsz <= PAGE_SIZE && !(gfp_mask & (__GFP_WAIT | GFP_DMA))) {
 		void *data;
 
 		if (sk_memalloc_socks())
@@ -442,6 +552,41 @@ struct sk_buff *__netdev_alloc_skb(struct net_device *dev,
 	return skb;
 }
 EXPORT_SYMBOL(__netdev_alloc_skb);
+
+#ifdef CONFIG_MP_CMA_PATCH_PCI_ALLOC_FREE_WITH_CMA
+
+bool is_skb_pool_buffer(struct sk_buff *skb)
+{
+    struct page *page;
+
+    page = virt_to_head_page(skb->head);
+    if(in_mstar_device_pool(pci_cma_device,skb->head,skb->truesize)){
+        if(skb->head_frag)
+            BUG_ON(1);
+        return true;
+    }
+    return false;
+}
+
+struct sk_buff *__netdev_alloc_skb_from_cma(struct device *cma_dev, struct net_device *dev,
+				   unsigned int length, gfp_t gfp_mask)
+{
+	struct sk_buff *skb = NULL;
+	unsigned int fragsz = SKB_DATA_ALIGN(length + NET_SKB_PAD) +
+			      SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+
+	/* to easier use cma, we force the size to be at least one page */
+	skb = __alloc_skb_from_cma(cma_dev, length + NET_SKB_PAD, gfp_mask,		/* @__alloc_skb_from_cma, we still allocate the "data" from pci_cma, remember the alloc_size/free_size must be page_align */
+				SKB_ALLOC_RX, NUMA_NO_NODE);
+
+	if (likely(skb)) {
+		skb_reserve(skb, NET_SKB_PAD);
+		skb->dev = dev;
+	}
+	return skb;
+}
+EXPORT_SYMBOL(__netdev_alloc_skb_from_cma);
+#endif
 
 void skb_add_rx_frag(struct sk_buff *skb, int i, struct page *page, int off,
 		     int size, unsigned int truesize)
@@ -476,8 +621,22 @@ static void skb_free_head(struct sk_buff *skb)
 {
 	if (skb->head_frag)
 		put_page(virt_to_head_page(skb->head));
-	else
+    else
+    {
+#ifdef CONFIG_MP_CMA_PATCH_PCI_ALLOC_FREE_WITH_CMA
+        if(is_skb_pool_buffer(skb))
+        {
+            mstar_device_free_from_pool(pci_cma_device,skb->head,PAGE_ALIGN(skb->truesize - SKB_DATA_ALIGN(sizeof(struct sk_buff))));
+#ifdef PCIE_MEASURE_COUNT
+            atomic_add(1, &free_skb_cma_c);
+            if( (atomic_read(&free_skb_cma_c)%500) == 0 )
+                printk("\33[0;36m 44  %s:%d alloc_skb_cma_c = %d,free_skb_cma_c = %d \33[m \n",__FUNCTION__,__LINE__,atomic_read(&alloc_skb_cma_c),atomic_read(&free_skb_cma_c));
+#endif
+			return;
+        }
+#endif
 		kfree(skb->head);
+    }
 }
 
 static void skb_release_data(struct sk_buff *skb)
@@ -486,6 +645,7 @@ static void skb_release_data(struct sk_buff *skb)
 	    !atomic_sub_return(skb->nohdr ? (1 << SKB_DATAREF_SHIFT) + 1 : 1,
 			       &skb_shinfo(skb)->dataref)) {
 		if (skb_shinfo(skb)->nr_frags) {
+			/* how to resolve this by cma?? */
 			int i;
 			for (i = 0; i < skb_shinfo(skb)->nr_frags; i++)
 				skb_frag_unref(skb, i);
@@ -588,8 +748,8 @@ static void skb_release_all(struct sk_buff *skb)
 
 void __kfree_skb(struct sk_buff *skb)
 {
-	skb_release_all(skb);
-	kfree_skbmem(skb);
+	skb_release_all(skb);	/* this is to free skb_data */
+	kfree_skbmem(skb);		/* this is to free skb_struct */
 }
 EXPORT_SYMBOL(__kfree_skb);
 

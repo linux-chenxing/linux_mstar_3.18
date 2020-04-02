@@ -26,13 +26,19 @@
 #define PANIC_TIMER_STEP 100
 #define PANIC_BLINK_SPD 18
 
+/* Machine specific panic information string */
+char *mach_panic_string;
+
 int panic_on_oops = CONFIG_PANIC_ON_OOPS_VALUE;
 static unsigned long tainted_mask;
 static int pause_on_oops;
 static int pause_on_oops_flag;
 static DEFINE_SPINLOCK(pause_on_oops_lock);
 
-int panic_timeout;
+#ifndef CONFIG_PANIC_TIMEOUT
+#define CONFIG_PANIC_TIMEOUT 0
+#endif
+int panic_timeout = CONFIG_PANIC_TIMEOUT;
 EXPORT_SYMBOL_GPL(panic_timeout);
 
 ATOMIC_NOTIFIER_HEAD(panic_notifier_list);
@@ -57,6 +63,11 @@ void __weak panic_smp_self_stop(void)
 		cpu_relax();
 }
 
+#ifdef CONFIG_TEGRA_NVDUMPER
+#include <mach/nvdumper.h>
+static int is_oops_called;
+#endif /* CONFIG_TEGRA_NVDUMPER */
+
 /**
  *	panic - halt the system
  *	@fmt: The text string to print
@@ -72,6 +83,12 @@ void panic(const char *fmt, ...)
 	va_list args;
 	long i, i_next = 0;
 	int state = 0;
+
+#ifdef CONFIG_TEGRA_NVDUMPER
+	/* if panic is called directly */
+	if (!is_oops_called)
+		nvdumper_crash_setup_regs();
+#endif
 
 	/*
 	 * Disable local interrupts. This will prevent panic_smp_self_stop
@@ -350,6 +367,10 @@ int oops_may_print(void)
  */
 void oops_enter(void)
 {
+#ifdef CONFIG_TEGRA_NVDUMPER
+	is_oops_called = 1;
+#endif
+
 	tracing_off();
 	/* can't trust the integrity of the kernel anymore: */
 	debug_locks_off();
@@ -375,6 +396,11 @@ late_initcall(init_oops_id);
 void print_oops_end_marker(void)
 {
 	init_oops_id();
+
+	if (mach_panic_string)
+		printk(KERN_WARNING "Board Information: %s\n",
+		       mach_panic_string);
+
 	printk(KERN_WARNING "---[ end trace %016llx ]---\n",
 		(unsigned long long)oops_id);
 }

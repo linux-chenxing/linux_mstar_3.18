@@ -164,7 +164,7 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	mapping->a_ops = &empty_aops;
 	mapping->host = inode;
 	mapping->flags = 0;
-	mapping_set_gfp_mask(mapping, GFP_HIGHUSER_MOVABLE);
+	mapping_set_gfp_mask(mapping, GFP_HIGHUSER);
 	mapping->private_data = NULL;
 	mapping->backing_dev_info = &default_backing_dev_info;
 	mapping->writeback_index = 0;
@@ -387,6 +387,14 @@ void __iget(struct inode *inode)
 {
 	atomic_inc(&inode->i_count);
 }
+
+#if (MP_NTFS3G_WRAP==1)
+void __iget_wrap(struct inode * inode)
+{
+    __iget(inode);
+}
+EXPORT_SYMBOL(__iget_wrap);
+#endif
 
 /*
  * get additional reference to inode; caller must already hold one.

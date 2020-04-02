@@ -9,6 +9,11 @@
 #define DECLARE_BITMAP(name,bits) \
 	unsigned long name[BITS_TO_LONGS(bits)]
 
+
+#ifdef CONFIG_MP_DEBUG_TOOL_CHANGELIST
+#include <linux/release_version.h>
+#endif
+
 typedef __u32 __kernel_dev_t;
 
 typedef __kernel_fd_set		fd_set;

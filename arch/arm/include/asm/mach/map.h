@@ -34,6 +34,9 @@ struct map_desc {
 #define MT_MEMORY_ITCM		13
 #define MT_MEMORY_SO		14
 #define MT_MEMORY_DMA_READY	15
+#ifdef CONFIG_Kasan_Switch_On   
+#define	MT_MEMORY_KASAN		16
+#endif
 
 #ifdef CONFIG_MMU
 extern void iotable_init(struct map_desc *, int);
@@ -49,6 +52,14 @@ static inline void debug_ll_io_init(void) {}
 
 struct mem_type;
 extern const struct mem_type *get_mem_type(unsigned int type);
+
+#ifdef CONFIG_Kasan_Switch_On   
+//#ifdef CONFIG_MP_PLATFORM_UTOPIA2K_EXPORT_SYMBOL
+#if 1
+extern void map_driver_mem(unsigned long drv_ba, unsigned long len, unsigned long va, bool non_cache);
+#endif
+#endif
+
 /*
  * external interface to remap single page with appropriate type
  */

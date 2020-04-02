@@ -1,0 +1,6 @@
+config MSTAR_BDMA
+bool "Mstar BDMA Feature"
+default n
+
+---help---
+    To enable or to disable Mstar dynamic voltage and frequency scaling mechanism

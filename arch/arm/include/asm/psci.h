@@ -17,6 +17,13 @@
 #define PSCI_POWER_STATE_TYPE_STANDBY		0
 #define PSCI_POWER_STATE_TYPE_POWER_DOWN	1
 
+#ifdef CONFIG_MP_PLATFORM_ARM
+#define PSCI_RET_SUCCESS		0
+#define PSCI_RET_EOPNOTSUPP		-1
+#define PSCI_RET_EINVAL			-2
+#define PSCI_RET_EPERM			-3
+#endif
+
 struct psci_power_state {
 	u16	id;
 	u8	type;
@@ -29,8 +36,17 @@ struct psci_operations {
 	int (*cpu_off)(struct psci_power_state state);
 	int (*cpu_on)(unsigned long cpuid, unsigned long entry_point);
 	int (*migrate)(unsigned long cpuid);
+	int (*affinity_info)(unsigned long target_affinity,
+			unsigned long lowest_affinity_level);
 };
 
 extern struct psci_operations psci_ops;
+
+#ifdef CONFIG_MP_PLATFORM_ARM
+int __cpuinit cpu_psci_boot_secondary(unsigned int cpu,struct task_struct *idle);
+void cpu_psci_die(unsigned int cpu);
+int cpu_psci_suspend(unsigned long index,void *entry_point);
+int cpu_psci_cpu_kill(unsigned int cpu);
+#endif
 
 #endif /* __ASM_ARM_PSCI_H */

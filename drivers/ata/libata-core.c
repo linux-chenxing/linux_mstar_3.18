@@ -1559,6 +1559,7 @@ unsigned ata_exec_internal_sg(struct ata_device *dev,
 	unsigned int err_mask;
 	int rc;
 
+    DPRINTK("ENTER\n");
 	spin_lock_irqsave(ap->lock, flags);
 
 	/* no internal command while frozen */

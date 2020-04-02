@@ -1,7 +1,7 @@
 /*
  * Gas Gauge driver for SBS Compliant Batteries
  *
- * Copyright (c) 2010, NVIDIA Corporation.
+ * Copyright (c) 2010-2013, NVIDIA Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,6 +30,7 @@
 #include <linux/of.h>
 
 #include <linux/power/sbs-battery.h>
+#include <linux/power/battery-charger-gauge-comm.h>
 
 enum {
 	REG_MANUFACTURER_DATA,
@@ -74,6 +75,8 @@ enum sbs_battery_mode {
 	.min_value = _min_value, \
 	.max_value = _max_value, \
 }
+struct i2c_client *tclient = NULL;
+int battery_detect = 1;
 
 static const struct chip_data {
 	enum power_supply_property psp;
@@ -142,7 +145,8 @@ static enum power_supply_property sbs_properties[] = {
 struct sbs_info {
 	struct i2c_client		*client;
 	struct power_supply		power_supply;
-	struct sbs_platform_data	*pdata;
+	struct sbs_platform_data	plat_data;
+	struct battery_gauge_dev	*bg_dev;
 	bool				is_present;
 	bool				gpio_detect;
 	bool				enable_detection;
@@ -151,6 +155,8 @@ struct sbs_info {
 	int				poll_time;
 	struct delayed_work		work;
 	int				ignore_changes;
+	int				shutdown_complete;
+	struct mutex			mutex;
 };
 
 static int sbs_read_word_data(struct i2c_client *client, u8 address)
@@ -159,8 +165,12 @@ static int sbs_read_word_data(struct i2c_client *client, u8 address)
 	s32 ret = 0;
 	int retries = 1;
 
-	if (chip->pdata)
-		retries = max(chip->pdata->i2c_retry_count + 1, 1);
+	mutex_lock(&chip->mutex);
+	if (chip && chip->shutdown_complete) {
+		mutex_unlock(&chip->mutex);
+		return -ENODEV;
+	}
+	retries = max(chip->plat_data.i2c_retry_count + 1, 1);
 
 	while (retries > 0) {
 		ret = i2c_smbus_read_word_data(client, address);
@@ -173,8 +183,10 @@ static int sbs_read_word_data(struct i2c_client *client, u8 address)
 		dev_dbg(&client->dev,
 			"%s: i2c read at address 0x%x failed\n",
 			__func__, address);
+		mutex_unlock(&chip->mutex);
 		return ret;
 	}
+	mutex_unlock(&chip->mutex);
 
 	return le16_to_cpu(ret);
 }
@@ -186,8 +198,13 @@ static int sbs_write_word_data(struct i2c_client *client, u8 address,
 	s32 ret = 0;
 	int retries = 1;
 
-	if (chip->pdata)
-		retries = max(chip->pdata->i2c_retry_count + 1, 1);
+	mutex_lock(&chip->mutex);
+	if (chip && chip->shutdown_complete) {
+		mutex_unlock(&chip->mutex);
+		return -ENODEV;
+	}
+
+	retries = max(chip->plat_data.i2c_retry_count + 1, 1);
 
 	while (retries > 0) {
 		ret = i2c_smbus_write_word_data(client, address,
@@ -201,8 +218,10 @@ static int sbs_write_word_data(struct i2c_client *client, u8 address,
 		dev_dbg(&client->dev,
 			"%s: i2c write to address 0x%x failed\n",
 			__func__, address);
+		mutex_unlock(&chip->mutex);
 		return ret;
 	}
+	mutex_unlock(&chip->mutex);
 
 	return 0;
 }
@@ -216,8 +235,8 @@ static int sbs_get_battery_presence_and_health(
 
 	if (psp == POWER_SUPPLY_PROP_PRESENT &&
 		chip->gpio_detect) {
-		ret = gpio_get_value(chip->pdata->battery_detect);
-		if (ret == chip->pdata->battery_detect_present)
+		ret = gpio_get_value(chip->plat_data.battery_detect);
+		if (ret == chip->plat_data.battery_detect_present)
 			val->intval = 1;
 		else
 			val->intval = 0;
@@ -484,6 +503,9 @@ static int sbs_get_property(struct power_supply *psy,
 			break;
 
 		ret = sbs_get_battery_capacity(client, ret, psp, val);
+		if (psp == POWER_SUPPLY_PROP_CAPACITY)
+			battery_gauge_record_capacity_value(chip->bg_dev,
+								val->intval);
 		break;
 
 	case POWER_SUPPLY_PROP_SERIAL_NUMBER:
@@ -503,6 +525,9 @@ static int sbs_get_property(struct power_supply *psy,
 			break;
 
 		ret = sbs_get_battery_property(client, ret, psp, val);
+		if (psp == POWER_SUPPLY_PROP_VOLTAGE_NOW)
+			battery_gauge_record_voltage_value(chip->bg_dev,
+								val->intval);
 		break;
 
 	default:
@@ -563,21 +588,20 @@ static void sbs_external_power_changed(struct power_supply *psy)
 	cancel_delayed_work_sync(&chip->work);
 
 	schedule_delayed_work(&chip->work, HZ);
-	chip->poll_time = chip->pdata->poll_retry_count;
+	chip->poll_time = chip->plat_data.poll_retry_count;
 }
 
-static void sbs_delayed_work(struct work_struct *work)
+static int sbs_update_battery_status(struct battery_gauge_dev *bg_dev,
+	enum battery_charger_status status)
 {
-	struct sbs_info *chip;
-	s32 ret;
+	struct sbs_info *binfo = battery_gauge_get_drvdata(bg_dev);
+	int ret;
 
-	chip = container_of(work, struct sbs_info, work.work);
-
-	ret = sbs_read_word_data(chip->client, sbs_data[REG_STATUS].addr);
+	ret = sbs_read_word_data(binfo->client, sbs_data[REG_STATUS].addr);
 	/* if the read failed, give up on this work */
 	if (ret < 0) {
-		chip->poll_time = 0;
-		return;
+		binfo->poll_time = 0;
+		return ret;
 	}
 
 	if (ret & BATTERY_FULL_CHARGED)
@@ -589,20 +613,53 @@ static void sbs_delayed_work(struct work_struct *work)
 	else
 		ret = POWER_SUPPLY_STATUS_CHARGING;
 
-	if (chip->last_state != ret) {
-		chip->poll_time = 0;
-		power_supply_changed(&chip->power_supply);
-		return;
+	if (binfo->last_state != ret) {
+		binfo->poll_time = 0;
+		power_supply_changed(&binfo->power_supply);
+		return 0;
 	}
-	if (chip->poll_time > 0) {
-		schedule_delayed_work(&chip->work, HZ);
-		chip->poll_time--;
-		return;
-	}
+	return 0;
+}
+
+static int sbs_set_broadcast_mode(struct battery_gauge_dev *bg_dev)
+{
+	struct sbs_info *binfo = battery_gauge_get_drvdata(bg_dev);
+	int val;
+	int new_val;
+	int ret;
+
+	val = sbs_read_word_data(binfo->client, 0x03);
+	if (val < 0)
+		return val;
+
+	new_val = val & 0xBFFF;
+
+	ret = sbs_write_word_data(binfo->client, 0x03, new_val);
+
+	return ret;
+}
+
+static struct battery_gauge_ops sbs_bg_ops = {
+	.update_battery_status = sbs_update_battery_status,
+	.set_current_broadcast = sbs_set_broadcast_mode,
+};
+
+static struct battery_gauge_info sbs_bgi = {
+	.cell_id = 0,
+	.bg_ops = &sbs_bg_ops,
+};
+
+static void sbs_delayed_work(struct work_struct *work)
+{
+	struct sbs_info *chip;
+
+	chip = container_of(work, struct sbs_info, work.work);
+
+	power_supply_changed(&chip->power_supply);
+	schedule_delayed_work(&chip->work, HZ*2);
 }
 
 #if defined(CONFIG_OF)
-
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 
@@ -622,13 +679,14 @@ static struct sbs_platform_data *sbs_of_populate_pdata(
 	int rc;
 	u32 prop;
 
+	/* if platform data is set, honor it */
+	if (pdata)
+		return pdata;
+
 	/* verify this driver matches this device */
 	if (!of_node)
 		return NULL;
 
-	/* if platform data is set, honor it */
-	if (pdata)
-		return pdata;
 
 	/* first make sure at least one property is set, otherwise
 	 * it won't change behavior from running without pdata.
@@ -675,6 +733,16 @@ static struct sbs_platform_data *sbs_of_populate_pdata(
 }
 #endif
 
+int sbs_battery_detect(void)
+{
+	if (tclient != NULL && battery_detect)
+		return sbs_read_word_data(tclient,
+			sbs_data[REG_SERIAL_NUMBER].addr);
+	return -EINVAL;
+
+}
+EXPORT_SYMBOL_GPL(sbs_battery_detect);
+
 static int sbs_probe(struct i2c_client *client,
 	const struct i2c_device_id *id)
 {
@@ -697,6 +765,7 @@ static int sbs_probe(struct i2c_client *client,
 	}
 
 	chip->client = client;
+	tclient = client;
 	chip->enable_detection = false;
 	chip->gpio_detect = false;
 	chip->power_supply.name = name;
@@ -712,13 +781,15 @@ static int sbs_probe(struct i2c_client *client,
 	chip->power_supply.external_power_changed = sbs_external_power_changed;
 
 	pdata = sbs_of_populate_pdata(client);
-
 	if (pdata) {
 		chip->gpio_detect = gpio_is_valid(pdata->battery_detect);
-		chip->pdata = pdata;
+		memcpy(&chip->plat_data, pdata, sizeof(struct sbs_platform_data));
 	}
+	chip->poll_time = chip->plat_data.poll_retry_count;
 
 	i2c_set_clientdata(client, chip);
+
+	mutex_init(&chip->mutex);
 
 	if (!chip->gpio_detect)
 		goto skip_gpio;
@@ -758,15 +829,18 @@ static int sbs_probe(struct i2c_client *client,
 
 	chip->irq = irq;
 
+	chip->shutdown_complete = 0;
+
 skip_gpio:
 	/*
 	 * Before we register, we need to make sure we can actually talk
 	 * to the battery.
 	 */
-	rc = sbs_read_word_data(client, sbs_data[REG_STATUS].addr);
+	rc = sbs_battery_detect();
 	if (rc < 0) {
 		dev_err(&client->dev, "%s: Failed to get device status\n",
 			__func__);
+		battery_detect = 0;
 		goto exit_psupply;
 	}
 
@@ -777,21 +851,35 @@ skip_gpio:
 		goto exit_psupply;
 	}
 
+	chip->bg_dev = battery_gauge_register(&client->dev, &sbs_bgi, chip);
+	if (IS_ERR(chip->bg_dev)) {
+		rc = PTR_ERR(chip->bg_dev);
+		dev_err(&client->dev, "battery gauge register failed: %d\n",
+			rc);
+		goto bg_err;
+	}
+
 	dev_info(&client->dev,
 		"%s: battery gas gauge device registered\n", client->name);
 
-	INIT_DELAYED_WORK(&chip->work, sbs_delayed_work);
+	INIT_DEFERRABLE_WORK(&chip->work, sbs_delayed_work);
+	schedule_delayed_work(&chip->work, HZ);
+
+	battery_gauge_record_snapshot_values(chip->bg_dev,
+					jiffies_to_msecs(HZ/2));
 
 	chip->enable_detection = true;
 
 	return 0;
-
+bg_err:
+	power_supply_unregister(&chip->power_supply);
 exit_psupply:
 	if (chip->irq)
 		free_irq(chip->irq, &chip->power_supply);
 	if (chip->gpio_detect)
 		gpio_free(pdata->battery_detect);
 
+	mutex_destroy(&chip->mutex);
 	kfree(chip);
 
 exit_free_name:
@@ -807,11 +895,14 @@ static int sbs_remove(struct i2c_client *client)
 	if (chip->irq)
 		free_irq(chip->irq, &chip->power_supply);
 	if (chip->gpio_detect)
-		gpio_free(chip->pdata->battery_detect);
+		gpio_free(chip->plat_data.battery_detect);
 
+	battery_gauge_unregister(chip->bg_dev);
 	power_supply_unregister(&chip->power_supply);
 
 	cancel_delayed_work_sync(&chip->work);
+
+	mutex_destroy(&chip->mutex);
 
 	kfree(chip->power_supply.name);
 	kfree(chip);
@@ -820,7 +911,24 @@ static int sbs_remove(struct i2c_client *client)
 	return 0;
 }
 
-#if defined CONFIG_PM_SLEEP
+static void sbs_shutdown(struct i2c_client *client)
+{
+	struct sbs_info *chip = i2c_get_clientdata(client);
+
+	mutex_lock(&chip->mutex);
+	if (chip->irq)
+		disable_irq(chip->irq);
+
+	if (chip->gpio_detect)
+		gpio_free(chip->plat_data.battery_detect);
+
+	cancel_delayed_work_sync(&chip->work);
+	chip->shutdown_complete = 1;
+
+	mutex_unlock(&chip->mutex);
+}
+
+#ifdef CONFIG_PM_SLEEP
 
 static int sbs_suspend(struct device *dev)
 {
@@ -840,12 +948,18 @@ static int sbs_suspend(struct device *dev)
 	return 0;
 }
 
-static SIMPLE_DEV_PM_OPS(sbs_pm_ops, sbs_suspend, NULL);
-#define SBS_PM_OPS (&sbs_pm_ops)
+static int sbs_resume(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct sbs_info *chip = i2c_get_clientdata(client);
 
-#else
-#define SBS_PM_OPS NULL
+	schedule_delayed_work(&chip->work, HZ);
+	return 0;
+}
 #endif
+static const struct dev_pm_ops sbs_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(sbs_suspend, sbs_resume)
+};
 
 static const struct i2c_device_id sbs_id[] = {
 	{ "bq20z75", 0 },
@@ -858,10 +972,11 @@ static struct i2c_driver sbs_battery_driver = {
 	.probe		= sbs_probe,
 	.remove		= sbs_remove,
 	.id_table	= sbs_id,
+	.shutdown	= sbs_shutdown,
 	.driver = {
 		.name	= "sbs-battery",
 		.of_match_table = of_match_ptr(sbs_dt_ids),
-		.pm	= SBS_PM_OPS,
+		.pm	= &sbs_pm_ops,
 	},
 };
 module_i2c_driver(sbs_battery_driver);

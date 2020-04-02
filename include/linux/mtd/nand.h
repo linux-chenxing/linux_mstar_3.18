@@ -24,6 +24,8 @@
 #include <linux/mtd/flashchip.h>
 #include <linux/mtd/bbm.h>
 
+#include <mstar/mpatch_macro.h>
+
 struct mtd_info;
 struct nand_flash_dev;
 /* Scan and identify a NAND device */
@@ -51,13 +53,30 @@ extern int nand_unlock(struct mtd_info *mtd, loff_t ofs, uint64_t len);
 /* The maximum number of NAND chips in an array */
 #define NAND_MAX_CHIPS		8
 
+#if (defined(CONFIG_MSTAR_NAND) || defined(CONFIG_MSTAR_SPI_NAND)) && (MP_NAND_MTD == 1)
+/* the number of blocks reserved for bad block table */
+#define NAND_BBT_BLOCK_NUM  4
+#endif
+
+# if (MP_NAND_BBT == 1)
+/* the number of blocks reserved for bad block table */
+#define NAND_BBT_BLOCK_NUM  4
+
+/* the max number of bbt block operation */
+#define NAND_RETRIES     3
+#endif
 /*
  * This constant declares the max. oobsize / page, which
  * is supported now. If you add a chip with bigger oobsize/page
  * adjust this accordingly.
  */
+#if (defined(CONFIG_MSTAR_NAND) || defined(CONFIG_MSTAR_SPI_NAND)) && (MP_NAND_MTD == 1)
+#define NAND_MAX_OOBSIZE	1280
+#define NAND_MAX_PAGESIZE	16384
+#else
 #define NAND_MAX_OOBSIZE	640
 #define NAND_MAX_PAGESIZE	8192
+#endif
 
 /*
  * Constants for hardware specific CLE/ALE/NCE function
@@ -86,6 +105,7 @@ extern int nand_unlock(struct mtd_info *mtd, loff_t ofs, uint64_t len);
 #define NAND_CMD_READOOB	0x50
 #define NAND_CMD_ERASE1		0x60
 #define NAND_CMD_STATUS		0x70
+#define NAND_CMD_STATUS_MULTI	0x71
 #define NAND_CMD_SEQIN		0x80
 #define NAND_CMD_RNDIN		0x85
 #define NAND_CMD_READID		0x90
@@ -165,6 +185,10 @@ typedef enum {
 
 /* Device supports subpage reads */
 #define NAND_SUBPAGE_READ	0x00001000
+
+#if (defined(CONFIG_MSTAR_NAND) || defined(CONFIG_MSTAR_SPI_NAND)) && (MP_NAND_MTD == 1)
+#define NAND_IS_SPI		0x00008000
+#endif
 
 /* Options valid for Samsung large page devices */
 #define NAND_SAMSUNG_LP_OPTIONS NAND_CACHEPRG
@@ -507,6 +531,11 @@ struct nand_chip {
 	uint64_t chipsize;
 	int pagemask;
 	int pagebuf;
+#if (defined(CONFIG_MSTAR_NAND) || defined(CONFIG_MSTAR_SPI_NAND)) && (MP_NAND_MTD == 1)
+	// read from col
+	int col;
+	int bytelen;
+#endif
 	unsigned int pagebuf_bitflips;
 	int subpagesize;
 	uint8_t cellinfo;
@@ -527,6 +556,9 @@ struct nand_chip {
 	struct nand_hw_control hwcontrol;
 
 	uint8_t *bbt;
+#if (defined(CONFIG_MSTAR_NAND) || defined(CONFIG_MSTAR_SPI_NAND)) && (MP_NAND_MTD == 1)
+	uint32_t    bbt_crc;
+#endif
 	struct nand_bbt_descr *bbt_td;
 	struct nand_bbt_descr *bbt_md;
 
@@ -549,6 +581,9 @@ struct nand_chip {
 #define NAND_MFR_AMD		0x01
 #define NAND_MFR_MACRONIX	0xc2
 #define NAND_MFR_EON		0x92
+#if(MP_NAND_Spansion == 1)
+#define NAND_MFR_SPANSION   0x01
+#endif
 
 /* The maximum expected count of bytes in the NAND ID sequence */
 #define NAND_MAX_ID_LEN 8
@@ -626,6 +661,10 @@ extern struct nand_manufacturers nand_manuf_ids[];
 
 extern int nand_scan_bbt(struct mtd_info *mtd, struct nand_bbt_descr *bd);
 extern int nand_update_bbt(struct mtd_info *mtd, loff_t offs);
+#if (MP_NAND_BBT == 1)
+extern int nand_update_td(struct mtd_info *mtd, loff_t offs);
+extern int nand_update_md(struct mtd_info *mtd, loff_t offs);
+#endif
 extern int nand_default_bbt(struct mtd_info *mtd);
 extern int nand_isbad_bbt(struct mtd_info *mtd, loff_t offs, int allowbbt);
 extern int nand_erase_nand(struct mtd_info *mtd, struct erase_info *instr,

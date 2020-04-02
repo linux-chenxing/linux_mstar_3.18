@@ -47,10 +47,16 @@
 #include <linux/sched/sysctl.h>
 #include <linux/sched/rt.h>
 #include <linux/timer.h>
+#include <linux/freezer.h>
 
 #include <asm/uaccess.h>
 
 #include <trace/events/timer.h>
+#if defined(CONFIG_MP_HRT_TIMER_ENABLE)
+long (*hrtimer_patch_function)(struct timespec *tu,struct timespec __user *rmtp) =NULL;
+
+EXPORT_SYMBOL_GPL(hrtimer_patch_function);
+#endif
 
 /*
  * The timer bases:
@@ -245,6 +251,14 @@ again:
 			goto again;
 		}
 		timer->base = new_base;
+	}
+	else
+	{
+		if (cpu != this_cpu && hrtimer_check_target(timer, new_base))
+		{
+			cpu = this_cpu;
+			goto again;
+		}
 	}
 	return new_base;
 }
@@ -579,6 +593,23 @@ hrtimer_force_reprogram(struct hrtimer_cpu_base *cpu_base, int skip_equal)
 		return;
 
 	cpu_base->expires_next.tv64 = expires_next.tv64;
+
+	/*
+	 * If a hang was detected in the last timer interrupt then we
+	 *leave the hang delay active in the hardware. We want the
+	 * system to make progress. That also prevents the following
+	 * scenario:
+	 * T1 expires 50ms from now
+	 * T2 expires 5s from now
+	 *
+	 * T1 is removed, so this code is called and would reprogram
+	 * the hardware to 5s from now. Any hrtimer_start after that
+	 * will not reprogram the hardware due to hang_detected being
+	 * set. So we'd effectivly block all timers until the T2 event
+	 * fires.
+	 */
+	if (cpu_base->hang_detected)
+		return;
 
 	if (cpu_base->expires_next.tv64 != KTIME_MAX)
 		tick_program_event(cpu_base->expires_next, 1);
@@ -1543,7 +1574,7 @@ static int __sched do_nanosleep(struct hrtimer_sleeper *t, enum hrtimer_mode mod
 			t->task = NULL;
 
 		if (likely(t->task))
-			schedule();
+			freezable_schedule();
 
 		hrtimer_cancel(&t->timer);
 		mode = HRTIMER_MODE_ABS;
@@ -1638,6 +1669,9 @@ out:
 	destroy_hrtimer_on_stack(&t.timer);
 	return ret;
 }
+#ifdef CONFIG_MP_PLATFORM_UTOPIA2K_EXPORT_SYMBOL
+EXPORT_SYMBOL(hrtimer_nanosleep);
+#endif
 
 SYSCALL_DEFINE2(nanosleep, struct timespec __user *, rqtp,
 		struct timespec __user *, rmtp)
@@ -1650,6 +1684,10 @@ SYSCALL_DEFINE2(nanosleep, struct timespec __user *, rqtp,
 	if (!timespec_valid(&tu))
 		return -EINVAL;
 
+    #if defined(CONFIG_MP_HRT_TIMER_ENABLE)
+	if(hrtimer_patch_function != NULL)
+		return hrtimer_patch_function(&tu,rmtp);
+	#endif
 	return hrtimer_nanosleep(&tu, rmtp, HRTIMER_MODE_REL, CLOCK_MONOTONIC);
 }
 

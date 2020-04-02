@@ -17,6 +17,8 @@
  * Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include <mstar/mpatch_macro.h>
+
 /* this file is part of ehci-hcd.c */
 
 /*-------------------------------------------------------------------------*/
@@ -72,17 +74,46 @@ shadow_next_periodic(struct ehci_hcd *ehci, union ehci_shadow *periodic,
 	}
 }
 
+#ifdef CONFIG_MSTAR_BDMA
+static dma_addr_t
+periodic_shadow_dma(struct ehci_hcd *ehci, union ehci_shadow *periodic,
+		__hc32 tag)
+{
+	switch (hc32_to_cpu(ehci, tag)) {
+	/* our ehci_shadow.qh is actually software part */
+	case Q_TYPE_QH:
+		return periodic->qh->qh_dma;
+	case Q_TYPE_FSTN:
+		return periodic->fstn->fstn_dma;
+	case Q_TYPE_ITD:
+		return periodic->itd->itd_dma;
+	// case Q_TYPE_SITD:
+	default:
+		return periodic->sitd->sitd_dma;
+	}
+}
+#endif
+
 /* caller must hold ehci->lock */
 static void periodic_unlink (struct ehci_hcd *ehci, unsigned frame, void *ptr)
 {
 	union ehci_shadow	*prev_p = &ehci->pshadow[frame];
 	__hc32			*hw_p = &ehci->periodic[frame];
 	union ehci_shadow	here = *prev_p;
+#ifdef CONFIG_MSTAR_BDMA
+	__hc32			here_hw_next;
+	dma_addr_t		here_dma;
+	dma_addr_t hw_dma_p = ehci->periodic_dma+frame*sizeof(__hc32);
+#endif
 
 	/* find predecessor of "ptr"; hw and shadow lists are in sync */
 	while (here.ptr && here.ptr != ptr) {
 		prev_p = periodic_next_shadow(ehci, prev_p,
 				Q_NEXT_TYPE(ehci, *hw_p));
+#ifdef CONFIG_MSTAR_BDMA
+		hw_dma_p = periodic_shadow_dma(ehci, &here,
+				Q_NEXT_TYPE(ehci, *hw_p));
+#endif
 		hw_p = shadow_next_periodic(ehci, &here,
 				Q_NEXT_TYPE(ehci, *hw_p));
 		here = *prev_p;
@@ -100,8 +131,28 @@ static void periodic_unlink (struct ehci_hcd *ehci, unsigned frame, void *ptr)
 	if (!ehci->use_dummy_qh ||
 	    *shadow_next_periodic(ehci, &here, Q_NEXT_TYPE(ehci, *hw_p))
 			!= EHCI_LIST_END(ehci))
+#ifdef CONFIG_MSTAR_BDMA
+	{
+		if (prev_p == &ehci->pshadow[frame] || !get_64bit_OBF_cipher())
+			*hw_p = *shadow_next_periodic(ehci, &here,
+				Q_NEXT_TYPE(ehci, *hw_p));
+		else {
+			here_hw_next = *shadow_next_periodic(ehci, &here, Q_NEXT_TYPE(ehci, *hw_p));
+			here_dma = periodic_shadow_dma(ehci, &here, Q_NEXT_TYPE(ehci, *hw_p));
+			m_BDMA_write(here_dma, hw_dma_p);
+			here_hw_next = (here_hw_next != EHCI_LIST_END(ehci)) ?
+					here_hw_next : EHCI_LIST_END(ehci);
+			if (*hw_p != here_hw_next) {
+				printk("[BDMA] INT unlink hw not matched!\n");
+				printk("*hw_p: %x\n", *hw_p);
+				printk("*here_hw_next: %x\n", here_hw_next);
+			}
+		}
+	}
+#else
 		*hw_p = *shadow_next_periodic(ehci, &here,
 				Q_NEXT_TYPE(ehci, *hw_p));
+#endif
 	else
 		*hw_p = ehci->dummy->qh_dma;
 }
@@ -506,6 +557,9 @@ static void qh_link_periodic(struct ehci_hcd *ehci, struct ehci_qh *qh)
 		__hc32			*hw_p = &ehci->periodic[i];
 		union ehci_shadow	here = *prev;
 		__hc32			type = 0;
+#ifdef CONFIG_MSTAR_BDMA
+		dma_addr_t hw_dma_p = ehci->periodic_dma+i*sizeof(__hc32);
+#endif
 
 		/* skip the iso nodes at list head */
 		while (here.ptr) {
@@ -513,6 +567,9 @@ static void qh_link_periodic(struct ehci_hcd *ehci, struct ehci_qh *qh)
 			if (type == cpu_to_hc32(ehci, Q_TYPE_QH))
 				break;
 			prev = periodic_next_shadow(ehci, prev, type);
+#ifdef CONFIG_MSTAR_BDMA
+			hw_dma_p = periodic_shadow_dma(ehci, &here, type);
+#endif
 			hw_p = shadow_next_periodic(ehci, &here, type);
 			here = *prev;
 		}
@@ -524,6 +581,9 @@ static void qh_link_periodic(struct ehci_hcd *ehci, struct ehci_qh *qh)
 			if (qh->period > here.qh->period)
 				break;
 			prev = &here.qh->qh_next;
+#ifdef CONFIG_MSTAR_BDMA
+			hw_dma_p = periodic_shadow_dma(ehci, &here, type);
+#endif
 			hw_p = &here.qh->hw->hw_next;
 			here = *prev;
 		}
@@ -534,7 +594,23 @@ static void qh_link_periodic(struct ehci_hcd *ehci, struct ehci_qh *qh)
 				qh->hw->hw_next = *hw_p;
 			wmb ();
 			prev->qh = qh;
+#ifdef CONFIG_MSTAR_BDMA
+			if (prev==&ehci->pshadow[i] || !get_64bit_OBF_cipher())
+				*hw_p = QH_NEXT (ehci, qh->qh_dma);
+			else {
+#define OFFSET_QH_BUF_HI offsetof(struct ehci_qh_hw, hw_buf_hi)
+				qh->hw->hw_buf_hi[0] = QH_NEXT (ehci, qh->qh_dma);
+				Chip_Flush_Memory();
+				m_BDMA_write((unsigned int)qh->qh_dma+OFFSET_QH_BUF_HI, hw_dma_p);
+				if (*hw_p != QH_NEXT (ehci, qh->qh_dma)) {
+					printk("[BDMA] INT link not matched!\n");
+					printk("*hw_p: %x\n", *hw_p);
+					printk("temp: %x\n", qh->hw->hw_buf_hi[0]);
+				}
+			}
+#else
 			*hw_p = QH_NEXT (ehci, qh->qh_dma);
+#endif
 		}
 	}
 	qh->qh_state = QH_STATE_LINKED;
@@ -893,7 +969,9 @@ static int intr_submit (
 
 	/* ... update usbfs periodic stats */
 	ehci_to_hcd(ehci)->self.bandwidth_int_reqs++;
-
+#if (MP_USB_MSTAR==1) && (_USB_T3_WBTIMEOUT_PATCH)
+	Chip_Flush_Memory();
+#endif
 done:
 	if (unlikely(status))
 		usb_hcd_unlink_urb_from_ep(ehci_to_hcd(ehci), urb);
@@ -999,12 +1077,33 @@ iso_stream_init (
 		bandwidth = stream->usecs * 8;
 		bandwidth /= interval;
 
+#if (MP_USB_MSTAR==1)
+	} else if ((ehci_readl(ehci, &ehci->regs->bmcs) & 0x0600) != 0x0400) //Colin, patch for not real split-transaction mode
+	{
+		unsigned multi = 1;
+
+		maxp = max_packet(maxp);
+		buf1 |= maxp;
+
+		stream->buf0 = cpu_to_hc32(ehci, (epnum << 8) | dev->devnum); // linux warning as above
+		stream->buf1 = cpu_to_hc32(ehci, buf1);
+		stream->buf2 = cpu_to_hc32(ehci, multi);
+
+		stream->usecs = HS_USECS_ISO (maxp);
+		bandwidth = stream->usecs * 1; // 1st uFrame
+		bandwidth /= interval << 3;
+
+#endif
 	} else {
 		u32		addr;
 		int		think_time;
 		int		hs_transfers;
 
 		addr = dev->ttport << 24;
+
+#if (MP_USB_MSTAR==1)
+		if (dev->tt)
+#endif
 		if (!ehci_is_TDI(ehci)
 				|| (dev->tt->hub !=
 					ehci_to_hcd(ehci)->self.root_hub))
@@ -1176,7 +1275,11 @@ itd_urb_transaction (
 
 	itd_sched_init(ehci, sched, stream, urb);
 
+#if (MP_USB_MSTAR==1)
+	if ((urb->interval < 8) && stream->highspeed)
+#else
 	if (urb->interval < 8)
+#endif
 		num_itds = 1 + (sched->span + 7) / 8;
 	else
 		num_itds = urb->number_of_packets;
@@ -1201,6 +1304,10 @@ itd_urb_transaction (
 			spin_unlock_irqrestore (&ehci->lock, flags);
 			itd = dma_pool_alloc (ehci->itd_pool, mem_flags,
 					&itd_dma);
+/* tony.yu map between PHY addr & BUS addr */
+#if (MP_USB_MSTAR==1) && defined(BUS_PA_PATCH)
+			itd_dma = BUS2PA(itd_dma);
+#endif
 			spin_lock_irqsave (&ehci->lock, flags);
 			if (!itd) {
 				iso_sched_free(stream, sched);
@@ -1423,20 +1530,21 @@ iso_stream_schedule (
 		base = now & ~0x07;
 		start = base + SCHEDULING_DELAY;
 
-		/* find a uframe slot with enough bandwidth.
-		 * Early uframes are more precious because full-speed
-		 * iso IN transfers can't use late uframes,
-		 * and therefore they should be allocated last.
-		 */
-		next = start;
-		start += period;
-		do {
-			start--;
+		/* find a uframe slot with enough bandwidth */
+		next = start + period;
+		for (; start < next; start++) {
+
 			/* check schedule: enough space? */
 			if (stream->highspeed) {
 				if (itd_slot_ok(ehci, mod, start,
 						stream->usecs, period))
 					done = 1;
+#if (MP_USB_MSTAR==1)
+			} else if ((ehci_readl(ehci, &ehci->regs->bmcs) & 0x0600) != 0x0400) { //Colin, patch for not real split-transaction mode
+				if (itd_slot_ok(ehci, mod, start,
+						stream->usecs, period))
+					done = 1;
+#endif
 			} else {
 				if ((start % 8) >= 6)
 					continue;
@@ -1444,7 +1552,7 @@ iso_stream_schedule (
 						start, sched, period))
 					done = 1;
 			}
-		} while (start > next && !done);
+		}
 
 		/* no room in the schedule */
 		if (!done) {
@@ -1607,6 +1715,22 @@ static void itd_link_urb(
 			itd_init (ehci, stream, itd);
 		}
 
+#if (MP_USB_MSTAR==1)
+		if (urb->dev->speed != USB_SPEED_HIGH) //Colin, patch for not real split-transaction mode
+		{
+			uframe = 0;	//always is transaction 0 of itd
+			frame = next_uframe >> 3;
+
+			itd_patch(ehci, itd, iso_sched, packet, uframe); // linux warning as below
+			itd_link (ehci, frame % ehci->periodic_size, itd);
+			itd = NULL;
+
+			next_uframe += (unsigned)(stream->interval << 3);
+			next_uframe &= mod - 1; // new patch
+			packet++;
+			continue;
+		}
+#endif
 		uframe = next_uframe & 0x07;
 		frame = next_uframe >> 3;
 
@@ -1680,12 +1804,20 @@ static bool itd_complete(struct ehci_hcd *ehci, struct ehci_itd *itd)
 
 			/* HC need not update length with this error */
 			if (!(t & EHCI_ISOC_BABBLE)) {
+#if (MP_USB_MSTAR==1)
+				desc->actual_length = desc->length - EHCI_ITD_LENGTH (t); //Our EHCI send back left data which haven't recved
+#else
 				desc->actual_length = EHCI_ITD_LENGTH(t);
+#endif
 				urb->actual_length += desc->actual_length;
 			}
 		} else if (likely ((t & EHCI_ISOC_ACTIVE) == 0)) {
 			desc->status = 0;
+#if (MP_USB_MSTAR==1)
+			desc->actual_length = desc->length - EHCI_ITD_LENGTH (t); //Our EHCI send back left data which haven't recved
+#else
 			desc->actual_length = EHCI_ITD_LENGTH(t);
+#endif
 			urb->actual_length += desc->actual_length;
 		} else {
 			/* URB was too late */
@@ -1795,6 +1927,10 @@ static int itd_submit (struct ehci_hcd *ehci, struct urb *urb,
 		itd_link_urb (ehci, urb, ehci->periodic_size << 3, stream);
 	else
 		usb_hcd_unlink_urb_from_ep(ehci_to_hcd(ehci), urb);
+
+#if (MP_USB_MSTAR==1) && (_USB_T3_WBTIMEOUT_PATCH)
+	Chip_Flush_Memory();
+#endif
  done_not_linked:
 	spin_unlock_irqrestore (&ehci->lock, flags);
  done:
@@ -1902,6 +2038,10 @@ sitd_urb_transaction (
 			spin_unlock_irqrestore (&ehci->lock, flags);
 			sitd = dma_pool_alloc (ehci->sitd_pool, mem_flags,
 					&sitd_dma);
+/* tony.yu map between PHY addr & BUS addr */
+#if (MP_USB_MSTAR==1) && defined(BUS_PA_PATCH)
+			sitd_dma = BUS2PA(sitd_dma);
+#endif
 			spin_lock_irqsave (&ehci->lock, flags);
 			if (!sitd) {
 				iso_sched_free(stream, iso_sched);
@@ -2031,6 +2171,9 @@ static void sitd_link_urb(
 
 	++ehci->isoc_count;
 	enable_periodic(ehci);
+#if (MP_USB_MSTAR==1)
+	turn_on_sitd_watchdog(ehci);
+#endif
 }
 
 /*-------------------------------------------------------------------------*/
@@ -2078,8 +2221,22 @@ static bool sitd_complete(struct ehci_hcd *ehci, struct ehci_sitd *sitd)
 		urb->error_count++;
 	} else {
 		desc->status = 0;
+#if (MP_USB_MSTAR==1)
+		if( desc->length < SITD_LENGTH (t) )
+		{
+			desc->actual_length = desc->length - SITD_LENGTH(t)+1024;
+			urb->actual_length += desc->actual_length;
+			printk("\r\n Error Data...");
+		}
+		else
+		{
+			desc->actual_length = desc->length - SITD_LENGTH(t);
+			urb->actual_length += desc->actual_length;
+		}
+#else
 		desc->actual_length = desc->length - SITD_LENGTH(t);
 		urb->actual_length += desc->actual_length;
+#endif
 	}
 
 	/* handle completion now? */
@@ -2181,6 +2338,10 @@ static int sitd_submit (struct ehci_hcd *ehci, struct urb *urb,
 		sitd_link_urb (ehci, urb, ehci->periodic_size << 3, stream);
 	else
 		usb_hcd_unlink_urb_from_ep(ehci_to_hcd(ehci), urb);
+
+#if (MP_USB_MSTAR==1) && (_USB_T3_WBTIMEOUT_PATCH)
+	Chip_Flush_Memory();
+#endif
  done_not_linked:
 	spin_unlock_irqrestore (&ehci->lock, flags);
  done:

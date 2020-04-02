@@ -49,6 +49,10 @@ void kthread_unpark(struct task_struct *k);
 void kthread_parkme(void);
 
 int kthreadd(void *unused);
+#if (MP_CACHE_DROP==1)
+int kthre_drop_cache(void *unused);
+#endif
+
 extern struct task_struct *kthreadd_task;
 extern int tsk_fork_get_node(struct task_struct *tsk);
 

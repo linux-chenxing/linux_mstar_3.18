@@ -29,6 +29,10 @@ struct semaphore {
 #define DEFINE_SEMAPHORE(name)	\
 	struct semaphore name = __SEMAPHORE_INITIALIZER(name, 1)
 
+
+#define init_MUTEX(sem)		sema_init(sem, 1)
+#define init_MUTEX_LOCKED(sem)	sema_init(sem, 0)
+
 static inline void sema_init(struct semaphore *sem, int val)
 {
 	static struct lock_class_key __key;
@@ -41,6 +45,7 @@ extern int __must_check down_interruptible(struct semaphore *sem);
 extern int __must_check down_killable(struct semaphore *sem);
 extern int __must_check down_trylock(struct semaphore *sem);
 extern int __must_check down_timeout(struct semaphore *sem, long jiffies);
+extern int __must_check down_timeout_interruptible(struct semaphore *sem, long jiffies);
 extern void up(struct semaphore *sem);
 
 #endif /* __LINUX_SEMAPHORE_H */

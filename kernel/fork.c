@@ -80,6 +80,7 @@
 #include <asm/tlbflush.h>
 
 #include <trace/events/sched.h>
+#include <trace/events/sys_calls.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/task.h>
@@ -144,19 +145,169 @@ void __weak arch_release_thread_info(struct thread_info *ti)
  * kmemcache based allocator.
  */
 # if THREAD_SIZE >= PAGE_SIZE
+#ifdef CONFIG_MP_CMA_PATCH_DO_FORK_PAGE_POOL
+#ifdef CONFIG_MP_CMA_PATCH_LOW_MEMEROY_SOLUTION
+#define LIST_CACHE_CNT  512 * 1
+#else
+#define LIST_CACHE_CNT  512 * 3
+#endif
+atomic_t thread_info_cache_cnt = ATOMIC_INIT(0);
+static struct list_head thread_info_cache_list;
+spinlock_t thread_info_cache_lock;
+static struct list_head thread_info_cache_list;
+#endif
+#ifdef CONFIG_MP_DEBUG_TOOL_THREAD_CREATE_MONITOR
+int get_proc_thread_cnt(struct task_struct *p, int *dead_cnt)
+{
+	struct task_struct *t;
+	int cnt = 0;
+	*dead_cnt = 0;
+	for_each_thread(p, t) {
+    cnt++;
+	if(t->state == TASK_DEAD)
+		(*dead_cnt)++;
+	}
+  return cnt;
+}
+#endif
+void notify_alloc_thread_info(struct thread_info *thread_info);
+void notify_alloc_thread_free(struct thread_info *thread_info);
+void show_thread_trace_info(void);
+uint32_t last_prt_jiffies = 0;
+
 static struct thread_info *alloc_thread_info_node(struct task_struct *tsk,
 						  int node)
 {
-	struct page *page = alloc_pages_node(node, THREADINFO_GFP_ACCOUNTED,
-					     THREAD_SIZE_ORDER);
+	struct page *page;
 
+#ifdef CONFIG_MP_CMA_PATCH_DO_FORK_PAGE_POOL
+	unsigned long flags;
+	if(atomic_read(&thread_info_cache_cnt) <= 10)
+	{
+		printk(KERN_DEBUG "\033[31m[Emergency] %s doing fork, thread_info_cache_cnt %d is extremely low\033[m\n", current->comm, atomic_read(&thread_info_cache_cnt));
+#ifdef CONFIG_MP_DEBUG_TOOL_THREAD_CREATE_MONITOR
+		spin_lock_irqsave(&thread_info_cache_lock, flags);
+		if(jiffies - last_prt_jiffies > 30 * HZ)
+		{
+			show_thread_trace_info();
+			last_prt_jiffies = jiffies;
+		}
+		spin_unlock_irqrestore(&thread_info_cache_lock, flags);
+
+#if 0
+		int total_thread_cnt = 0;
+        int total_kernel_thread_cnt = 0;
+        int cnt;
+        int total_user_tsk = 0;
+		int dead_cnt;
+	    rcu_read_lock();
+	    for_each_process(tsk) {
+            if (tsk->flags & PF_KTHREAD)
+            {
+                  total_kernel_task_cnt++;
+		    }
+			else
+		        total_user_tsk++;
+            cnt = get_proc_thread_cnt(tsk, &dead_cnt);
+            if(cnt >30)
+				printk(KERN_ERR "           >>task(%s) has %d threads(%d deaded)\n", tsk->comm, cnt, dead_cnt);
+            total_thread_cnt += cnt;
+	    }
+	    rcu_read_unlock();
+	    printk(KERN_ERR "           >>>>kthread%d, thread%d, u_process%d, remain%d\n", 
+	   	total_kernel_thread_cnt, total_thread_cnt, total_user_tsk, atomic_read(&thread_info_cache_cnt));
+#endif
+#endif
+	}
+
+	spin_lock_irqsave(&thread_info_cache_lock, flags);
+
+	if(atomic_add_unless(&thread_info_cache_cnt, -1, 0))
+	{
+       	struct list_head *list;
+	   	BUG_ON(list_empty(&thread_info_cache_list));
+	   	list = thread_info_cache_list.next;
+	   	list_del(list);
+	   	page = container_of(list, struct page, lru);
+		spin_unlock_irqrestore(&thread_info_cache_lock, flags);
+	}
+    else
+#endif
+	{
+#ifdef CONFIG_MP_CMA_PATCH_DO_FORK_PAGE_POOL
+		spin_unlock_irqrestore(&thread_info_cache_lock, flags);
+		//printk("\033[31mFunction = %s, Line = %d, alloc thread_info from buddy\033[m\n", __PRETTY_FUNCTION__, __LINE__); // joe.liu
+#endif
+		page = alloc_pages_node(node, THREADINFO_GFP_ACCOUNTED,
+					     THREAD_SIZE_ORDER);
+	}
+#ifdef CONFIG_MP_DEBUG_TOOL_THREAD_CREATE_MONITOR
+   if(page)
+   	{
+   	   spin_lock_irqsave(&thread_info_cache_lock, flags);
+   	   notify_alloc_thread_info((struct thread_info *)page_address(page));
+	   spin_unlock_irqrestore(&thread_info_cache_lock, flags);
+   	}
+#endif
 	return page ? page_address(page) : NULL;
 }
 
 static inline void free_thread_info(struct thread_info *ti)
 {
-	free_memcg_kmem_pages((unsigned long)ti, THREAD_SIZE_ORDER);
+#ifdef CONFIG_MP_CMA_PATCH_DO_FORK_PAGE_POOL
+	unsigned long flags;
+#ifdef CONFIG_MP_DEBUG_TOOL_THREAD_CREATE_MONITOR
+	spin_lock_irqsave(&thread_info_cache_lock, flags);
+	notify_alloc_thread_free(ti);
+	spin_unlock_irqrestore(&thread_info_cache_lock, flags);
+#endif
+	spin_lock_irqsave(&thread_info_cache_lock, flags);
+	if(ti && atomic_read(&thread_info_cache_cnt) < LIST_CACHE_CNT)
+    {
+      	struct page *page = virt_to_page((void *)ti);
+	 	list_add(&page->lru, &thread_info_cache_list);
+		atomic_inc(&thread_info_cache_cnt);
+		spin_unlock_irqrestore(&thread_info_cache_lock, flags);
+    }
+	else
+#endif
+	{
+#ifdef CONFIG_MP_CMA_PATCH_DO_FORK_PAGE_POOL
+		spin_unlock_irqrestore(&thread_info_cache_lock, flags);
+#endif
+
+		free_memcg_kmem_pages((unsigned long)ti, THREAD_SIZE_ORDER);
+	}
 }
+
+#ifdef CONFIG_MP_CMA_PATCH_DO_FORK_PAGE_POOL
+void __init __weak thread_info_cache_init(void)
+{
+
+	struct page *page;
+	unsigned long flags;
+
+	INIT_LIST_HEAD(&thread_info_cache_list);
+	atomic_set(&thread_info_cache_cnt, 0);
+ 	spin_lock_init(&thread_info_cache_lock);
+ 	printk(KERN_ERR "thread_info_cache_init, alloc %d thread_pool\n", LIST_CACHE_CNT);
+
+	while(atomic_read(&thread_info_cache_cnt) < LIST_CACHE_CNT)
+	{
+		page = alloc_pages_node(numa_node_id(), THREADINFO_GFP_ACCOUNTED,
+						THREAD_SIZE_ORDER);
+
+		spin_lock_irqsave(&thread_info_cache_lock, flags);
+		if(page)
+		{
+			list_add(&page->lru, &thread_info_cache_list);
+			atomic_inc(&thread_info_cache_cnt);
+		}
+		spin_unlock_irqrestore(&thread_info_cache_lock, flags);
+	}		
+}
+#endif
+
 # else
 static struct kmem_cache *thread_info_cache;
 
@@ -198,6 +349,9 @@ struct kmem_cache *vm_area_cachep;
 /* SLAB cache for mm_struct structures (tsk->mm) */
 static struct kmem_cache *mm_cachep;
 
+/* Notifier list called when a task struct is freed */
+static ATOMIC_NOTIFIER_HEAD(task_free_notifier);
+
 static void account_kernel_stack(struct thread_info *ti, int account)
 {
 	struct zone *zone = page_zone(virt_to_page(ti));
@@ -231,6 +385,18 @@ static inline void put_signal_struct(struct signal_struct *sig)
 		free_signal_struct(sig);
 }
 
+int task_free_register(struct notifier_block *n)
+{
+	return atomic_notifier_chain_register(&task_free_notifier, n);
+}
+EXPORT_SYMBOL(task_free_register);
+
+int task_free_unregister(struct notifier_block *n)
+{
+	return atomic_notifier_chain_unregister(&task_free_notifier, n);
+}
+EXPORT_SYMBOL(task_free_unregister);
+
 void __put_task_struct(struct task_struct *tsk)
 {
 	WARN_ON(!tsk->exit_state);
@@ -242,6 +408,7 @@ void __put_task_struct(struct task_struct *tsk)
 	delayacct_tsk_free(tsk);
 	put_signal_struct(tsk->signal);
 
+	atomic_notifier_call_chain(&task_free_notifier, 0, tsk);
 	if (!profile_handoff_task(tsk))
 		free_task(tsk);
 }
@@ -311,6 +478,15 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
 		goto free_ti;
 
 	tsk->stack = ti;
+#ifdef CONFIG_SECCOMP
+	/*
+	 * We must handle setting up seccomp filters once we're under
+	 * the sighand lock in case orig has changed between now and
+	 * then. Until then, filter must be NULL to avoid messing up
+	 * the usage counts on the error path calling free_task.
+	 */
+	tsk->seccomp.filter = NULL;
+#endif
 
 	setup_thread_stack(tsk, orig);
 	clear_user_return_notifier(tsk);
@@ -697,7 +873,8 @@ struct mm_struct *mm_access(struct task_struct *task, unsigned int mode)
 
 	mm = get_task_mm(task);
 	if (mm && mm != current->mm &&
-			!ptrace_may_access(task, mode)) {
+			!ptrace_may_access(task, mode) &&
+			!capable(CAP_SYS_RESOURCE)) {
 		mmput(mm);
 		mm = ERR_PTR(-EACCES);
 	}
@@ -1045,6 +1222,11 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 	sig->nr_threads = 1;
 	atomic_set(&sig->live, 1);
 	atomic_set(&sig->sigcnt, 1);
+
+	/* list_add(thread_node, thread_head) without INIT_LIST_HEAD() */
+	sig->thread_head = (struct list_head)LIST_HEAD_INIT(tsk->thread_node);
+	tsk->thread_node = (struct list_head)LIST_HEAD_INIT(sig->thread_head);
+
 	init_waitqueue_head(&sig->wait_chldexit);
 	sig->curr_target = tsk;
 	init_sigpending(&sig->shared_pending);
@@ -1084,6 +1266,39 @@ static void copy_flags(unsigned long clone_flags, struct task_struct *p)
 	new_flags &= ~(PF_SUPERPRIV | PF_WQ_WORKER);
 	new_flags |= PF_FORKNOEXEC;
 	p->flags = new_flags;
+}
+
+static void copy_seccomp(struct task_struct *p)
+{
+#ifdef CONFIG_SECCOMP
+	/*
+	 * Must be called with sighand->lock held, which is common to
+	 * all threads in the group. Holding cred_guard_mutex is not
+	 * needed because this new task is not yet running and cannot
+	 * be racing exec.
+	 */
+	BUG_ON(!spin_is_locked(&current->sighand->siglock));
+
+	/* Ref-count the new filter user, and assign it. */
+	get_seccomp_filter(current);
+	p->seccomp = current->seccomp;
+
+	/*
+	 * Explicitly enable no_new_privs here in case it got set
+	 * between the task_struct being duplicated and holding the
+	 * sighand lock. The seccomp state and nnp must be in sync.
+	 */
+	if (task_no_new_privs(current))
+		task_set_no_new_privs(p);
+
+	/*
+	 * If the parent gained a seccomp mode after copying thread
+	 * flags and between before we held the sighand lock, we have
+	 * to manually enable the seccomp thread flag here.
+	 */
+	if (p->seccomp.mode != SECCOMP_MODE_DISABLED)
+		set_tsk_thread_flag(p, TIF_SECCOMP);
+#endif
 }
 
 SYSCALL_DEFINE1(set_tid_address, int __user *, tidptr)
@@ -1190,7 +1405,6 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		goto fork_out;
 
 	ftrace_graph_init_task(p);
-	get_seccomp_filter(p);
 
 	rt_mutex_init_task(p);
 
@@ -1433,6 +1647,12 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	spin_lock(&current->sighand->siglock);
 
 	/*
+	 * Copy seccomp details explicitly here, in case they were changed
+	 * before holding sighand lock.
+	 */
+	copy_seccomp(p);
+
+	/*
 	 * Process group and session signals need to be delivered to just the
 	 * parent before the fork or both the parent and the child after the
 	 * fork. Restart if a signal comes in before we add the new process to
@@ -1472,6 +1692,9 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 			list_add_tail(&p->sibling, &p->real_parent->children);
 			list_add_tail_rcu(&p->tasks, &init_task.tasks);
 			__this_cpu_inc(process_counts);
+		} else {
+			list_add_tail_rcu(&p->thread_node,
+					  &p->signal->thread_head);
 		}
 		attach_pid(p, PIDTYPE_PID, pid);
 		nr_threads++;

@@ -58,6 +58,63 @@ struct page;
 struct device;
 
 #ifdef CONFIG_CMA
+#define CMA_HEAP_MIUOFFSET_NOCARE (-1UL)
+#ifdef CONFIG_MP_CMA_PATCH_CMA_MSTAR_DRIVER_BUFFER
+#ifdef CONFIG_MP_CMA_PATCH_COUNT_TIMECOST
+#define CMA_HEAP_MEASUREMENT_LENG 96
+#endif
+#ifdef CONFIG_MP_CMA_PATCH_MBOOT_STR_USE_CMA
+#define CMA_HEAP_NAME_LENG  32
+#else
+#define CMA_HEAP_NAME_LENG  32
+#endif
+struct CMA_BootArgs_Config {
+     int miu;
+     int heap_type;
+     int pool_id;
+     unsigned long start;  //for boot args this is miu offset
+     unsigned long size;
+     char name[CMA_HEAP_NAME_LENG];
+};
+#endif
+
+#ifdef CONFIG_MP_ION_PATCH_MSTAR
+struct cma {
+	unsigned long	base_pfn;
+	unsigned long	count;
+	unsigned long	*bitmap;
+	struct mutex    lock;
+
+#ifdef CONFIG_MP_CMA_PATCH_COUNT_TIMECOST
+    struct cma_measurement *cma_measurement_ptr;
+#endif
+};
+#endif
+
+#ifdef CONFIG_MP_CMA_PATCH_COUNT_TIMECOST
+struct cma_measurement {
+	const char *cma_heap_name;
+	unsigned int cma_heap_id;
+    struct mutex cma_measurement_lock;
+
+	/* Measure Node Start */
+    unsigned long total_alloc_size_kb;
+    unsigned long total_alloc_time_cost_ms;
+
+    unsigned long total_migration_size_kb;
+    unsigned long total_migration_time_cost_ms;
+	/* Measure Node End */
+
+	/* Reset Node Start */
+	unsigned long cma_measurement_reset;
+	/* Reset Node End */
+};
+#endif
+
+struct dma_contiguous_stats {
+	phys_addr_t base;
+	size_t size;
+};
 
 /*
  * There is always at least global CMA area and a few optional device
@@ -73,10 +130,26 @@ int dma_declare_contiguous(struct device *dev, phys_addr_t size,
 
 struct page *dma_alloc_from_contiguous(struct device *dev, int count,
 				       unsigned int order);
+struct page *dma_alloc_at_from_contiguous(struct device *dev, int count,
+				       unsigned int order, phys_addr_t at_addr);
 bool dma_release_from_contiguous(struct device *dev, struct page *pages,
 				 int count);
+int dma_get_contiguous_stats(struct device *dev,
+			struct dma_contiguous_stats *stats);
+
+void *dma_alloc_from_contiguous_addr(struct device *dev, unsigned long start,
+																int count, unsigned int align);
+
+struct page *dma_alloc_from_contiguous_direct(struct device *dev, int count,
+				       unsigned int align, long *retlen);
+
+
+void __dma_flush_buffer(struct page *page, size_t size);
+void __dma_clear_buffer2(struct page *page, size_t size);
 
 #else
+
+struct dma_contiguous_stats;
 
 #define MAX_CMA_AREAS	(0)
 
@@ -87,6 +160,13 @@ int dma_declare_contiguous(struct device *dev, phys_addr_t size,
 			   phys_addr_t base, phys_addr_t limit)
 {
 	return -ENOSYS;
+}
+
+static inline
+struct page *dma_alloc_at_from_contiguous(struct device *dev, int count,
+				       unsigned int order, phys_addr_t at_addr)
+{
+	return NULL;
 }
 
 static inline
@@ -102,6 +182,16 @@ bool dma_release_from_contiguous(struct device *dev, struct page *pages,
 {
 	return false;
 }
+
+static inline
+int dma_get_contiguous_stats(struct device *dev,
+			struct dma_contiguous_stats *stats)
+{
+	return -ENOSYS;
+}
+
+void __dma_flush_buffer(struct page *page, size_t size);
+void __dma_clear_buffer2(struct page *page, size_t size);
 
 #endif
 

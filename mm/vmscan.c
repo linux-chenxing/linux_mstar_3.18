@@ -43,6 +43,7 @@
 #include <linux/sysctl.h>
 #include <linux/oom.h>
 #include <linux/prefetch.h>
+#include <linux/debugfs.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -55,6 +56,76 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/vmscan.h>
 
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+
+#define K(x) ((x) << (PAGE_SHIFT-10))
+
+static const char migrate_types[MIGRATE_TYPES] = {
+		[MIGRATE_UNMOVABLE]	= 'U',
+		[MIGRATE_RECLAIMABLE]	= 'E',
+		[MIGRATE_MOVABLE]	= 'M',
+		[MIGRATE_RESERVE]	= 'R',
+#ifdef CONFIG_CMA
+		[MIGRATE_CMA]		= 'C',
+#endif
+#ifdef CONFIG_MEMORY_ISOLATION
+		[MIGRATE_ISOLATE]	= 'I',
+#endif
+};
+
+void show_freemem_info(void)
+{
+	struct zone *zone;
+	int show_cnt = 0;
+	
+	for_each_populated_zone(zone) {
+ 		unsigned long nr[MAX_ORDER][MIGRATE_TYPES], flags, order, total = 0;
+		int type;
+		printk(CMA_DEBUG "ZONE %s: \n", zone->name);
+
+		memset(nr, 0, sizeof(nr));
+
+		spin_lock_irqsave(&zone->lock, flags);
+		for (order = 0; order < MAX_ORDER; order++) {
+			struct free_area *area = &zone->free_area[order];
+		
+			for (type = 0; type < MIGRATE_TYPES; type++) {
+				struct list_head *head = area->free_list[type].next;
+				while(head != &area->free_list[type])
+				{
+					head = head->next;
+				  	nr[order][type]++;
+				}
+				total += (nr[order][type] << order);
+			}
+
+			//nr[order] = area->nr_free;		
+		}
+		spin_unlock_irqrestore(&zone->lock, flags);
+		for (order = 0; order < MAX_ORDER; order++) {
+			show_cnt = 0;
+
+			for (type = 0; type < MIGRATE_TYPES; type++) {
+				if(nr[order][type])
+			   	{
+			      	printk(CMA_DEBUG "[%c]%lu*%lukB ", migrate_types[type],
+			                                 nr[order][type], K(1UL) << order);
+					show_cnt = 1;
+				}
+			}
+
+			if(show_cnt)
+				printk(CMA_DEBUG "\n");
+		}
+		printk(CMA_DEBUG "\ntotal= %lukB free\n", K(total));
+		printk(CMA_DEBUG "%ld total pagecache pages\n\n", global_page_state(NR_FILE_PAGES));
+	}
+}
+#endif
+
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+extern db_time_table time_cnt_table[DB_MAX_CNT];
+#endif
 struct scan_control {
 	/* Incremented by the number of inactive pages that were scanned */
 	unsigned long nr_scanned;
@@ -130,6 +201,14 @@ struct scan_control {
  * From 0 .. 100.  Higher means more swappy.
  */
 int vm_swappiness = 60;
+
+#ifdef CONFIG_ZRAM
+/*
+ * MSTAR: 10 pages by default. Higher means swap out less.
+ */
+int bypass_zram_watermark = 40960;
+#endif
+
 unsigned long vm_total_pages;	/* The total number of pages which the VM controls */
 
 static LIST_HEAD(shrinker_list);
@@ -155,6 +234,40 @@ static unsigned long get_lru_size(struct lruvec *lruvec, enum lru_list lru)
 	return zone_page_state(lruvec_zone(lruvec), NR_LRU_BASE + lru);
 }
 
+struct dentry *debug_file;
+
+static int debug_shrinker_show(struct seq_file *s, void *unused)
+{
+	struct shrinker *shrinker;
+	struct shrink_control sc;
+
+	sc.gfp_mask = -1;
+	sc.nr_to_scan = 0;
+
+	down_read(&shrinker_rwsem);
+	list_for_each_entry(shrinker, &shrinker_list, list) {
+		//char name[64];
+		int num_objs;
+
+		num_objs = shrinker->shrink(shrinker, &sc);
+		seq_printf(s, "%pf %d\n", shrinker->shrink, num_objs);
+	}
+	up_read(&shrinker_rwsem);
+	return 0;
+}
+
+static int debug_shrinker_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, debug_shrinker_show, inode->i_private);
+}
+
+static const struct file_operations debug_shrinker_fops = {
+        .open = debug_shrinker_open,
+        .read = seq_read,
+        .llseek = seq_lseek,
+        .release = single_release,
+};
+
 /*
  * Add a shrinker callback to be called from the vm
  */
@@ -166,6 +279,15 @@ void register_shrinker(struct shrinker *shrinker)
 	up_write(&shrinker_rwsem);
 }
 EXPORT_SYMBOL(register_shrinker);
+
+static int __init add_shrinker_debug(void)
+{
+	debugfs_create_file("shrinker", 0644, NULL, NULL,
+			    &debug_shrinker_fops);
+	return 0;
+}
+
+late_initcall(add_shrinker_debug);
 
 /*
  * Remove one
@@ -182,8 +304,20 @@ static inline int do_shrinker_shrink(struct shrinker *shrinker,
 				     struct shrink_control *sc,
 				     unsigned long nr_to_scan)
 {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	unsigned long time_start = jiffies;
+	int ret;
+
+	sc->nr_to_scan = nr_to_scan;
+	ret = (*shrinker->shrink)(shrinker, sc);
+	atomic_add((jiffies-time_start), &time_cnt_table[6].lone_time);
+	atomic_inc(&time_cnt_table[6].do_cnt);
+
+	return ret;
+#else
 	sc->nr_to_scan = nr_to_scan;
 	return (*shrinker->shrink)(shrinker, sc);
+#endif
 }
 
 #define SHRINK_BATCH 128
@@ -210,6 +344,9 @@ unsigned long shrink_slab(struct shrink_control *shrink,
 			  unsigned long nr_pages_scanned,
 			  unsigned long lru_pages)
 {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	unsigned long time_start = jiffies;
+#endif
 	struct shrinker *shrinker;
 	unsigned long ret = 0;
 
@@ -314,6 +451,11 @@ unsigned long shrink_slab(struct shrink_control *shrink,
 	up_read(&shrinker_rwsem);
 out:
 	cond_resched();
+
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	atomic_add((jiffies-time_start), &time_cnt_table[5].lone_time);
+	atomic_inc(&time_cnt_table[5].do_cnt);
+#endif
 	return ret;
 }
 
@@ -1627,8 +1769,48 @@ static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
 	return shrink_inactive_list(nr_to_scan, lruvec, sc, lru);
 }
 
+#ifdef CONFIG_ZRAM
+static bool need_to_bypass_zram(void) {
+	unsigned long flags, order, freesize = 0;
+	struct zone *zone;
+	bool ret = false;
+
+	for_each_zone(zone) {
+		if (!populated_zone(zone))
+			continue;
+
+		spin_lock_irqsave(&zone->lock, flags);
+		for (order = 0; order < MAX_ORDER; ++order) {
+			unsigned long freecount = 0;
+			struct free_area *area;
+			struct list_head *curr;
+			area = &(zone->free_area[order]);
+
+			list_for_each(curr, &area->free_list[MIGRATE_UNMOVABLE])
+				++freecount;
+
+			freesize += freecount * (4096 << order);
+		}
+		spin_unlock_irqrestore(&zone->lock, flags);
+	}
+
+	if (freesize < bypass_zram_watermark) {
+		printk(KERN_DEBUG "the unmovable free memory is %lu bytes and less than %d, " 
+				"so we do not swap out\n", freesize, bypass_zram_watermark);
+		ret = true;
+	}
+
+	return ret;
+}
+#endif
+
 static int vmscan_swappiness(struct scan_control *sc)
 {
+#ifdef CONFIG_ZRAM
+	if (need_to_bypass_zram())
+		return 0;
+#endif
+
 	if (global_reclaim(sc))
 		return vm_swappiness;
 	return mem_cgroup_swappiness(sc->target_mem_cgroup);
@@ -2027,6 +2209,20 @@ static inline bool compaction_ready(struct zone *zone, struct scan_control *sc)
 	if (!compaction_suitable(zone, sc->order))
 		return false;
 
+#ifdef CONFIG_CMA
+#ifdef CONFIG_MP_CMA_PATCH_CMA_AGGRESSIVE_ALLOC
+#ifdef CONFIG_MP_CMA_PATCH_CMA_MORE_AGGRESSIVE_ALLOC
+#ifdef CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA
+	/* because zone_watermark_ok won't take consider of CMA pages, we need to consider CMA pages here in case migrating from noncma to cma
+	  possibility. zone_watermark_ok_safe will not consider CMA pages
+	*/
+    watermark_ok = zone_watermark_with_cma_ok_safe(zone, 0, watermark, 0, 0);
+	
+#endif
+#endif
+#endif
+#endif
+
 	return watermark_ok;
 }
 
@@ -2053,6 +2249,9 @@ static inline bool compaction_ready(struct zone *zone, struct scan_control *sc)
  */
 static bool shrink_zones(struct zonelist *zonelist, struct scan_control *sc)
 {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	unsigned long time_start = jiffies;
+#endif
 	struct zoneref *z;
 	struct zone *zone;
 	unsigned long nr_soft_reclaimed;
@@ -2114,6 +2313,10 @@ static bool shrink_zones(struct zonelist *zonelist, struct scan_control *sc)
 		shrink_zone(zone, sc);
 	}
 
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	atomic_add((jiffies-time_start), &time_cnt_table[4].lone_time);
+	atomic_inc(&time_cnt_table[4].do_cnt);
+#endif
 	return aborted_reclaim;
 }
 
@@ -2176,6 +2379,9 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 					struct scan_control *sc,
 					struct shrink_control *shrink)
 {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	unsigned long time_start = jiffies;
+#endif
 	unsigned long total_scanned = 0;
 	struct reclaim_state *reclaim_state = current->reclaim_state;
 	struct zoneref *z;
@@ -2225,6 +2431,18 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 		if (sc->priority < DEF_PRIORITY - 2)
 			sc->may_writepage = 1;
 
+#ifdef CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA
+#ifdef CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA_DEBUG
+		if(sc->priority == 0)
+		{
+        	printk(KERN_ERR "@@a do_try_to_free_pages free: %llu, cmafree: %llu, pressure 0, order: %d\n", 
+		   		(u64)global_page_state(NR_FREE_PAGES),
+		   		(u64)global_page_state(NR_FREE_CMA_PAGES),
+		   	  	sc->order); 
+           	show_freemem_info();
+        }
+#endif
+#endif
 		/*
 		 * Try to write back as many pages as we just scanned.  This
 		 * tends to cause slow streaming writers to write data to the
@@ -2253,6 +2471,11 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 
 out:
 	delayacct_freepages_end();
+
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	atomic_add((jiffies-time_start), &time_cnt_table[3].lone_time);
+	atomic_inc(&time_cnt_table[3].do_cnt);
+#endif
 
 	if (sc->nr_reclaimed)
 		return sc->nr_reclaimed;
@@ -2374,6 +2597,9 @@ out:
 unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 				gfp_t gfp_mask, nodemask_t *nodemask)
 {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	unsigned long time_start = jiffies;
+#endif
 	unsigned long nr_reclaimed;
 	struct scan_control sc = {
 		.gfp_mask = (gfp_mask = memalloc_noio_flags(gfp_mask)),
@@ -2396,7 +2622,13 @@ unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 	 * point.
 	 */
 	if (throttle_direct_reclaim(gfp_mask, zonelist, nodemask))
+	{
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+		atomic_add((jiffies-time_start), &time_cnt_table[2].lone_time);
+		atomic_inc(&time_cnt_table[2].do_cnt);
+#endif
 		return 1;
+	}
 
 	trace_mm_vmscan_direct_reclaim_begin(order,
 				sc.may_writepage,
@@ -2406,6 +2638,10 @@ unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 
 	trace_mm_vmscan_direct_reclaim_end(nr_reclaimed);
 
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	atomic_add((jiffies-time_start), &time_cnt_table[2].lone_time);
+	atomic_inc(&time_cnt_table[2].do_cnt);
+#endif
 	return nr_reclaimed;
 }
 
@@ -2600,18 +2836,20 @@ static bool prepare_kswapd_sleep(pg_data_t *pgdat, int order, long remaining,
 		return false;
 
 	/*
-	 * There is a potential race between when kswapd checks its watermarks
-	 * and a process gets throttled. There is also a potential race if
-	 * processes get throttled, kswapd wakes, a large process exits therby
-	 * balancing the zones that causes kswapd to miss a wakeup. If kswapd
-	 * is going to sleep, no process should be sleeping on pfmemalloc_wait
-	 * so wake them now if necessary. If necessary, processes will wake
-	 * kswapd and get throttled again
+	 * The throttled processes are normally woken up in balance_pgdat() as
+	 * soon as pfmemalloc_watermark_ok() is true. But there is a potential
+	 * race between when kswapd checks the watermarks and a process gets
+	 * throttled. There is also a potential race if processes get
+	 * throttled, kswapd wakes, a large process exits thereby balancing the
+	 * zones, which causes kswapd to exit balance_pgdat() before reaching
+	 * the wake up checks. If kswapd is going to sleep, no process should
+	 * be sleeping on pfmemalloc_wait, so wake them now if necessary. If
+	 * the wake up is premature, processes will wake kswapd and get
+	 * throttled again. The difference from wake ups in balance_pgdat() is
+	 * that here we are under prepare_to_wait().
 	 */
-	if (waitqueue_active(&pgdat->pfmemalloc_wait)) {
-		wake_up(&pgdat->pfmemalloc_wait);
-		return false;
-	}
+	if (waitqueue_active(&pgdat->pfmemalloc_wait))
+		wake_up_all(&pgdat->pfmemalloc_wait);
 
 	return pgdat_balanced(pgdat, order, classzone_idx);
 }
@@ -2798,6 +3036,19 @@ loop_again:
 			if (sc.priority < DEF_PRIORITY - 2)
 				sc.may_writepage = 1;
 
+#ifdef CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA
+#ifdef CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA_DEBUG
+			if(sc.priority == 0)
+			{
+				printk(KERN_ERR "@@a balance_pgdat zone%d pressure 0 free: %llu, cma_free: %llu, low_water_mark: %lu, for order: %d\n", i, 
+			    	(u64)zone_page_state(zone, NR_FREE_PAGES), 
+			        (u64)zone_page_state(zone, NR_FREE_CMA_PAGES), low_wmark_pages(zone), order); 
+
+			     show_freemem_info();
+			}
+#endif
+#endif
+			
 			if (zone->all_unreclaimable) {
 				if (end_zone && end_zone == i)
 					end_zone--;
@@ -2873,7 +3124,12 @@ out:
 	 * be cleared as kswapd is the only mechanism that clears the flag
 	 * and it is potentially going to sleep here.
 	 */
-	if (order) {
+	if (order
+#ifdef CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA
+            || global_page_state(NR_FREE_CMA_PAGES)>=1024*4
+#endif
+		) 
+	{
 		int zones_need_compaction = 1;
 
 		for (i = 0; i <= end_zone; i++) {

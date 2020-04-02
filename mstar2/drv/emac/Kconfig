@@ -1,0 +1,216 @@
+config MSTAR_EMAC
+select NET
+select NET_ETHERNET
+select MII
+select PACKET
+select USE_POLICY_FWD
+select INET
+select NETDEVICES
+
+tristate "EMAC"
+default y
+
+---help---
+Enable compilation option for driver EMAC
+
+if MSTAR_EMAC
+config MSTAR_EMAC_V3
+bool "EMAC V3"
+default n
+help
+    EMAC Experimental driver. K6, K6lite support
+
+if MSTAR_EMAC_V3
+choice
+    prompt "Select RX Method"
+    default EMAC_RX_Memory_Copy
+
+config EMAC_RX_Memory_Copy
+bool "Memory_Copy"
+default n
+help
+    Use memcpy and additional RX buffer for RX callback function
+
+config EMAC_RX_DMA
+bool "DMA"
+default n
+help
+    EMAC Direct access Kernel Memory in RX callback function.
+    K6, K6lite can only use one MIU for kernel Memory.
+
+endchoice
+
+config EMAC_RX_NAPI
+bool "Enable RX_NAPI"
+default n
+help
+    Enable NAPI Method. Disable interrupt during heavy tracffic.
+
+config EMAC_RX_NAPI_WEIGHT
+int "RX_NAPI_WEIGHT"
+default 64
+depends on EMAC_RX_NAPI
+help
+    NAPI Weight
+
+config EMAC_RX_GRO
+bool "Enable RX_GRO"
+default n
+depends on EMAC_RX_NAPI
+help
+    Enable Generic receive offload. Merge packet with same destination and source
+
+config EMAC_RX_DELAY_INTERRUPT
+bool "Enable RX Delay Interrupt"
+default y
+help
+    Enable RX Delay Interrupt. Reduce interrupt number.
+
+if EMAC_RX_DELAY_INTERRUPT
+config EMAC_DELAY_INTERRUPT_NUMBER
+int "Packet Threshold"
+default 64
+help
+    MAX 255
+
+config EMAC_DELAY_INTERRUPT_TIMEOUT
+int "Timeout"
+default 6
+help
+    MAX 255
+
+endif
+
+choice
+    prompt "Select TX Method"
+    default EMAC_TX_Memory_Copy
+
+
+config EMAC_TX_Memory_Copy
+bool "Memory_Copy"
+default n
+help
+    Use memcpy and additional TX buffer for TX callback function
+
+config EMAC_TX_DMA
+bool "DMA"
+default n
+depends on MSTAR_K6Lite
+help
+    EMAC Direct access Kernel Memory in TX callback function.
+
+endchoice
+
+choice
+    prompt "Select TX Queue"
+    default EMAC_TX_DESC_MODE if MSTAR_K6Lite
+    default EMAC_NEW_TX_QUEUE if MSTAR_K6
+    default EMAC_TX_4_QUEUE
+
+config EMAC_TX_4_QUEUE
+bool "Default TX Queue"
+default n
+help
+    Use default TX Queue 4.
+
+config EMAC_NEW_TX_QUEUE
+bool "Enable Additional New TX Queue"
+default n
+depends on (MSTAR_K6Lite || MSTAR_K6) && !EMAC_10T_RANDOM_WAVEFORM
+help
+    Enable New TX Queue. Larger TX Queue.
+
+config EMAC_TX_DESC_MODE
+bool "Enable TX descriptor Mode"
+default n
+depends on MSTAR_K6Lite && !EMAC_10T_RANDOM_WAVEFORM
+help
+    Enable TX dexcriptor Mode. Use DRAM for TX QUEUE. K6lite support
+
+endchoice
+
+config EMAC_NEW_TX_QUEUE_THRESHOLD
+int "New TX Queue Threshold"
+default 60
+depends on EMAC_NEW_TX_QUEUE
+help
+    MAX 63
+
+config EMAC_TX_DESC_NUMBER
+int "TX descriptor number"
+default 240
+depends on EMAC_TX_DESC_MODE
+help
+    MAX 1024
+
+
+config EMAC_10T_RANDOM_WAVEFORM
+bool "EMAC 10T random waveform test"
+depends on MSTAR_K6Lite
+default n
+help
+    Use ethtool to control 10T random waveform test
+
+endif
+
+config EMAC_SUPPLY_RNG
+bool "Supply to random number generator device"
+default n
+help
+    Supply to random number generator device
+
+config ETHERNET_ALBANY
+bool "Supply to internel PHY"
+default n
+help
+    Supply to internel PHY
+
+config MSTAR_HW_TX_CHECKSUM
+bool "Supply to hardware TX checksum"
+default n
+help
+    Supply to hardware TX checksum
+    
+config K3_RX_SWPATCH
+bool "Supply to K3 RX SW Patch"
+default n
+help
+    Supply to K3 RX frame drop due to padding 4 bytes issue
+
+config DISCONNECT_DELAY_S
+int "Disconnect delay in second"
+default 1
+help
+    Disconnect delay in second
+
+config MSTAR_EEE
+bool "Supply to EEE function"
+default n
+help
+    Supply to EEE function
+
+config MSTAR_EMAC_NAPI
+bool "Supply to EMAC NAPI"
+default n
+help
+    Supply to EMAC NAPI
+
+config EMAC_EPHY_LPA_FORCE_SPEED
+bool "Link speed patch for link partner with force speed mode"
+default n
+help
+    Patch for link speed detection when link partner is with force speed mode
+
+config EMAC_PHY_RESTART_AN
+bool "PHY restart anto-nego patch"
+default n
+help
+    Patch to avoid auto-nego fail while doing stress for restarting system
+
+config EMAC_RX_SPEED_LIMIT
+bool "Enable Rx speed limit feature"
+default n
+help
+    Enable Rx speed limit feature
+
+endif

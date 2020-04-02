@@ -326,7 +326,9 @@ void usbnet_skb_return (struct usbnet *dev, struct sk_buff *skb)
 		return;
 	}
 
-	skb->protocol = eth_type_trans (skb, dev->net);
+	if (!skb->protocol)
+		skb->protocol = eth_type_trans(skb, dev->net);
+
 	dev->net->stats.rx_packets++;
 	dev->net->stats.rx_bytes += skb->len;
 
@@ -1560,6 +1562,9 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 		/* WWAN devices should always be named "wwan%d" */
 		if ((dev->driver_info->flags & FLAG_WWAN) != 0)
 			strcpy(net->name, "wwan%d");
+		/* RMNET devices should always be named "rmnet%d" */
+		if ((dev->driver_info->flags & FLAG_RMNET) != 0)
+			strcpy(net->name, "rmnet%d");
 
 		/* devices that cannot do ARP */
 		if ((dev->driver_info->flags & FLAG_NOARP) != 0)

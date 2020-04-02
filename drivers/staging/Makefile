@@ -4,6 +4,7 @@
 obj-$(CONFIG_STAGING)		+= staging.o
 
 obj-y				+= media/
+obj-y += pasr/
 obj-$(CONFIG_ET131X)		+= et131x/
 obj-$(CONFIG_SLICOSS)		+= slicoss/
 obj-$(CONFIG_USBIP_CORE)	+= usbip/
@@ -62,3 +63,4 @@ obj-$(CONFIG_FIREWIRE_SERIAL)	+= fwserial/
 obj-$(CONFIG_ZCACHE)		+= zcache/
 obj-$(CONFIG_GOLDFISH)		+= goldfish/
 obj-$(CONFIG_USB_DWC2)		+= dwc2/
+obj-$(CONFIG_NVSHM)		+= nvshm/

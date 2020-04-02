@@ -97,4 +97,14 @@ obj-$(CONFIG_RC_MAP) += rc-adstech-dvb-t-pci.o \
 			rc-videomate-s350.o \
 			rc-videomate-tv-pvr.o \
 			rc-winfast.o \
-			rc-winfast-usbii-deluxe.o
+			rc-winfast-usbii-deluxe.o \
+#ifdef CONFIG_MSTAR_IR_INPUT_DEVICE                        
+                        obj-$(CONFIG_RC_MAP) += rc-mstar-tv.o \
+			rc-changhong-tv.o \
+			rc-haier-tv.o \
+			rc-hisense-tv.o \
+			rc-konka-tv.o \
+			rc-skyworth-tv.o \
+			rc-tcl-tv.o \
+			rc-rc6-6amode.o
+#endif 

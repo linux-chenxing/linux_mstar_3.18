@@ -113,9 +113,30 @@ static int quiet_error(struct buffer_head *bh)
 static void buffer_io_error(struct buffer_head *bh)
 {
 	char b[BDEVNAME_SIZE];
+#if(1 == MP_FAT_DEBUG_MESSAGE_CONTROL)
+	if(bh->b_bdev && bh->b_bdev->bd_disk){
+		if((bh->b_bdev->bd_disk->flags & GENHD_FL_UP) == 0){
+			if(false == bh->b_bdev->not_msg_flag && bh->b_bdev->msg_count < 50)
+			{
+				bh->b_bdev->msg_count++;
+			}
+			else if(50 == bh->b_bdev->msg_count && false == bh->b_bdev->not_msg_flag)
+			{
+				bh->b_bdev->not_msg_flag = true;
+			}
+		}
+	}
+	if(bh->b_bdev && false == bh->b_bdev->not_msg_flag)
+	{
+		printk(KERN_ERR "Buffer I/O error on device %s,logical block %Lu\n",
+			bdevname(bh->b_bdev, b),
+			(unsigned long long)bh->b_blocknr);
+	}
+#else
 	printk(KERN_ERR "Buffer I/O error on device %s, logical block %Lu\n",
 			bdevname(bh->b_bdev, b),
 			(unsigned long long)bh->b_blocknr);
+#endif
 }
 
 /*
@@ -975,7 +996,7 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	int ret = 0;		/* Will call free_more_memory() */
 
 	page = find_or_create_page(inode->i_mapping, index,
-		(mapping_gfp_mask(inode->i_mapping) & ~__GFP_FS)|__GFP_MOVABLE);
+		(mapping_gfp_mask(inode->i_mapping) & ~__GFP_FS));
 	if (!page)
 		return ret;
 

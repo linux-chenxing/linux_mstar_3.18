@@ -133,6 +133,11 @@ int copy_thread(unsigned long clone_flags, unsigned long usp,
 	p->thread.reg29 = (unsigned long) childregs;
 	p->thread.reg31 = (unsigned long) ret_from_fork;
 
+	
+#if ((CONFIG_MP_PLATFORM_MIPS == 1) && defined (CONFIG_SHOW_FAULT_TRACE_INFO)) 
+	p->user_ssp = childregs->regs[29];
+#endif /* CONFIG_SHOW_FAULT_TRACE_INFO */
+
 	/*
 	 * New tasks lose permission to use the fpu. This accelerates context
 	 * switching for most programs since they don't use the fpu.

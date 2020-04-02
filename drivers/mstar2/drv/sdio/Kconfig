@@ -1,0 +1,21 @@
+config MSTAR_SDIO_HOST
+	bool "SD sdio host driver"
+	depends on MMC
+	default n
+	---help---
+		enable sdio host to support SD card
+
+config MSTAR_SDIO_CARD_DETECT
+	bool "card detection support"
+	depends on MSTAR_SDIO_HOST
+	default y
+	---help---
+		enable card detection for sdio host
+
+config MSTAR_SDIO_WRITE_PROTECT
+	bool "write protect support"
+	depends on MSTAR_SDIO_HOST
+	default n
+	---help---
+		enable write protect detection for sdio host
+

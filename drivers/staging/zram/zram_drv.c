@@ -278,6 +278,14 @@ static int zram_bvec_write(struct zram *zram, struct bio_vec *bvec, u32 index,
 		goto out;
 	}
 
+	/*
+	 * zram_slot_free_notify could miss free so that let's
+	 * double check.
+	 */
+	if (unlikely(meta->table[index].handle ||
+			zram_test_flag(meta, index, ZRAM_ZERO)))
+		zram_free_page(zram, index);
+
 	ret = lzo1x_1_compress(uncmem, PAGE_SIZE, src, &clen,
 			       meta->compress_workmem);
 
@@ -335,20 +343,70 @@ out:
 	return ret;
 }
 
+static void handle_pending_slot_free(struct zram *zram)
+{
+	struct zram_slot_free *free_rq;
+
+	spin_lock(&zram->slot_free_lock);
+	while (zram->slot_free_rq) {
+		free_rq = zram->slot_free_rq;
+		zram->slot_free_rq = free_rq->next;
+		zram_free_page(zram, free_rq->index);
+		kfree(free_rq);
+	}
+	spin_unlock(&zram->slot_free_lock);
+}
+
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+#include <linux/delay.h>
+extern db_time_table time_cnt_table[DB_MAX_CNT];
+
+extern atomic_t zram_read_lock_cnt;
+extern atomic_t zram_read_unlock_cnt;
+extern atomic_t zram_write_lock_cnt;
+extern atomic_t zram_write_unlock_cnt;
+#endif
+
 static int zram_bvec_rw(struct zram *zram, struct bio_vec *bvec, u32 index,
 			int offset, struct bio *bio, int rw)
 {
 	int ret;
 
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	atomic_inc(&time_cnt_table[10].do_cnt);
+	ktime_t before_zram;
+	ktime_t diff_zram;
+	before_zram = ktime_get_real();
+#endif
+
 	if (rw == READ) {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+		atomic_inc(&zram_read_lock_cnt);
+#endif
 		down_read(&zram->lock);
+		handle_pending_slot_free(zram);
 		ret = zram_bvec_read(zram, bvec, index, offset, bio);
 		up_read(&zram->lock);
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+		atomic_inc(&zram_read_unlock_cnt);
+#endif
 	} else {
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+		atomic_inc(&zram_write_lock_cnt);
+#endif
 		down_write(&zram->lock);
+		handle_pending_slot_free(zram);
 		ret = zram_bvec_write(zram, bvec, index, offset);
 		up_write(&zram->lock);
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+		atomic_inc(&zram_write_unlock_cnt);
+#endif
 	}
+
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+	diff_zram = ktime_sub(ktime_get_real(), before_zram);
+	atomic_add(diff_zram.tv64, &time_cnt_table[10].lone_time);
+#endif
 
 	return ret;
 }
@@ -581,16 +639,40 @@ void zram_init_device(struct zram *zram, struct zram_meta *meta)
 	pr_debug("Initialization done!\n");
 }
 
+static void zram_slot_free(struct work_struct *work)
+{
+	struct zram *zram;
+
+	zram = container_of(work, struct zram, free_work);
+	down_write(&zram->lock);
+	handle_pending_slot_free(zram);
+	up_write(&zram->lock);
+}
+
+static void add_slot_free(struct zram *zram, struct zram_slot_free *free_rq)
+{
+	spin_lock(&zram->slot_free_lock);
+	free_rq->next = zram->slot_free_rq;
+	zram->slot_free_rq = free_rq;
+	spin_unlock(&zram->slot_free_lock);
+}
+
 static void zram_slot_free_notify(struct block_device *bdev,
 				unsigned long index)
 {
 	struct zram *zram;
+	struct zram_slot_free *free_rq;
 
 	zram = bdev->bd_disk->private_data;
-	down_write(&zram->lock);
-	zram_free_page(zram, index);
-	up_write(&zram->lock);
 	zram_stat64_inc(zram, &zram->stats.notify_free);
+
+	free_rq = kmalloc(sizeof(struct zram_slot_free), GFP_ATOMIC);
+	if (!free_rq)
+		return;
+
+	free_rq->index = index;
+	add_slot_free(zram, free_rq);
+	schedule_work(&zram->free_work);
 }
 
 static const struct block_device_operations zram_devops = {
@@ -605,6 +687,10 @@ static int create_device(struct zram *zram, int device_id)
 	init_rwsem(&zram->lock);
 	init_rwsem(&zram->init_lock);
 	spin_lock_init(&zram->stat64_lock);
+
+	INIT_WORK(&zram->free_work, zram_slot_free);
+	spin_lock_init(&zram->slot_free_lock);
+	zram->slot_free_rq = NULL;
 
 	zram->queue = blk_alloc_queue(GFP_KERNEL);
 	if (!zram->queue) {
@@ -728,6 +814,61 @@ unregister:
 out:
 	return ret;
 }
+
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_MONITOR
+u64 highest_zram_used_size = 0;
+u64 zram_used_size = 0;
+void show_all_zram_read_write_cnt(void)
+{
+	int dev_id = 0;
+	struct zram *zram;
+	struct zram_meta *meta;
+
+	for (dev_id = 0; dev_id < num_devices; dev_id++)
+	{
+		zram = &zram_devices[dev_id];
+		if(zram)
+		{
+			printk("\033[35mFunction = %s, Line = %d, start zram_dev %d\033[m\n", __PRETTY_FUNCTION__, __LINE__, dev_id);
+			
+			// show ths zram read cnt
+			spin_lock(&zram->stat64_lock);
+			printk("zram_device_%d, read: %llu\n", dev_id, zram->stats.num_reads);
+			printk("zram_device_%d, write: %llu\n", dev_id, zram->stats.num_writes);
+			spin_unlock(&zram->stat64_lock);
+
+			meta = zram->meta;
+			down_read(&zram->init_lock);
+			if (zram->init_done)
+			{
+				// show used memory size(from alloc_zspage, the total memory size used for zram compressed data)
+				zram_used_size = zs_get_total_size_bytes(meta->mem_pool);
+				if(zram_used_size > highest_zram_used_size)
+				{
+					highest_zram_used_size = zram_used_size;
+				}
+				printk("alloc_zspage using %llu bytes\n", zram_used_size);
+				printk("highest alloc_zspage using %llu bytes\n", highest_zram_used_size);
+			
+				// show compressed data size(clen)
+				spin_lock(&zram->stat64_lock);
+				printk("zram compressed data size: %llu bytes\n", zram->stats.compr_size);
+				spin_unlock(&zram->stat64_lock);
+
+				// show original data size(stats.pages_stored)
+				printk("zram original data size: %llu bytes\n", (u64)(zram->stats.pages_stored) << PAGE_SHIFT);
+			}
+			up_read(&zram->init_lock);
+
+			zram = NULL;
+			meta = NULL;
+			zram_used_size = 0;
+			
+			printk("\033[35mFunction = %s, Line = %d, finish zram_dev %d\033[m\n", __PRETTY_FUNCTION__, __LINE__, dev_id); // joe.liu
+		}
+	}
+}
+#endif
 
 static void __exit zram_exit(void)
 {

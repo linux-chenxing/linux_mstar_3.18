@@ -20,6 +20,7 @@
 #include <asm/processor.h>
 #include <asm/cpu.h>
 #include <asm/cpu-features.h>
+#include <linux/highmem.h>
 
 /* Cache operations. */
 void (*flush_cache_all)(void);
@@ -81,10 +82,42 @@ SYSCALL_DEFINE3(cacheflush, unsigned long, addr, unsigned long, bytes,
 void __flush_dcache_page(struct page *page)
 {
 	struct address_space *mapping = page_mapping(page);
-	unsigned long addr;
+	unsigned long addr = 0;
 
+#ifdef CONFIG_MP_PLATFORM_MIPS
+	//unsigned long addr = 0;
+
+	if (PageHighMem(page)){
+		/* mips dcache flush didn't take care of high memory pages
+		 * when it needs to be flushed. So we will care the pages
+		 * by mapping the page to some place temporarily and flushing into it.
+		 *
+		 * __flush_dcache_page might be called from irq context.
+		 * KM_IRQ should be used instead of KM_USERx when in irq.
+		 *
+		 * written by joongyu.sun (joongyu.sun@samsung.com) */
+		if(in_irq()){
+			unsigned long flag = 0;
+			local_irq_save(flag);
+			addr = (unsigned long) kmap_atomic(page);
+			flush_data_cache_page(addr);
+			kunmap_atomic((void *)addr);
+			local_irq_restore(flag);
+
+
+		}else {
+			addr = (unsigned long) kmap_atomic(page);
+			flush_data_cache_page(addr);
+			kunmap_atomic((void *)addr);
+		}
+		return;
+	}
+
+#else
+    unsigned long addr;
 	if (PageHighMem(page))
 		return;
+#endif // CONFIG_MP_PLATFORM_MIPS
 	if (mapping && !mapping_mapped(mapping)) {
 		SetPageDcacheDirty(page);
 		return;
@@ -100,6 +133,20 @@ void __flush_dcache_page(struct page *page)
 }
 
 EXPORT_SYMBOL(__flush_dcache_page);
+
+void __flush_icache_page(struct page *page)
+{
+    unsigned long addr;
+#ifdef CONFIG_HIGHMEM
+    addr = (unsigned long)kmap_atomic(page);
+#else
+    addr = (unsigned long)page_address(page);
+#endif
+    flush_icache_range(addr, addr+PAGE_SIZE);
+#ifdef CONFIG_HIGHMEM
+    kunmap_atomic((void*)addr);
+#endif
+}
 
 void __flush_anon_page(struct page *page, unsigned long vmaddr)
 {
@@ -130,7 +177,11 @@ void __update_cache(struct vm_area_struct *vma, unsigned long address,
 	if (unlikely(!pfn_valid(pfn)))
 		return;
 	page = pfn_to_page(pfn);
+#ifdef CONFIG_MP_PLATFORM_MIPS
+	if (Page_dcache_dirty(page)) {
+#else
 	if (page_mapping(page) && Page_dcache_dirty(page)) {
+#endif // CONFIG_MP_PLATFORM_MIPS
 		addr = (unsigned long) page_address(page);
 		if (exec || pages_do_alias(addr, address & PAGE_MASK))
 			flush_data_cache_page(addr);

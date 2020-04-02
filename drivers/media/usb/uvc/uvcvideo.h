@@ -120,8 +120,13 @@
 /* Maximum status buffer size in bytes of interrupt URB. */
 #define UVC_MAX_STATUS_SIZE	16
 
+#if (MP_USB_MSTAR==1)
+#define UVC_CTRL_CONTROL_TIMEOUT	2000
+#define UVC_CTRL_STREAMING_TIMEOUT	10000
+#else
 #define UVC_CTRL_CONTROL_TIMEOUT	300
 #define UVC_CTRL_STREAMING_TIMEOUT	5000
+#endif
 
 /* Maximum allowed number of control mappings per device */
 #define UVC_MAX_CONTROL_MAPPINGS	1024

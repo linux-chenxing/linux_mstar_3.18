@@ -1,0 +1,7 @@
+config MSTAR_FUSION
+	tristate "Fusion"
+	---help---
+	  Fusion is the IPC API used by DirectFB and FusionSound.
+config FUSION_FOR_ANDROID_VERSION_BIGGER_THAN_5.0
+        bool "Fusion (For ANDROID Version > 5.0)"
+        default n

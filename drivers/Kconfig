@@ -72,6 +72,8 @@ source "drivers/hwmon/Kconfig"
 
 source "drivers/thermal/Kconfig"
 
+source "drivers/trusty/Kconfig"
+
 source "drivers/watchdog/Kconfig"
 
 source "drivers/ssb/Kconfig"
@@ -99,6 +101,8 @@ source "drivers/mmc/Kconfig"
 source "drivers/memstick/Kconfig"
 
 source "drivers/leds/Kconfig"
+
+source "drivers/switch/Kconfig"
 
 source "drivers/accessibility/Kconfig"
 
@@ -150,6 +154,8 @@ source "drivers/devfreq/Kconfig"
 
 source "drivers/extcon/Kconfig"
 
+source "drivers/mipi_bif/Kconfig"
+
 source "drivers/memory/Kconfig"
 
 source "drivers/iio/Kconfig"
@@ -166,4 +172,11 @@ source "drivers/ipack/Kconfig"
 
 source "drivers/reset/Kconfig"
 
+source "drivers/edp/Kconfig"
+
+source "drivers/gpu/nvgpu/Kconfig"
+
+source "drivers/htc_debug/stability/Kconfig"
+
+source "drivers/smaf/Kconfig"
 endmenu

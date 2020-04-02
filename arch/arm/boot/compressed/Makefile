@@ -4,6 +4,10 @@
 # create a compressed vmlinuz image from the original vmlinux
 #
 
+ifeq ($(CONFIG_Kasan_Switch_On),y)
+KASAN_SANITIZE	:= n
+endif
+
 OBJS		=
 
 # Ensure that MMCIF loader code appears early in the image

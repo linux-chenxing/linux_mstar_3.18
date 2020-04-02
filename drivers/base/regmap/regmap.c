@@ -123,7 +123,10 @@ bool regmap_volatile(struct regmap *map, unsigned int reg)
 	if (map->volatile_table)
 		return _regmap_check_range_table(map, reg, map->volatile_table);
 
-	return true;
+	if (map->cache_ops)
+		return false;
+	else
+		return true;
 }
 
 bool regmap_precious(struct regmap *map, unsigned int reg)
@@ -302,13 +305,16 @@ static void regmap_unlock_mutex(void *__map)
 static void regmap_lock_spinlock(void *__map)
 {
 	struct regmap *map = __map;
-	spin_lock(&map->spinlock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&map->spinlock, flags);
+	map->spinlock_flags = flags;
 }
 
 static void regmap_unlock_spinlock(void *__map)
 {
 	struct regmap *map = __map;
-	spin_unlock(&map->spinlock);
+	spin_unlock_irqrestore(&map->spinlock, map->spinlock_flags);
 }
 
 static void dev_get_regmap_release(struct device *dev, void *res)
@@ -452,6 +458,7 @@ struct regmap *regmap_init(struct device *dev,
 	map->readable_reg = config->readable_reg;
 	map->volatile_reg = config->volatile_reg;
 	map->precious_reg = config->precious_reg;
+	map->reg_volatile_set = config->reg_volatile_set;
 	map->cache_type = config->cache_type;
 	map->name = config->name;
 
@@ -825,6 +832,7 @@ int regmap_reinit_cache(struct regmap *map, const struct regmap_config *config)
 	map->readable_reg = config->readable_reg;
 	map->volatile_reg = config->volatile_reg;
 	map->precious_reg = config->precious_reg;
+	map->reg_volatile_set = config->reg_volatile_set;
 	map->cache_type = config->cache_type;
 
 	regmap_debugfs_init(map, config->name);

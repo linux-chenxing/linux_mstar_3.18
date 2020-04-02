@@ -192,7 +192,6 @@ struct machine_desc * __init setup_machine_tags(phys_addr_t __atags_pointer,
 	 */
 	for_each_machine_desc(p)
 		if (machine_nr == p->nr) {
-			printk("Machine: %s\n", p->name);
 			mdesc = p;
 			break;
 		}

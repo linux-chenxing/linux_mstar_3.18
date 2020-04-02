@@ -61,11 +61,27 @@
  * Enable and disable debug exceptions.
  */
 	.macro	disable_dbg
+#ifdef CONFIG_DENVER_CPU
+	msr	daifset, #12
+#else
 	msr	daifset, #8
+#endif
 	.endm
 
 	.macro	enable_dbg
+#ifdef CONFIG_DENVER_CPU
+	msr	daifclr, #12
+#else
 	msr	daifclr, #8
+#endif
+	.endm
+
+	.macro	enable_dbg_irq
+#ifdef CONFIG_DENVER_CPU
+	msr	daifclr, #14
+#else
+	msr	daifclr, #10
+#endif
 	.endm
 
 	.macro	disable_step, tmp
@@ -114,4 +130,35 @@ lr	.req	x30		// link register
 	 .macro	ventry	label
 	.align	7
 	b	\label
+	.endm
+
+/*
+ * Select code when configured for BE.
+ */
+#ifdef CONFIG_CPU_BIG_ENDIAN
+#define CPU_BE(code...) code
+#else
+#define CPU_BE(code...)
+#endif
+
+/*
+ * Select code when configured for LE.
+ */
+#ifdef CONFIG_CPU_BIG_ENDIAN
+#define CPU_LE(code...)
+#else
+#define CPU_LE(code...) code
+#endif
+
+/*
+ * Define a macro that constructs a 64-bit value by concatenating two
+ * 32-bit registers. Note that on big endian systems the order of the
+ * registers is swapped.
+ */
+#ifndef CONFIG_CPU_BIG_ENDIAN
+	.macro	regs_to_64, rd, lbits, hbits
+#else
+	.macro	regs_to_64, rd, hbits, lbits
+#endif
+	orr	\rd, \lbits, \hbits, lsl #32
 	.endm

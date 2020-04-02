@@ -1,0 +1,9 @@
+config MSTAR_PWM
+
+
+tristate "PWM"
+default y
+
+---help---
+Enable compilation option for driver PWM
+

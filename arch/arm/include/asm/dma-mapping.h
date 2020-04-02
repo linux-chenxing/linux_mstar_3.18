@@ -12,6 +12,7 @@
 #include <asm/memory.h>
 
 #define DMA_ERROR_CODE	(~0)
+#define FLUSH_DCACHE_AREA	__cpuc_flush_dcache_area
 extern struct dma_map_ops arm_dma_ops;
 extern struct dma_map_ops arm_coherent_dma_ops;
 
@@ -32,7 +33,11 @@ static inline void set_dma_ops(struct device *dev, struct dma_map_ops *ops)
 
 static inline int dma_set_mask(struct device *dev, u64 mask)
 {
-	return get_dma_ops(dev)->set_dma_mask(dev, mask);
+	struct dma_map_ops *ops = get_dma_ops(dev);
+
+	if (ops->set_dma_mask)
+		return ops->set_dma_mask(dev, mask);
+	return 0;
 }
 
 #ifdef __arch_page_to_dma
@@ -129,8 +134,9 @@ extern void *arm_dma_alloc(struct device *dev, size_t size, dma_addr_t *handle,
 			   gfp_t gfp, struct dma_attrs *attrs);
 
 #define dma_alloc_coherent(d, s, h, f) dma_alloc_attrs(d, s, h, f, NULL)
+#define dma_alloc_at_coherent(d, s, h, f) dma_alloc_at_attrs(d, s, h, f, NULL)
 
-static inline void *dma_alloc_attrs(struct device *dev, size_t size,
+static inline void *dma_alloc_at_attrs(struct device *dev, size_t size,
 				       dma_addr_t *dma_handle, gfp_t flag,
 				       struct dma_attrs *attrs)
 {
@@ -141,6 +147,14 @@ static inline void *dma_alloc_attrs(struct device *dev, size_t size,
 	cpu_addr = ops->alloc(dev, size, dma_handle, flag, attrs);
 	debug_dma_alloc_coherent(dev, size, *dma_handle, cpu_addr);
 	return cpu_addr;
+}
+
+static inline void *dma_alloc_attrs(struct device *dev, size_t size,
+				       dma_addr_t *dma_handle, gfp_t flag,
+				       struct dma_attrs *attrs)
+{
+	*dma_handle = DMA_ERROR_CODE;
+	return dma_alloc_at_attrs(dev, size, dma_handle, flag, attrs);
 }
 
 /**
@@ -172,6 +186,103 @@ static inline void dma_free_attrs(struct device *dev, size_t size,
 	debug_dma_free_coherent(dev, size, cpu_addr, dma_handle);
 	ops->free(dev, size, cpu_addr, dma_handle, attrs);
 }
+
+static inline dma_addr_t dma_iova_alloc(struct device *dev, size_t size,
+					struct dma_attrs *attrs)
+{
+	struct dma_map_ops *ops = get_dma_ops(dev);
+	BUG_ON(!ops);
+
+	return ops->iova_alloc(dev, size, attrs);
+}
+
+static inline void dma_iova_free(struct device *dev, dma_addr_t addr,
+				 size_t size, struct dma_attrs *attrs)
+{
+	struct dma_map_ops *ops = get_dma_ops(dev);
+	BUG_ON(!ops);
+
+	ops->iova_free(dev, addr, size, attrs);
+}
+
+static inline dma_addr_t dma_iova_alloc_at(struct device *dev, dma_addr_t *addr,
+					   size_t size, struct dma_attrs *attrs)
+{
+	struct dma_map_ops *ops = get_dma_ops(dev);
+	BUG_ON(!ops);
+
+	return ops->iova_alloc_at(dev, addr, size, attrs);
+}
+
+static inline size_t dma_iova_get_free_total(struct device *dev)
+{
+	struct dma_map_ops *ops = get_dma_ops(dev);
+	BUG_ON(!ops);
+
+	return ops->iova_get_free_total(dev);
+}
+
+static inline size_t dma_iova_get_free_max(struct device *dev)
+{
+	struct dma_map_ops *ops = get_dma_ops(dev);
+	BUG_ON(!ops);
+
+	return ops->iova_get_free_max(dev);
+}
+
+#ifdef CONFIG_ARM_DMA_USE_IOMMU
+static inline dma_addr_t
+dma_map_linear_attrs(struct device *dev, phys_addr_t pa, size_t size,
+		     enum dma_data_direction dir, struct dma_attrs *attrs)
+{
+	dma_addr_t da, req = pa;
+
+	struct dma_map_ops *ops = get_dma_ops(dev);
+	dma_addr_t addr;
+
+	da = dma_iova_alloc_at(dev, &req, size, attrs);
+	if (da == DMA_ERROR_CODE) {
+		DEFINE_DMA_ATTRS(_attrs);
+		switch (req) {
+		case -ENXIO:
+			/* Allow to map outside of map */
+			if (!attrs)
+				attrs = &_attrs;
+			dma_set_attr(DMA_ATTR_SKIP_CPU_SYNC, attrs);
+			da = (dma_addr_t)pa;
+			break;
+		case -EINVAL:
+		default:
+			return DMA_ERROR_CODE;
+		}
+	}
+
+	BUG_ON(!valid_dma_direction(dir));
+	addr = ops->map_page_at(dev, phys_to_page(pa), da,
+			     (unsigned long)pa & ~PAGE_MASK, size,
+			     dir, attrs);
+	debug_dma_map_page(dev, phys_to_page(pa),
+			   (unsigned long)pa & ~PAGE_MASK, size,
+			   dir, addr, true);
+	return addr;
+
+}
+
+extern bool device_is_iommuable(struct device *dev);
+
+#else
+static inline dma_addr_t
+dma_map_linear_attrs(struct device *dev, phys_addr_t pa, size_t size,
+		     enum dma_data_direction dir, struct dma_attrs *attrs)
+{
+	return DMA_ERROR_CODE;
+}
+
+static inline bool device_is_iommuable(struct device *dev)
+{
+	return false;
+}
+#endif
 
 /**
  * arm_dma_mmap - map a coherent DMA allocation into user space

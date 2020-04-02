@@ -47,7 +47,11 @@
 #define SKB_MAX_ORDER(X, ORDER) \
 	SKB_WITH_OVERHEAD((PAGE_SIZE << (ORDER)) - (X))
 #define SKB_MAX_HEAD(X)		(SKB_MAX_ORDER((X), 0))
+#ifdef CONFIG_MP_CMA_PATCH_SMALLER_SOCKET_BUFFER
+#define SKB_MAX_ALLOC		(SKB_MAX_ORDER(0, 0))
+#else
 #define SKB_MAX_ALLOC		(SKB_MAX_ORDER(0, 2))
+#endif
 
 /* return minimum truesize of one skb containing X bytes of data */
 #define SKB_TRUESIZE(X) ((X) +						\
@@ -1941,8 +1945,11 @@ static inline void __skb_queue_purge(struct sk_buff_head *list)
 	while ((skb = __skb_dequeue(list)) != NULL)
 		kfree_skb(skb);
 }
-
+#ifdef CONFIG_MP_CMA_PATCH_SMALLER_SOCKET_BUFFER
+#define NETDEV_FRAG_PAGE_MAX_ORDER get_order(4096)
+#else
 #define NETDEV_FRAG_PAGE_MAX_ORDER get_order(32768)
+#endif //CONFIG_MP_CMA_PATCH_SMALLER_SOCKET_BUFFER
 #define NETDEV_FRAG_PAGE_MAX_SIZE  (PAGE_SIZE << NETDEV_FRAG_PAGE_MAX_ORDER)
 #define NETDEV_PAGECNT_MAX_BIAS	   NETDEV_FRAG_PAGE_MAX_SIZE
 
@@ -1984,6 +1991,22 @@ static inline struct sk_buff *dev_alloc_skb(unsigned int length)
 	return netdev_alloc_skb(NULL, length);
 }
 
+#ifdef CONFIG_MP_CMA_PATCH_PCI_ALLOC_FREE_WITH_CMA
+extern struct sk_buff *__netdev_alloc_skb_from_cma(struct device *cma_dev, struct net_device *dev,
+					  unsigned int length,
+					  gfp_t gfp_mask);
+
+static inline struct sk_buff *netdev_alloc_skb_from_cma(struct device *cma_dev, struct net_device *dev,
+					       unsigned int length)
+{
+	return __netdev_alloc_skb_from_cma(cma_dev, dev, length, GFP_ATOMIC);
+}
+
+static inline struct sk_buff *dev_alloc_skb_from_cma(struct device *cma_dev, unsigned int length)
+{
+	return netdev_alloc_skb_from_cma(cma_dev, NULL, length);
+}
+#endif
 
 static inline struct sk_buff *__netdev_alloc_skb_ip_align(struct net_device *dev,
 		unsigned int length, gfp_t gfp)

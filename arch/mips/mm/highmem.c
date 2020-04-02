@@ -53,6 +53,12 @@ void *kmap_atomic(struct page *page)
 		return page_address(page);
 
 	type = kmap_atomic_idx_push();
+
+#ifdef CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+      vaddr = (unsigned long)page_address(page);
+      idx = (vaddr >> PAGE_SHIFT) & (FIX_N_COLOURS - 1);
+#endif // CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+
 	idx = type + KM_TYPE_NR*smp_processor_id();
 	vaddr = __fix_to_virt(FIX_KMAP_BEGIN + idx);
 #ifdef CONFIG_DEBUG_HIGHMEM
@@ -70,15 +76,33 @@ void __kunmap_atomic(void *kvaddr)
 	unsigned long vaddr = (unsigned long) kvaddr & PAGE_MASK;
 	int type __maybe_unused;
 
+#ifdef CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+    enum fixed_addresses idx;
+#endif // CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+
 	if (vaddr < FIXADDR_START) { // FIXME
 		pagefault_enable();
 		return;
 	}
 
 	type = kmap_atomic_idx();
+
+#ifdef CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+        idx = __virt_to_fix(vaddr);
+
+        BUG_ON(idx<type*FIX_N_COLOURS + KM_TYPE_NR*FIX_N_COLOURS*smp_processor_id()
+        ||idx>=(type*FIX_N_COLOURS + KM_TYPE_NR*FIX_N_COLOURS*smp_processor_id()+FIX_N_COLOURS*KM_TYPE_NR));
+#endif // CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+
 #ifdef CONFIG_DEBUG_HIGHMEM
 	{
+#ifdef CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+                vaddr = (unsigned long) kvaddr & PAGE_MASK;
+                idx = type*FIX_N_COLOURS + KM_TYPE_NR*FIX_N_COLOURS*smp_processor_id();
+#else
 		int idx = type + KM_TYPE_NR * smp_processor_id();
+
+#endif // CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
 
 		BUG_ON(vaddr != __fix_to_virt(FIX_KMAP_BEGIN + idx));
 
@@ -91,6 +115,11 @@ void __kunmap_atomic(void *kvaddr)
 	}
 #endif
 	kmap_atomic_idx_pop();
+
+#ifdef CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+        flush_data_cache_page(vaddr);
+#endif // CONFIG_MP_MIPS_HIGHMEM_CACHE_ALIAS_PATCH
+
 	pagefault_enable();
 }
 EXPORT_SYMBOL(__kunmap_atomic);

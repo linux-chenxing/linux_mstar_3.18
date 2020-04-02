@@ -64,6 +64,10 @@ enum {
 	TPS65090_REGULATOR_MAX,
 };
 
+struct tps65090_charger_data {
+	int irq_base;
+};
+
 struct tps65090 {
 	struct device		*dev;
 	struct regmap		*rmap;
@@ -78,21 +82,23 @@ struct tps65090 {
  *     DCDC1, DCDC2 and DCDC3.
  * @gpio: Gpio number if external control is enabled and controlled through
  *     gpio.
+ * @wait_timeout_us: wait timeout in microseconds;
+ *	>0 : specify minimum wait timeout in us for FETx, will update WTFET[1:0]
+ *	     in FETx_CTRL reg;
+ *	 0 : not to update WTFET[1:0] in FETx_CTRL reg for FETx;
+ *	-1 : for non-FETx.
  */
 struct tps65090_regulator_plat_data {
 	struct regulator_init_data *reg_init_data;
 	bool enable_ext_control;
 	int gpio;
+	int wait_timeout_us;
 };
 
 struct tps65090_platform_data {
 	int irq_base;
-
-	char **supplied_to;
-	size_t num_supplicants;
-	int enable_low_current_chrg;
-
 	struct tps65090_regulator_plat_data *reg_pdata[TPS65090_REGULATOR_MAX];
+	struct tps65090_charger_data *charger_pdata;
 };
 
 /*
@@ -132,6 +138,14 @@ static inline int tps65090_clr_bits(struct device *dev, int reg,
 	struct tps65090 *tps = dev_get_drvdata(dev);
 
 	return regmap_update_bits(tps->rmap, reg, BIT(bit_num), 0u);
+}
+
+static inline int tps65090_update_bits(struct device *dev, int reg,
+		uint8_t bit_mask, uint8_t val)
+{
+	struct tps65090 *tps = dev_get_drvdata(dev);
+
+	return regmap_update_bits(tps->rmap, reg, bit_mask, val);
 }
 
 #endif /*__LINUX_MFD_TPS65090_H */

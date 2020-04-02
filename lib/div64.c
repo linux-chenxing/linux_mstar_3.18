@@ -9,7 +9,7 @@
  * Generic C version of 64bit/32bit division and modulo, with
  * 64bit result and 32bit remainder.
  *
- * The fast case for (n>>32 == 0) is handled inline by do_div(). 
+ * The fast case for (n>>32 == 0) is handled inline by do_div().
  *
  * Code generated for this function might be very inefficient
  * for some CPUs. __div64_32() can be overridden by linking arch-specific
@@ -76,6 +76,46 @@ s64 div_s64_rem(s64 dividend, s32 divisor, s32 *remainder)
 	return quotient;
 }
 EXPORT_SYMBOL(div_s64_rem);
+#endif
+
+/**
+ * div64_u64_rem - unsigned 64bit divide with 64bit divisor and remainder
+ * @dividend:	64bit dividend
+ * @divisor:	64bit divisor
+ * @remainder:  64bit remainder
+ *
+ * This implementation is a comparable to algorithm used by div64_u64.
+ * But this operation, which includes math for calculating the remainder,
+ * is kept distinct to avoid slowing down the div64_u64 operation on 32bit
+ * systems.
+ */
+#ifndef div64_u64_rem
+u64 div64_u64_rem(u64 dividend, u64 divisor, u64 *remainder)
+{
+    u32 high = divisor >> 32;
+    u64 quot;
+
+    if (high == 0) {
+        u32 rem32;
+        quot = div_u64_rem(dividend, divisor, &rem32);
+        *remainder = rem32;
+    } else {
+        int n = 1 + fls(high);
+        quot = div_u64(dividend >> n, divisor >> n);
+
+        if (quot != 0)
+            quot--;
+
+        *remainder = dividend - quot * divisor;
+        if (*remainder >= divisor) {
+            quot++;
+            *remainder -= divisor;
+        }
+    }
+
+    return quot;
+}
+EXPORT_SYMBOL(div64_u64_rem);
 #endif
 
 /**

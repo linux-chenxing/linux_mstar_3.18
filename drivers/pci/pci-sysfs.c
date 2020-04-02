@@ -284,6 +284,145 @@ msi_bus_store(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
+#if (MP_PCI_MSTAR)
+static ssize_t
+dump_config_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	int ii, jj;
+	u32 val;
+	char **field_str;
+
+	const char *type0_str[] = {
+		"[31:16] Devcie ID, [15:0] Vendor ID",
+		"[31:16] Status, [15:0] Command",
+		"[31:8] Class Code [7:0] Revision ID",
+		"[31:24] BIST,[23:16] Header,[15:8] Latency,[7:0] Cache Line Size",
+		"[31:0] BAR 0",
+		"[31:0] BAR 1",
+		"[31:0] BAR 2",
+		"[31:0] BAR 3",
+		"[31:0] BAR 4",
+		"[31:0] BAR 5",
+		"[31:0] Cardbus CIS pointer",
+		"[31:16] Subsys ID, [15:0] Subsys Vendor ID",
+		"[31:0] ROM Base Address",
+		"[7:0] Capabilities Pointer",
+		"",
+		"[31:24] Max_Lat,[23:16] Min_Gnt,[15:8] Intr Pin,[7:0] Intr Line",
+	};
+
+	const char *type1_str[] = {
+		"[31:16] Devcie ID, [15:0] Vendor ID",
+		"[31:16] Status, [15:0] Command",
+		"[31:8] Class Code [7:0] Revision ID",
+		"[31:24] BIST,[23:16] Header,[15:8] Latency,[7:0] Cache Line Size",
+		"[31:0] BAR 0",
+		"[31:0] BAR 1",
+		"[31:24] Sec. Lat,[23:16] Sub Bus#,[15:8] Sec. Bus#,[7:0] Pri Bus#",
+		"[31:16] Sec. Status,[15:8] I/O Limit,[7:0] I/O Base",
+		"[31:16] Memory Limit,[15:0] Memory Base",
+		"[31:16] Prefetch Mem Limit,[15:0] Prefetch Mem Base",
+		"[31:0] Prefetch Base Upper 32",
+		"[31:0] Prefetch Limit Upper 32",
+		"[31:16] I/O Limit Upper 32,[15:0] I/O Base Upper 16",
+		"[7:0] Capabilities Pointer",
+		"[31:0] ROM Base Address",
+		"[31:16] Bridge Control,[15:8] Intr Pin,[7:0] Intr Line",
+	};
+
+	if (pdev->hdr_type == PCI_HEADER_TYPE_NORMAL)
+		field_str = (char **) type0_str;
+	else
+		field_str = (char **) type1_str;
+
+	for (ii=0, jj=0; ii<64; ii+=sizeof(u32), jj++)
+	{
+		pci_user_read_config_dword(pdev, ii, &val);
+
+		printk("%02x: 0x%08x    %s\n", ii, val, field_str[jj]);
+	}
+
+	pci_user_read_config_word(pdev, PCI_STATUS, (u16*) &val);
+	if (val & PCI_STATUS_CAP_LIST) //support capability list?
+	{
+		u8   cap_offset;
+		u32 cap_data;
+
+		printk("\nCapability Lists:\n");
+		pci_user_read_config_byte(pdev, PCI_CAPABILITY_LIST, &cap_offset);
+		if (cap_offset != 0)
+		{
+			do
+			{
+				pci_user_read_config_dword(pdev, cap_offset, &cap_data);
+				if ( (cap_data & 0xFF) == PCI_CAP_ID_EXP )
+				{
+					u32	pcie_cap;
+
+					printk("%02x: 0x%08x    PCIE capability\n", cap_offset, cap_data);
+
+					for (ii=1; ii<=8; ii++)
+					{
+						pci_user_read_config_dword(pdev, cap_offset+4*ii, &pcie_cap);
+						printk("%02x: 0x%08x\n", cap_offset+4*ii, pcie_cap);
+					}
+				}
+				else
+				{
+					printk("%02x: 0x%08x\n", cap_offset, cap_data);
+				}
+				cap_offset = (u8) (cap_data >> 8) & 0xFF;
+			} while (cap_offset !=0);
+		}
+
+	}
+
+
+	return sprintf (buf, "\n");
+}
+
+u32 g_config_idx = 0;
+
+static ssize_t
+read32_config_Index(struct device *dev, struct device_attribute *attr,
+	      const char *buf, size_t count)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	unsigned long val;
+	u32	u32Val;
+
+	if (strict_strtoul(buf, 0, &val) < 0)
+		return -EINVAL;
+
+	if (val & 0x3)
+	{
+		printk("Not a DWORD alignment\n");
+		return -EINVAL;
+	}
+
+	g_config_idx = val;
+
+	pci_user_read_config_dword(pdev, g_config_idx, &u32Val);
+	printk("%02x: 0x%08x\n", g_config_idx, u32Val);
+
+	return count;
+}
+
+static ssize_t
+read32_config_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	u32	u32Val;
+
+	pci_user_read_config_dword(pdev, g_config_idx, &u32Val);
+	printk("%02x: 0x%08x\n", g_config_idx, u32Val);
+
+	return sprintf (buf, "\n");
+}
+
+#endif
+
 static DEFINE_MUTEX(pci_remove_rescan_mutex);
 static ssize_t bus_rescan_store(struct bus_type *bus, const char *buf,
 				size_t count)
@@ -508,6 +647,10 @@ struct device_attribute pci_dev_attrs[] = {
 	__ATTR(rescan, (S_IWUSR|S_IWGRP), NULL, dev_rescan_store),
 #if defined(CONFIG_PM_RUNTIME) && defined(CONFIG_ACPI)
 	__ATTR(d3cold_allowed, 0644, d3cold_allowed_show, d3cold_allowed_store),
+#endif
+#if (MP_PCI_MSTAR)
+	__ATTR(dump_config, 0444, dump_config_show, NULL),
+	__ATTR(read32_config, 0600, read32_config_show, read32_config_Index),
 #endif
 	__ATTR_NULL,
 };

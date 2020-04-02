@@ -337,6 +337,7 @@ static void __init bootmem_init(void)
 			continue;
 		mapstart = max(reserved_end, start);
 	}
+	printk("\033[35mFunction = %s, Line = %d, max_low_pfn is 0x%lX\033[m\n", __PRETTY_FUNCTION__, __LINE__, max_low_pfn);
 
 	if (min_low_pfn >= max_low_pfn)
 		panic("Incorrect memory mapping !!!");
@@ -439,7 +440,10 @@ static void __init bootmem_init(void)
 
 		/* Register lowmem ranges */
 		free_bootmem(PFN_PHYS(start), size << PAGE_SHIFT);
+
+#ifndef CONFIG_MP_MIPS_HIGHMEM_MEMORY_PRESENT_PATCH
 		memory_present(0, start, end);
+#endif
 	}
 
 	/*
@@ -451,6 +455,25 @@ static void __init bootmem_init(void)
 	 * Reserve initrd memory if needed.
 	 */
 	finalize_initrd();
+
+#if defined(CONFIG_MP_MIPS_HIGHMEM_MEMORY_PRESENT_PATCH)
+	/* call memory present for all the identified memory banks */
+	for (i = 0; i < boot_mem_map.nr_map; i++) {
+		unsigned long start, end;
+
+		/*
+		 ** memory present only usable memory.
+		 **/
+		if (boot_mem_map.map[i].type != BOOT_MEM_RAM)
+			continue;
+
+		start = PFN_UP(boot_mem_map.map[i].addr);
+		end   = PFN_DOWN(boot_mem_map.map[i].addr
+				+ boot_mem_map.map[i].size);
+
+		memory_present(0, start, end);
+	}
+#endif
 }
 
 #endif	/* CONFIG_SGI_IP27 */
@@ -618,6 +641,8 @@ static void __init arch_mem_init(char **cmdline_p)
 	sparse_init();
 	plat_swiotlb_setup();
 	paging_init();
+
+
 }
 
 #ifdef CONFIG_KEXEC

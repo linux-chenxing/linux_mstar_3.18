@@ -16,8 +16,17 @@
 #include <linux/sysfs.h>
 #include <linux/balloon_compaction.h>
 #include <linux/page-isolation.h>
+#ifdef CONFIG_Kasan_Switch_On
+#include <linux/kasan.h>
+#endif
 #include "internal.h"
+#ifdef CONFIG_MP_CMA_PATCH_MIGRATION_FILTER
+#include <linux/ksm.h>
+#endif
 
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE	
+void show_page_trace(unsigned long pfn);
+#endif
 #ifdef CONFIG_COMPACTION
 static inline void count_compact_event(enum vm_event_item item)
 {
@@ -59,6 +68,9 @@ static void map_pages(struct list_head *list)
 	list_for_each_entry(page, list, lru) {
 		arch_alloc_page(page, 0);
 		kernel_map_pages(page, 1, 1);
+#ifdef CONFIG_Kasan_Switch_On
+		kasan_alloc_pages(page, 0);
+#endif
 	}
 }
 
@@ -647,6 +659,116 @@ next_pageblock:
 	return low_pfn;
 }
 
+#ifdef CONFIG_MP_ION_PATCH_MSTAR
+
+/*
+ * Based on information in the current compact_control, find blocks
+ * suitable for isolating free pages from and then isolate them.
+ */
+int isolate_descrete_freepages(struct compact_control *cc,
+								struct cmaisolate_control *cmac)
+{
+	struct page *page;
+	struct zone *zone = cc->zone;
+	unsigned long high_pfn, low_pfn, pfn,block_end_pfn;
+	//unsigned long flags;
+	int nr_freepages = 0;//cc->nr_freepages;
+	//struct list_head *freelist = &cc->freepages;
+
+	if(cmac->target_count <= 0)
+		return 0;
+
+	/*
+	 * Initialise the free scanner. The starting point is where we last
+	 * scanned from (or the end of the zone if starting). The low point
+	 * is the end of the pageblock the migration scanner is using.
+	 */
+	 
+	pfn = cmac->end_pfn-1;
+	low_pfn = cmac->start_pfn;
+
+	pfn &= ~(pageblock_nr_pages-1);
+	low_pfn &=~(pageblock_nr_pages-1);
+
+	/*
+	 * Take care that if the migration scanner is at the end of the zone
+	 * that the free scanner does not accidentally move to the next zone
+	 * in the next isolation cycle.
+	 */
+	high_pfn = min(low_pfn, pfn); 
+
+	BUG_ON(!list_empty(cmac->freelist));
+
+	/*
+	 * Isolate free pages until enough are available to migrate the
+	 * pages on cc->migratepages. We stop searching if the migrate
+	 * and free page scanners meet or enough free pages are isolated.
+	 */
+	for (; pfn >= low_pfn && nr_freepages < cmac->target_count;
+					pfn -= pageblock_nr_pages) {
+		unsigned long isolated;
+		LIST_HEAD(isolated_list);
+
+		if (!pfn_valid(pfn))
+			continue;
+
+		/*
+		 * Check for overlapping nodes/zones. It's possible on some
+		 * configurations to have a setup like
+		 * node0 node1 node0
+		 * i.e. it's possible that all pages within a zones range of
+		 * pages do not belong to a single zone.
+		 */
+		page = pfn_to_page(pfn);
+		if (page_zone(page) != zone)
+			continue;
+		/*
+		 * Found a block suitable for isolating free pages from. Now
+		 * we disabled interrupts, double check things are ok and
+		 * isolate the pages. This is to minimise the time IRQs
+		 * are disabled
+		 */
+		isolated = 0;
+
+		block_end_pfn = ALIGN(pfn + 1, pageblock_nr_pages);
+		block_end_pfn = min(block_end_pfn, cmac->end_pfn);
+
+		//spin_lock_irqsave(&zone->lock, flags);
+		//printk("cc->zone=%x, zone=%x,[%x,%x] \n",cc->zone,zone,pfn,block_end_pfn);
+		//isolated = isolate_freepages_block(cc, pfn,block_end_pfn, &isolated_list,true);
+		isolated = isolate_freepages_block(cc, pfn,block_end_pfn, &isolated_list,true);
+		//printk(KERN_ERR "    ****** isolate_freepages_block %x-%x-%x,isolated=%d\n", low_pfn,pfn,block_end_pfn,isolated);
+
+		//spin_unlock_irqrestore(&zone->lock, flags);
+
+		/*
+		 * Record the highest PFN we isolated pages from. When next
+		 * looking for free pages, the search will restart here as
+		 * page migration may have returned some pages to the allocator
+		 */
+		//if (isolated)
+		{
+			high_pfn = max(high_pfn, pfn);
+			list_splice(&isolated_list, cmac->freelist);
+			nr_freepages += isolated;
+		}
+		
+	}
+    
+
+	/* split_free_page does not map the pages */
+	list_for_each_entry(page, cmac->freelist, lru) {
+		arch_alloc_page(page, 0);
+		kernel_map_pages(page, 1, 1);
+	}
+
+	//*(cmac->last_end_pfn) = high_pfn;
+	//if(nr_freepages ==0)
+		//printk(KERN_ERR "<<<========>start_pfn %x end %x\n", start_pfn, end_pfn);
+	return nr_freepages;
+}
+#endif
+
 #endif /* CONFIG_COMPACTION || CONFIG_CMA */
 #ifdef CONFIG_COMPACTION
 /*
@@ -674,8 +796,14 @@ static void isolate_freepages(struct zone *zone,
 	 * that the free scanner does not accidentally move to the next zone
 	 * in the next isolation cycle.
 	 */
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+    if(cc->migration_completed)
+       high_pfn = pfn;
+	else
+	   high_pfn = min(low_pfn, pfn);
+#else
 	high_pfn = min(low_pfn, pfn);
-
+#endif
 	z_end_pfn = zone_end_pfn(zone);
 
 	/*
@@ -683,13 +811,36 @@ static void isolate_freepages(struct zone *zone,
 	 * pages on cc->migratepages. We stop searching if the migrate
 	 * and free page scanners meet or enough free pages are isolated.
 	 */
+
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+    for (;((cc->migration_completed&&!cc->migration_completed(cc, pfn, low_pfn)) || (!cc->migration_completed&&(pfn > low_pfn)))
+		         && cc->nr_migratepages > nr_freepages;
+				    pfn -= pageblock_nr_pages) {
+
+#else 
 	for (; pfn > low_pfn && cc->nr_migratepages > nr_freepages;
 					pfn -= pageblock_nr_pages) {
+#endif
 		unsigned long isolated;
 
 		if (!pfn_valid(pfn))
 			continue;
 
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+		//skip to next free block if invalid
+		if(cc->isvalid_free_pfn && !cc->isvalid_free_pfn(cc, pfn))
+			continue;
+
+		//if(cc->isvalid_free_pfn)
+			//printk("isolate_freepages:migrate pfn%lu, free%lu\n", cc->migrate_pfn, pfn);
+		
+		if((pfn& ~(pageblock_nr_pages-1)) == (cc->migrate_pfn& ~(pageblock_nr_pages-1)))
+	    {
+			printk(KERN_WARNING "pfn=%lu, migrate_pfn=%lu", pfn, cc->migrate_pfn);
+			printk(KERN_WARNING "low_pfn migration type=%d\n",  get_pageblock_migratetype(pfn_to_page(pfn)));
+			//BUG();
+	    }
+#endif
 		/*
 		 * Check for overlapping nodes/zones. It's possible on some
 		 * configurations to have a setup like
@@ -731,7 +882,14 @@ static void isolate_freepages(struct zone *zone,
 		 */
 		if (isolated) {
 			cc->finished_update_free = true;
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+            if(cc->migration_completed)
+			   high_pfn = pfn;
+			else
+			   high_pfn = max(high_pfn, pfn);
+#else
 			high_pfn = max(high_pfn, pfn);
+#endif
 		}
 	}
 
@@ -752,7 +910,10 @@ static struct page *compaction_alloc(struct page *migratepage,
 {
 	struct compact_control *cc = (struct compact_control *)data;
 	struct page *freepage;
-
+#ifdef CONFIG_MP_CMA_PATCH_MIGRATION_FILTER
+    struct address_space *mapping = NULL;
+#endif
+    
 	/* Isolate free pages if necessary */
 	if (list_empty(&cc->freepages)) {
 		isolate_freepages(cc->zone, cc);
@@ -762,9 +923,50 @@ static struct page *compaction_alloc(struct page *migratepage,
 	}
 
 	freepage = list_entry(cc->freepages.next, struct page, lru);
+
+#ifdef CONFIG_MP_CMA_PATCH_MIGRATION_FILTER
+/*
+ * 1. find_or_create_page in grow_dev_page can not use movable flag
+ * 2. compaction migrate bdev buffer page to cma area is not allowed
+ * 3. fix cma migration failure problem by filtting out bdev buffer page in cma area
+ */
+    if(is_cma_page(freepage))
+    {
+       if((mapping = page_mapping(migratepage)))
+       {
+	       if(!(mapping_gfp_mask(mapping)&__GFP_MOVABLE))
+	       {
+	          return migratepage;
+	       }
+	       // printk(KERN_ERR "movable page accepted in compaction_alloc, %ld\n", ++mapping_movable_cnt);
+       }
+	   else
+    {
+        return migratepage;
+    }
+    }
+#endif
+#ifdef CONFIG_MP_CMA_PATCH_KSM_MIGRATION_FAILURE
+if (unlikely(PageKsm(migratepage)))
+	if(is_cma_page(freepage))
+	    return migratepage;//failed for migration
+
+#endif
+
+    
 	list_del(&freepage->lru);
 	cc->nr_freepages--;
-
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE	
+    if((mapping=page_mapping(migratepage)))
+    {
+		if(!(mapping_gfp_mask(mapping) & __GFP_MOVABLE) && is_cma_page(freepage))
+		{
+		   printk(KERN_ERR "serious warning:unmovable page occurs in cma area\n");
+		   show_page_trace(page_to_pfn(migratepage));
+		}
+    }
+    notify_alloc_page(freepage, 1, mapping?mapping_gfp_mask(mapping):0);
+#endif
 	return freepage;
 }
 
@@ -810,12 +1012,38 @@ static isolate_migrate_t isolate_migratepages(struct zone *zone,
 	/* Only scan within a pageblock boundary */
 	end_pfn = ALIGN(low_pfn + 1, pageblock_nr_pages);
 
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+    /* Do not cross the free scanner or scan within a memory hole */
+    if(!pfn_valid(low_pfn) ||
+		  (cc->isvalid_migrate_pfn && !cc->isvalid_migrate_pfn(cc, low_pfn)))
+    {
+       //skip current migrate block
+       cc->migrate_pfn = end_pfn;
+	   return ISOLATE_NONE;
+    }
+	/* Do not cross the free scanner or scan within a memory hole */
+	if ((cc->migration_completed&&cc->migration_completed(cc, cc->free_pfn, low_pfn)) ||
+		(!cc->migration_completed &&end_pfn > cc->free_pfn)) 
+	{
+		cc->migrate_pfn = end_pfn;
+		return ISOLATE_NONE;
+	}
+	//if(cc->isvalid_migrate_pfn)
+		//printk("isolate_migratepages:migrate pfn%lu, free%lu\n", low_pfn, cc->free_pfn);
+	if((low_pfn& ~(pageblock_nr_pages-1)) == (cc->free_pfn& ~(pageblock_nr_pages-1)))
+	{
+	   printk(KERN_WARNING "low_pfn=%lu, free_pfn=%lu, end_pfn=%lu", low_pfn, cc->free_pfn, end_pfn);
+	   printk(KERN_WARNING "low_pfn migration type=%d\n",  get_pageblock_migratetype(pfn_to_page(low_pfn)));
+	  // BUG();
+	  
+	}
+#else
 	/* Do not cross the free scanner or scan within a memory hole */
 	if (end_pfn > cc->free_pfn || !pfn_valid(low_pfn)) {
 		cc->migrate_pfn = end_pfn;
 		return ISOLATE_NONE;
 	}
-
+#endif
 	/* Perform the isolation */
 	low_pfn = isolate_migratepages_range(zone, cc, low_pfn, end_pfn, false);
 	if (!low_pfn || cc->contended)
@@ -836,7 +1064,14 @@ static int compact_finished(struct zone *zone,
 		return COMPACT_PARTIAL;
 
 	/* Compaction run completes if the migrate and free scanner meet */
-	if (cc->free_pfn <= cc->migrate_pfn) {
+
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+    if((cc->migration_completed && cc->migration_completed(cc, cc->free_pfn, cc->migrate_pfn))
+		|| (!cc->migration_completed&&(cc->free_pfn <= cc->migrate_pfn)))
+#else
+	if (cc->free_pfn <= cc->migrate_pfn) 
+#endif
+	{
 		/*
 		 * Mark that the PG_migrate_skip information should be cleared
 		 * by kswapd when it goes to sleep. kswapd does not set the
@@ -860,6 +1095,18 @@ static int compact_finished(struct zone *zone,
 	watermark = low_wmark_pages(zone);
 	watermark += (1 << cc->order);
 
+#ifdef CONFIG_CMA
+#ifdef CONFIG_MP_CMA_PATCH_CMA_AGGRESSIVE_ALLOC
+#ifdef CONFIG_MP_CMA_PATCH_CMA_MORE_AGGRESSIVE_ALLOC
+    if(cc->migratetype == MIGRATE_MOVABLE)
+    {
+		  if(!zone_watermark_with_cma_ok(zone, cc->order, watermark, 0,0))
+		     return COMPACT_CONTINUE;
+    }
+	else
+#endif
+#endif
+#endif
 	if (!zone_watermark_ok(zone, cc->order, watermark, 0, 0))
 		return COMPACT_CONTINUE;
 
@@ -870,6 +1117,12 @@ static int compact_finished(struct zone *zone,
 		/* Job done if page is free of the right migratetype */
 		if (!list_empty(&area->free_list[cc->migratetype]))
 			return COMPACT_PARTIAL;
+
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+          if(cc->migratetype == MIGRATE_MOVABLE
+  		       && !list_empty(&area->free_list[MIGRATE_CMA]))
+  		    return COMPACT_PARTIAL;
+#endif
 
 		/* Job done if allocation would set block type */
 		if (cc->order >= pageblock_order && area->nr_free)
@@ -904,7 +1157,28 @@ unsigned long compaction_suitable(struct zone *zone, int order)
 	 * allocated and for a short time, the footprint is higher
 	 */
 	watermark = low_wmark_pages(zone) + (2UL << order);
-	if (!zone_watermark_ok(zone, 0, watermark, 0, 0))
+	
+#define CHECK_ZONE_WATER_MARK_GENERAL zone_watermark_ok
+
+#ifdef CONFIG_CMA
+#ifdef CONFIG_MP_CMA_PATCH_CMA_AGGRESSIVE_ALLOC
+#ifdef CONFIG_MP_CMA_PATCH_CMA_MORE_AGGRESSIVE_ALLOC
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+
+#undef CHECK_ZONE_WATER_MARK_GENERAL
+/* because zone_watermark_ok won't take consider of CMA pages, we need to consider CMA pages here in case migrating from noncma to cma
+   in case of migration type of MIGRATE_MOVABLE, it should already tried CMA allocation in get_page_from_freelist.
+   So if code comes to here, it means that MIGRATE type is non MIGRATE_MOVABLE. That's to say we should always using
+   zone_watermark_ok instead of zone_watermark_with_cma_ok to check if we succussed compaction.
+*/
+#define CHECK_ZONE_WATER_MARK_GENERAL zone_watermark_with_cma_ok
+
+#endif
+#endif
+#endif
+#endif
+
+    if (!CHECK_ZONE_WATER_MARK_GENERAL(zone, 0, watermark, 0, 0))
 		return COMPACT_SKIPPED;
 
 	/*
@@ -927,6 +1201,9 @@ unsigned long compaction_suitable(struct zone *zone, int order)
 		return COMPACT_PARTIAL;
 
 	return COMPACT_CONTINUE;
+
+#undef CHECK_ZONE_WATER_MARK_GENERAL
+
 }
 
 static int compact_zone(struct zone *zone, struct compact_control *cc)
@@ -1001,6 +1278,11 @@ static int compact_zone(struct zone *zone, struct compact_control *cc)
 
 		/* Release isolated pages not migrated */
 		if (err) {
+			if(nr_remaining == nr_migrate)
+			{
+				cc->finished_update_migrate = false;
+				zone->compact_cached_migrate_pfn = cc->migrate_pfn;
+			}
 			putback_movable_pages(&cc->migratepages);
 			cc->nr_migratepages = 0;
 			if (err == -ENOMEM) {
@@ -1018,10 +1300,119 @@ out:
 	return ret;
 }
 
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+static int isvalid_migrate_pfn_skip_cma(struct compact_control *cc, unsigned long pfn)
+{
+    int migratetype;
+	
+    BUG_ON(!pfn_valid(pfn));
+	
+	migratetype = get_pageblock_migratetype(pfn_to_page(pfn));
+	if(migratetype == MIGRATE_CMA || migratetype == MIGRATE_ISOLATE)
+		return 0;
+	return 1;
+}
+
+static int isvalid_free_pfn_skip_noncma(struct compact_control *cc, unsigned long pfn)
+{
+    int migratetype;
+	
+    BUG_ON(!pfn_valid(pfn));
+	
+	migratetype = get_pageblock_migratetype(pfn_to_page(pfn));
+	if(migratetype == MIGRATE_CMA)
+		return 1;
+	return 0;
+
+}
+
+static int isvalid_free_pfn_skip_cma(struct compact_control *cc, unsigned long pfn)
+{
+    int migratetype;
+    BUG_ON(!pfn_valid(pfn));
+	migratetype = get_pageblock_migratetype(pfn_to_page(pfn));
+	if(migratetype == MIGRATE_CMA || migratetype == MIGRATE_ISOLATE)
+		return 0;
+	return 1;
+}
+static int migration_completed_noncma_to_cma(struct compact_control *cc, 
+	                                      unsigned long free_pfn,unsigned long migrate_pfn)
+{
+   struct zone *zone = cc->zone;
+
+   BUG_ON(!zone);
+
+   if(free_pfn < pageblock_nr_pages)
+   	  return 1;
+
+   if(free_pfn<(zone->zone_start_pfn&~(pageblock_nr_pages-1)))
+   	   return 1;
+   if(migrate_pfn >= zone_end_pfn(zone))
+   	   return 1;
+   return 0;
+}
+
+
+int compact_zone_conside_cma(struct zone *zone, struct compact_control *cc, int force)
+{
+    int ret;
+    unsigned long zone_cma_free = zone_page_state(zone, NR_FREE_CMA_PAGES);
+    int migrate_from_noncma_to_cma = zone->last_migrate_from_noncma_to_cma;
+
+    //if(allocflags_to_migratetype(gfp_mask) == MIGRATE_UNMOVABLE)
+    if(force)
+    {
+        if(zone_cma_free<1024)
+    		return COMPACT_SKIPPED;
+    	migrate_from_noncma_to_cma = 1;
+    }
+    else if(migrate_from_noncma_to_cma && zone_cma_free <1024)
+    {
+        migrate_from_noncma_to_cma = 0;
+    }
+    else if( !migrate_from_noncma_to_cma &&  zone_cma_free>=1024*16)
+    {
+        migrate_from_noncma_to_cma = 1;
+    }
+    if(migrate_from_noncma_to_cma != zone->last_migrate_from_noncma_to_cma)
+    {	 
+        // printk(KERN_ERR "switch migrate from 0 to 1\n");
+        zone->compact_cached_free_pfn = zone_end_pfn(zone) & ~(pageblock_nr_pages-1);
+        zone->compact_cached_migrate_pfn = zone->zone_start_pfn;
+        zone->last_migrate_from_noncma_to_cma = migrate_from_noncma_to_cma;
+    }
+    //printk(KERN_ERR "migrate from non_cma to cma for order%d,{total free:%ld, cma free%ld}\n", order, zone_page_state(zone, NR_FREE_PAGES), zone_page_state(zone, NR_FREE_CMA_PAGES));
+    		 
+    if(zone->last_migrate_from_noncma_to_cma)
+    {
+
+    	 cc->isvalid_migrate_pfn = isvalid_migrate_pfn_skip_cma,
+    	 cc->isvalid_free_pfn = isvalid_free_pfn_skip_noncma,
+    	 cc->migration_completed = migration_completed_noncma_to_cma,	 
+    	 ret = compact_zone(zone, cc);
+    	 cc->isvalid_migrate_pfn = NULL;
+    	 cc->isvalid_free_pfn = NULL; 
+    	 cc->migration_completed = NULL;
+ 	}
+ 	else
+    {	  
+    	 cc->isvalid_migrate_pfn = isvalid_migrate_pfn_skip_cma,
+    	 cc->isvalid_free_pfn = isvalid_free_pfn_skip_cma,
+    	 cc->migration_completed = NULL,
+    	 ret = compact_zone(zone, cc);
+    	 cc->isvalid_migrate_pfn = NULL;
+    	 cc->isvalid_free_pfn = NULL; 
+    	 cc->migration_completed = NULL;
+    }
+    
+    return ret;
+}
+#endif
+	/* if above failed(try non-cma compact to cma), do this */ 
 static unsigned long compact_zone_order(struct zone *zone,
 				 int order, gfp_t gfp_mask,
 				 bool sync, bool *contended)
-{
+	{
 	unsigned long ret;
 	struct compact_control cc = {
 		.nr_freepages = 0,
@@ -1030,12 +1421,17 @@ static unsigned long compact_zone_order(struct zone *zone,
 		.migratetype = allocflags_to_migratetype(gfp_mask),
 		.zone = zone,
 		.sync = sync,
+		.finished_update_free = false,
+		.finished_update_migrate = false,
 	};
+
 	INIT_LIST_HEAD(&cc.freepages);
 	INIT_LIST_HEAD(&cc.migratepages);
-
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+    ret = compact_zone_conside_cma(zone,&cc, 0);
+#else
 	ret = compact_zone(zone, &cc);
-
+#endif
 	VM_BUG_ON(!list_empty(&cc.freepages));
 	VM_BUG_ON(!list_empty(&cc.migratepages));
 
@@ -1069,25 +1465,42 @@ unsigned long try_to_compact_pages(struct zonelist *zonelist,
 	int rc = COMPACT_SKIPPED;
 	int alloc_flags = 0;
 
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+	/* Check if the GFP flags allow compaction */
+	if (!may_enter_fs || !may_perform_io)
+		return rc;
+    if(!order && ((allocflags_to_migratetype(gfp_mask) != MIGRATE_UNMOVABLE)
+		 || !global_page_state(NR_FREE_CMA_PAGES)))
+		return rc;
+
+#else
 	/* Check if the GFP flags allow compaction */
 	if (!order || !may_enter_fs || !may_perform_io)
 		return rc;
-
+#endif
 	count_compact_event(COMPACTSTALL);
 
 #ifdef CONFIG_CMA
-	if (allocflags_to_migratetype(gfp_mask) == MIGRATE_MOVABLE)
-		alloc_flags |= ALLOC_CMA;
+	#ifdef CONFIG_MP_CMA_PATCH_CMA_AGGRESSIVE_ALLOC
+	//do nothing
+	#else
+		if (allocflags_to_migratetype(gfp_mask) == MIGRATE_MOVABLE)
+			alloc_flags |= ALLOC_CMA;
+	#endif	
 #endif
 	/* Compact each zone in the list */
 	for_each_zone_zonelist_nodemask(zone, z, zonelist, high_zoneidx,
 								nodemask) {
 		int status;
+		
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+		if(!order && !zone_page_state(zone, NR_FREE_CMA_PAGES))
+			continue;
+#endif
 
 		status = compact_zone_order(zone, order, gfp_mask, sync,
 						contended);
 		rc = max(status, rc);
-
 		/* If a normal allocation would succeed, stop compacting */
 		if (zone_watermark_ok(zone, order, low_wmark_pages(zone), 0,
 				      alloc_flags))
@@ -1115,9 +1528,17 @@ static void __compact_pgdat(pg_data_t *pgdat, struct compact_control *cc)
 		cc->zone = zone;
 		INIT_LIST_HEAD(&cc->freepages);
 		INIT_LIST_HEAD(&cc->migratepages);
-
 		if (cc->order == -1 || !compaction_deferred(zone, cc->order))
+		{
+#if defined(CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA) && defined(CONFIG_CMA)
+			   
+			compact_zone_conside_cma(zone,cc, !!(cc->order==0));
+#else
 			compact_zone(zone, cc);
+
+#endif
+
+		}
 
 		if (cc->order > 0) {
 			int ok = zone_watermark_ok(zone, cc->order,
@@ -1139,6 +1560,8 @@ void compact_pgdat(pg_data_t *pgdat, int order)
 	struct compact_control cc = {
 		.order = order,
 		.sync = false,
+		.finished_update_free = false,
+		.finished_update_migrate = false,
 	};
 
 	__compact_pgdat(pgdat, &cc);

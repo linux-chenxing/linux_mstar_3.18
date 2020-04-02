@@ -612,7 +612,7 @@ config ARCH_PHYS_ADDR_T_64BIT
 	def_bool ARM_LPAE
 
 config ARCH_DMA_ADDR_T_64BIT
-	bool
+	def_bool ARM_LPAE
 
 config ARM_THUMB
 	bool "Support Thumb user binaries" if !CPU_THUMBONLY
@@ -638,7 +638,7 @@ config ARM_THUMBEE
 config ARM_VIRT_EXT
 	bool
 	depends on MMU
-	default y if CPU_V7
+	default y if (CPU_V7 && !(ARCH_MSTAR_CA7))
 	help
 	  Enable the kernel to make use of the ARM Virtualization
 	  Extensions to install hypervisors without run-time firmware
@@ -896,7 +896,7 @@ config CACHE_XSC3L2
 
 config ARM_L1_CACHE_SHIFT_6
 	bool
-	default y if CPU_V7
+	default y if CPU_V7 && !(ARCH_MSTAR_CA9)
 	help
 	  Setting ARM L1 cache line size to 64 Bytes.
 
@@ -905,29 +905,45 @@ config ARM_L1_CACHE_SHIFT
 	default 6 if ARM_L1_CACHE_SHIFT_6
 	default 5
 
-config ARM_DMA_MEM_BUFFERABLE
-	bool "Use non-cacheable memory for DMA" if (CPU_V6 || CPU_V6K) && !CPU_V7
-	depends on !(MACH_REALVIEW_PB1176 || REALVIEW_EB_ARM11MP || \
-		     MACH_REALVIEW_PB11MP)
-	default y if CPU_V6 || CPU_V6K || CPU_V7
-	help
-	  Historically, the kernel has used strongly ordered mappings to
-	  provide DMA coherent memory.  With the advent of ARMv7, mapping
-	  memory with differing types results in unpredictable behaviour,
-	  so on these CPUs, this option is forced on.
-
-	  Multiple mappings with differing attributes is also unpredictable
-	  on ARMv6 CPUs, but since they do not have aggressive speculative
-	  prefetch, no harm appears to occur.
-
-	  However, drivers may be missing the necessary barriers for ARMv6,
-	  and therefore turning this on may result in unpredictable driver
-	  behaviour.  Therefore, we offer this as an option.
-
-	  You are recommended say 'Y' here and debug any affected drivers.
+#config ARM_DMA_MEM_BUFFERABLE
+#	bool "Use non-cacheable memory for DMA" if (CPU_V6 || CPU_V6K) && !CPU_V7
+#	depends on !(MACH_REALVIEW_PB1176 || REALVIEW_EB_ARM11MP || \
+#		     MACH_REALVIEW_PB11MP)
+#	default y if CPU_V6 || CPU_V6K || CPU_V7
+#	help
+#	  Historically, the kernel has used strongly ordered mappings to
+#	  provide DMA coherent memory.  With the advent of ARMv7, mapping
+#	  memory with differing types results in unpredictable behaviour,
+#	  so on these CPUs, this option is forced on.
+#
+#	  Multiple mappings with differing attributes is also unpredictable
+#	  on ARMv6 CPUs, but since they do not have aggressive speculative
+#	  prefetch, no harm appears to occur.
+#
+#	  However, drivers may be missing the necessary barriers for ARMv6,
+#	  and therefore turning this on may result in unpredictable driver
+#	  behaviour.  Therefore, we offer this as an option.
+#
+#	  You are recommended say 'Y' here and debug any affected drivers.
 
 config ARCH_HAS_BARRIERS
 	bool
 	help
 	  This option allows the use of custom mandatory barriers
 	  included via the mach/barriers.h file.
+
+config ARM_SAVE_DEBUG_CONTEXT
+	bool "Save CPU debug state across suspend/resume"
+	depends on PM_SLEEP && CPU_V7
+	help
+	  This option enables save/restore of the ARM debug registers
+	  across CPU powerdown.
+
+config ARM_SAVE_DEBUG_CONTEXT_NO_LOCK
+	bool "Don't lock out debugger access when saving debug context"
+	depends on ARM_SAVE_DEBUG_CONTEXT
+	help
+	  This option allows debugging of the code that saves/restores
+	  the ARM debug registers across CPU powerdown. This option
+	  should not be selected unless you are actively debugging
+	  the context save/restore code. If unsure, say N.

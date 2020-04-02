@@ -1,0 +1,623 @@
+////////////////////////////////////////////////////////////////////////////////
+//
+// Copyright (c) 2006-2011 MStar Semiconductor, Inc.
+// All rights reserved.
+//
+// Unless otherwise stipulated in writing, any and all information contained
+// herein regardless in any format shall remain the sole proprietary of
+// MStar Semiconductor Inc. and be kept in strict confidence
+// ("MStar Confidential Information") by the recipient.
+// Any unauthorized act including without limitation unauthorized disclosure,
+// copying, use, reproduction, sale, distribution, modification, disassembling,
+// reverse engineering and compiling of the contents of MStar Confidential
+// Information is unlawful and strictly prohibited. MStar hereby reserves the
+// rights to any and all damages, losses, costs and expenses resulting therefrom.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+#ifndef __HAL_FCIE_PLATFORM_H__
+#define __HAL_FCIE_PLATFORM_H__
+
+// this file is use only for cavalier project 2017.2.23
+
+//#include <common.h> //printf()
+//#include <sys/common/MsTypes.h>
+#include <mstar/mstar_chip.h> // MSTAR_MIU0_BUS_BASE
+#include <linux/irqreturn.h> // irqreturn_t
+#include <linux/mmc/core.h> // struct mmc_command, struct mmc_data, struct mmc_request
+#include <linux/scatterlist.h> // struct scatterlist
+#include "chip_setup.h" // Chip_Clean_Cache_Range_VA_PA()
+#include <chip_int.h> // interrupt vector
+//int printf(const char *format, ...);
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//                               PLATFORM FUNCTION DEFINITION
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+/* Enable D-CACHE */
+#define MMC_CACHE  1
+
+//#define USE_SD_MODE
+#define SDR_MODE
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//                               DATATYPE DEFINITION
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#ifndef NULL
+#define NULL    ((void*)0)
+#endif
+
+#define U64  unsigned long long
+#define U32  unsigned int
+#define U16  unsigned short
+#define U8   unsigned char
+#define S32  signed int
+
+
+#define BIT00 0x01
+#define BIT01 0x02
+#define BIT02 0x04
+#define BIT03 0x08
+#define BIT04 0x10
+#define BIT05 0x20
+#define BIT06 0x40
+#define BIT07 0x80
+
+#define WBIT00 0x0001
+#define WBIT01 0x0002
+#define WBIT02 0x0004
+#define WBIT03 0x0008
+#define WBIT04 0x0010
+#define WBIT05 0x0020
+#define WBIT06 0x0040
+#define WBIT07 0x0080
+#define WBIT08 0x0100
+#define WBIT09 0x0200
+#define WBIT10 0x0400
+#define WBIT11 0x0800
+#define WBIT12 0x1000
+#define WBIT13 0x2000
+#define WBIT14 0x4000
+#define WBIT15 0x8000
+
+
+#define U32BEND2LEND(X) ( ((X&0x000000FF)<<24) + ((X&0x0000FF00)<<8) + ((X&0x00FF0000)>>8) + ((X&0xFF000000)>>24) )
+#define U16BEND2LEND(X) ( ((X&0x00FF)<<8) + ((X&0xFF00)>>8) )
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+#define BY_PASS_MODE  1
+//#define _8BIT_MARCO  1
+//#define SDR_MODE    0
+
+//=====================================================
+// HW registers
+//=====================================================
+#define REG_OFFSET_SHIFT_BITS           2
+
+#define REG_FCIE_U16(Reg_Addr)          (*(volatile U16*)((uintptr_t)(Reg_Addr)))
+#define GET_REG_ADDR(x, y)              ((x)+((y) << REG_OFFSET_SHIFT_BITS))
+
+#define REG_FCIE(reg_addr)              REG_FCIE_U16(reg_addr)
+#define REG_FCIE_W(reg_addr, val)       REG_FCIE(reg_addr) = (val)
+#define REG_FCIE_R(reg_addr, val)       val = REG_FCIE(reg_addr)
+#define REG_FCIE_SETBIT(reg_addr, val)  REG_FCIE(reg_addr) |= (val)
+#define REG_FCIE_CLRBIT(reg_addr, val)  REG_FCIE(reg_addr) &= ~(val)
+#define REG_FCIE_W1C(reg_addr, val)     REG_FCIE_W(reg_addr, REG_FCIE(reg_addr)&(val))
+
+#define FCIE_RIU_W16(addr,value)	*((volatile U16*)(uintptr_t)(addr)) = (value)
+#define FCIE_RIU_R16(addr)			*((volatile U16*)(uintptr_t)(addr))
+#define FCIE_RIU_W8(addr, value)	*((volatile U8*)(uintptr_t)(addr)) = (value)
+#define FCIE_RIU_R8(addr)			*((volatile U8*)(uintptr_t)(addr))
+
+// read modify write 16 bits register macro
+#define FCIE_RIU_16_ON(addr,value) FCIE_RIU_W16(addr, FCIE_RIU_R16(addr)|(value))
+#define FCIE_RIU_16_OF(addr,value) FCIE_RIU_W16(addr, FCIE_RIU_R16(addr)&(~(value)))
+
+#define FCIE_RIU_8_ON(addr,value) FCIE_RIU_W8(addr, FCIE_RIU_R8(addr)|(value))
+#define FCIE_RIU_8_OF(addr,value) FCIE_RIU_W8(addr, FCIE_RIU_R8(addr)&(~(value)))
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RIU BASE ADDRESS
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// kernel
+//#define RIU_PM_BASE			0xFD000000
+//#define RIU_BASE				0xFD200000
+
+// uboot
+//#define RIU_PM_BASE			0x1F000000
+//#define RIU_BASE				0x1F200000
+
+#define FCIE_IP					1
+#define SDIO_IP					2
+#define ALTERNATIVE_IP			FCIE_IP
+
+#define SDIO_IP_VERIFY
+
+#if defined(CONFIG_ARM)
+	#define RIU_BASE                     (IO_ADDRESS(0x1F000000UL))
+#elif defined(CONFIG_ARM64)
+	extern ptrdiff_t   mstar_pm_base;
+	#define RIU_BASE                     ((uintptr_t)(mstar_pm_base))
+#endif
+
+#define RIU_BANK_2_BASE(BANK)		(RIU_BASE+(BANK<<9))
+// register num per bank --> 0x80 = 128
+// register addr offset  --> 4
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RIU BANK DEFINITION
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#define RIU_BANK_PM_SLEPP		0x000EUL
+#define RIU_BANK_PM_GPIO		0x000FUL
+#define RIU_BANK_TIMER1			0x0030UL
+#define RIU_BANK_MIU2			0x1006UL
+#define RIU_BANK_CLKGEN2		0x100AUL
+#define RIU_BANK_CLKGEN0		0x100BUL
+#define RIU_BANK_CHIPTOP		0x101EUL
+#if (ALTERNATIVE_IP == FCIE_IP)
+#define RIU_BANK_SDIO0			0x1113UL
+#define RIU_BANK_SDIO1			0x1114UL
+#define RIU_BANK_SDIO2			0x1115UL
+#elif (ALTERNATIVE_IP == SDIO_IP)
+#define RIU_BANK_SDIO0			0x120FUL
+#define RIU_BANK_SDIO1			0x1228UL
+#define RIU_BANK_SDIO2			0x1229UL
+#endif
+#define RIU_BANK_CHIP_GPIO		0x102BUL
+//#define RIU_BANK_SDIO_PLL		0x123EUL // these is no SDIO PLL in manhattan
+#define RIU_BANK_EMMC_PLL		0x123FUL
+
+
+#define RIU_BASE_PM_SLEEP		RIU_BANK_2_BASE(RIU_BANK_PM_SLEPP)
+#define RIU_BASE_PM_GPIO		RIU_BANK_2_BASE(RIU_BANK_PM_GPIO)
+#define RIU_BASE_TIMER1			RIU_BANK_2_BASE(RIU_BANK_TIMER1)
+#define RIU_BASE_MIU2			RIU_BANK_2_BASE(RIU_BANK_MIU2)
+#define RIU_BASE_CLKGEN2		RIU_BANK_2_BASE(RIU_BANK_CLKGEN2)
+#define RIU_BASE_CLKGEN0		RIU_BANK_2_BASE(RIU_BANK_CLKGEN0)
+#define RIU_BASE_CHIPTOP		RIU_BANK_2_BASE(RIU_BANK_CHIPTOP)
+#define RIU_BASE_SDIO0			RIU_BANK_2_BASE(RIU_BANK_SDIO0) // main bank
+#define RIU_BASE_SDIO1			RIU_BANK_2_BASE(RIU_BANK_SDIO1) // CIFD + CRC
+#define RIU_BASE_SDIO2			RIU_BANK_2_BASE(RIU_BANK_SDIO2) // power save bank
+#define RIU_BASE_CHIP_GPIO		RIU_BANK_2_BASE(RIU_BANK_CHIP_GPIO)
+#define RIU_BASE_EMMC_PLL		RIU_BANK_2_BASE(RIU_BANK_EMMC_PLL)
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define FCIE_REG_BASE_ADDR              (RIU_BASE_SDIO0)
+#define FCIE_CMDFIFO_BASE_ADDR          (RIU_BASE_SDIO0 + (0x20<<2)) // CIFC command FIFO
+
+#define FCIE_CIFD_FIFO_W				(RIU_BASE_SDIO1)
+#define FCIE_CIFD_FIFO_R				(RIU_BASE_SDIO1 + (0x20<<2))
+#define FCIE_CRC_BUF					(RIU_BASE_SDIO1 + (0x40<<2))
+
+#define FCIE_POWER_SAVE_MODE_BASE		(RIU_BASE_SDIO2)
+
+#define SD_USE_FCIE5		1
+#define SDIO_D1_INTR_VER	2
+
+#include "hal_reg_fcie.h"
+
+#define RIU_UNIT_SHIFT           2
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RIU_BANK_PM_SLEPP 0x000E
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#define REG_PM_SLEEP_0x28				(RIU_BASE_PM_SLEEP+(0x28<<RIU_UNIT_SHIFT))
+#define REG_PM_SLEEP_0x35				(RIU_BASE_PM_SLEEP+(0x35<<RIU_UNIT_SHIFT))
+
+// 0x28
+#define PWM1_MODE						(BIT03|BIT02)
+
+// 0x35
+#define REG_SPI_GPIO					BIT00 // 0: normal use, 1: GPIO
+#define REG_SPIHOLDN_MODE				(BIT07|BIT06) // 0: GPIO
+#define REG_SW_GPIO_PM5_PM8_2_HK51_UART	BIT08
+#define REG_SW_GPIO_PM5_PM1_2_HK51_UART	BIT09
+#define REG_SW_GPIO_PM5_PM1_2_DIR_UAR	BIT10
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RIU_BANK_PMGPIO 0x000F
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#define PM_GPIO_REG_0x01				(RIU_BASE_PM_GPIO+(0x01<<RIU_UNIT_SHIFT))
+#define PM_GPIO_REG_0x1A				(RIU_BASE_PM_GPIO+(0x1A<<RIU_UNIT_SHIFT))
+
+// 0x01
+#define PAD_PM_GPIO1_OEN				BIT00
+#define PAD_PM_GPIO1_IN					BIT02
+
+// 0x1A
+#define PAD_PM_SPI_DI_OEN				BIT00 // 0: output, 1: input
+#define PAD_PM_SPI_DI_OUT				BIT01
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RIU_BANK_TIMER1 0x0030
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#define TIMER1_ENABLE                   (RIU_BASE_TIMER1+(0x20<<RIU_UNIT_SHIFT))
+#define TIMER1_HIT                      (RIU_BASE_TIMER1+(0x21<<RIU_UNIT_SHIFT))
+#define TIMER1_MAX_LOW                  (RIU_BASE_TIMER1+(0x22<<RIU_UNIT_SHIFT))
+#define TIMER1_MAX_HIGH                 (RIU_BASE_TIMER1+(0x23<<RIU_UNIT_SHIFT))
+#define TIMER1_CAP_LOW                  (RIU_BASE_TIMER1+(0x24<<RIU_UNIT_SHIFT))
+#define TIMER1_CAP_HIGH                 (RIU_BASE_TIMER1+(0x25<<RIU_UNIT_SHIFT))
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RIU_BANK_MIU2 0x1006
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#define MIU2_7A					(RIU_BASE_MIU2+(0x7A << RIU_UNIT_SHIFT))
+#define MIU_SELECT_BY_SDIO		BIT10
+#define MIU_SELECT_BY_FCIE		BIT09
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RIU_BANK_CLKGEN0 0x100A
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#define REG_CLK_SYNTHESIZER     (RIU_BASE_CLKGEN2+(0x3C<<RIU_UNIT_SHIFT))
+
+#define BIT_CLK_GATING			BIT0
+#define BIT_CLK_INVERSE			BIT1
+#define BIT_CLK_SOURCE			(BIT3|BIT2)
+#define BIT_CLK_432MHz			BIT2
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RIU_BANK_CLKGEN0 0x100B
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#define REG_CLK_FCIE            (RIU_BASE_CLKGEN0+(0x64<<RIU_UNIT_SHIFT))
+
+#define BIT_FCIE_CLK_GATING		BIT0
+#define BIT_FCIE_CLK_INVERSE	BIT1
+#define BIT_CLKGEN_FCIE_MASK	(BIT5|BIT4|BIT3|BIT2)
+#define BIT_FCIE_CLK_SRC_SEL	BIT6 // 0: clk_xtal 12M, 1: clk_nfie_p1
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RIU_BANK_CHIPTOP 0x101E
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#define CHIPTOP_02h				(RIU_BASE_CHIPTOP+(0x02 << RIU_UNIT_SHIFT))
+#define CHIPTOP_03h				(RIU_BASE_CHIPTOP+(0x03 << RIU_UNIT_SHIFT))
+#define CHIPTOP_05h				(RIU_BASE_CHIPTOP+(0x05 << RIU_UNIT_SHIFT))
+#define CHIPTOP_06h				(RIU_BASE_CHIPTOP+(0x06 << RIU_UNIT_SHIFT))
+#define CHIPTOP_08h				(RIU_BASE_CHIPTOP+(0x08 << RIU_UNIT_SHIFT))
+#define CHIPTOP_09h				(RIU_BASE_CHIPTOP+(0x09 << RIU_UNIT_SHIFT))
+#define CHIPTOP_0Ch				(RIU_BASE_CHIPTOP+(0x0C << RIU_UNIT_SHIFT))
+#define CHIPTOP_2Ch				(RIU_BASE_CHIPTOP+(0x2C << RIU_UNIT_SHIFT))
+#define CHIPTOP_2Dh				(RIU_BASE_CHIPTOP+(0x2D << RIU_UNIT_SHIFT))
+#define CHIPTOP_50h				(RIU_BASE_CHIPTOP+(0x50 << RIU_UNIT_SHIFT))
+
+// CHIPTOP_02h
+#define REG_TS0_MODE			(BIT06|BIT05)
+#define TS0_MODE_1				(BIT05)
+#define TS0_MODE_2				(BIT06)
+#define TS0_MODE_3				(BIT06|BIT05)
+#define REG_TS1_MODE			(BIT02|BIT01)
+#define TS1_MODE_1				(BIT01)
+#define TS1_MODE_2				(BIT02)
+#define REG_TS2_MODE			(BIT04|BIT03)
+#define TS2_MODE_1				(BIT03)
+#define TS2_MODE_2				(BIT04)
+#define REG_MSPI1_MODE2			(BIT11|BIT10)
+#define MSPI1_MODE2_1			(BIT10)
+#define MSPI1_MODE2_2			(BIT11)
+#define MSPI1_MODE2_3			(BIT11|BIT10)
+#define REG_MSPI1_MODE1			(BIT09|BIT08)
+#define MSPI1_MODE1_1			(BIT08)
+#define MSPI1_MODE1_2			(BIT09)
+#define MSPI1_MODE1_3			(BIT09|BIT08)
+
+// CHIPTOP_03h
+#define REG_2ND_UART_MODE		(BIT01|BIT00)
+#define S2ND_UART_MODE_2		(BIT01)
+#define S2ND_UART_MODE_3		(BIT01|BIT00)
+
+// CHIPTOP_05h
+#define REG_I2S_OUT_MUTE_MODE	(BIT15|BIT14)
+#define I2S_OUT_MUTE_MODE_1		(BIT14)
+#define I2S_OUT_MUTE_MODE_2		(BIT15)
+#define REG_I2S_OUT_MODE		(BIT13|BIT12)
+#define I2S_OUT_MODE_1			(BIT12)
+#define I2S_OUT_MODE_2			(BIT13)
+#define I2S_OUT_MODE_3			(BIT13|BIT12)
+#define REG_I2S_TRX_MODE		(BIT11|BIT10)
+#define I2S_TRX_MODE_1			(BIT10)
+#define I2S_TRX_MODE_2			(BIT11)
+#define REG_I2S_IN_MODE			(BIT09|BIT08)
+#define I2S_IN_MODE_1			(BIT08)
+#define I2S_IN_MODE_2			(BIT09)
+
+// CHIPTOP_06h
+#define REG_I2S_PDM_MODE		(BIT10|BIT09|BIT08)
+#define I2S_PDM_MODE_1			(BIT08)
+#define I2S_PDM_MODE_2			(BIT09)
+
+// CHIPTOP_08h
+#define REG_SD_CONFIG_MSK		(BIT09|BIT08|BIT07)
+#define REG_SD_MODE_1			BIT07
+#define REG_SD_MODE_2			BIT08
+#define REG_SD_MODE_3			(BIT08|BIT07)
+#define REG_SD_MODE_4			BIT09
+#define REG_SD_MODE_5			(BIT09|BIT07)
+#define REG_NAND_CS1_EN			BIT06
+#define REG_NAND_MODE			(BIT05|BIT04)
+#define REG_EMMC_CONFIG			BIT00
+
+// CHIPTOP_09h
+#define REG_I2CM0_MODE			(BIT01|BIT00)
+#define I2CM0_MODE_1			(BIT00)
+#define I2CM0_MODE_2			(BIT01)
+#define REG_I2CM1_MODE			(BIT03|BIT02)
+#define I2CM1_MODE_2			(BIT03)
+#define REG_I2CM4_MODE			(BIT13|BIT12)
+#define I2CM4_MODE_1			(BIT12)
+#define REG_FUART_MODE			(BIT11|BIT10)
+#define FUART_MODE_2			(BIT11)
+
+// CHIPTOP_0Ch
+#define REG_SM0_MODE			(BIT04|BIT03|BIT02)
+#define SM0_MODE_1				(BIT02)
+#define SM0_MODE_2				(BIT03)
+
+// CHIPTOP_2Ch
+#define REG_GT0_RX_PE			(BIT07|BIT06|BIT05|BIT04|BIT03|BIT02) // 1: pull enable
+
+// CHIPTOP_2Dh
+#define REG_GT0_RX_PS_SD_BUS	(BIT07|BIT06|BIT05|BIT04|BIT03) // 0: pull down, 1: pull up
+#define REG_GT0_RX_PS_CLK		(BIT02) // 0: pull down, 1: pull up
+
+// CHIPTOP_50h
+#define REG_ALL_PAD_IN			BIT15
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RIU_BANK_CHIP_GPIO 0x102B
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#define CHIP_GPIO_47		(RIU_BASE_CHIP_GPIO+(0x47 << RIU_UNIT_SHIFT)) // manhattan MST232A
+#define TGPIO1_OEN 		BIT1 // low --> output
+#define TGPIO1_OUT 		BIT0 // low power on, high power off
+
+
+//--------------------------------macro define---------------------------------
+#define ENABLE_8BIT_MACRO               0
+
+#if !(defined(ENABLE_8BIT_MACRO) && ENABLE_8BIT_MACRO)
+#define ENABLE_32BIT_MACRO              1
+#endif
+
+//--------------------------------clock gen------------------------------------
+
+#define BIT_FCIE_CLK_XTAL			0x00
+#define BIT_FCIE_CLK_20M			0x01
+#define BIT_FCIE_CLK_32M			0x02
+#define BIT_FCIE_CLK_36M			0x03
+#define BIT_FCIE_CLK_40M			0x04
+#define BIT_FCIE_CLK_43M			0x05
+#define BIT_FCIE_CLK_54M			0x06
+#define BIT_FCIE_CLK_62M			0x07
+#define BIT_FCIE_CLK_72M			0x08
+#define BIT_FCIE_CLK_86M			0x09
+#define BIT_FCIE_CLK_EMMC_PLL_1X	0x0B // 8 bits macro & 32 bit macro HS200
+#define BIT_FCIE_CLK_EMMC_PLL_2X	0x0C // 32 bit macroDDR & HS400
+#define BIT_FCIE_CLK_300K			0x0D
+#define BIT_FCIE_CLK_XTAL2			0x0E
+#define BIT_FCIE_CLK_48M			0x0F
+
+#define BIT_FCIE_CLK_52M                0x10 // emmc pll use only
+#define BIT_FCIE_CLK_120M               0x11 // emmc pll use only
+#define BIT_FCIE_CLK_140M               0x12 // emmc pll use only
+#define BIT_FCIE_CLK_160M               0x13 // emmc pll use only
+#define BIT_FCIE_CLK_200M               0x14 // emmc pll use only
+
+#define eMMC_PLL_FLAG                   0x80
+#define eMMC_PLL_CLK__20M               (0x01|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK__27M               (0x02|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK__32M               (0x03|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK__36M               (0x04|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK__40M               (0x05|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK__48M               (0x06|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK__52M               (0x07|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK__62M               (0x08|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK__72M               (0x09|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK__80M               (0x0A|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK__86M               (0x0B|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK_100M               (0x0C|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK_120M               (0x0D|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK_140M               (0x0E|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK_160M               (0x0F|eMMC_PLL_FLAG)
+#define eMMC_PLL_CLK_200M               (0x10|eMMC_PLL_FLAG)
+
+
+
+#define eMMC_FCIE_VALID_CLK_CNT         1// FIXME
+
+#define PLL_SKEW4_CNT               9
+#define MIN_OK_SKEW_CNT             5
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RIU_BANK_SDIO_PLL 0x123F
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#define EMMC_PLL_1Ah					(RIU_BASE_EMMC_PLL+(0x1A << RIU_UNIT_SHIFT))
+#define BIT_NEW_PATCH2					BIT11
+
+//#define R_SDIO_PLL_0x1D					GET_REG_ADDR(RIU_BASE_EMMC_PLL, 0x1D)
+
+
+
+
+
+
+
+
+
+//------------------------------
+
+
+//=====================================================
+// unit for HW Timer delay (unit of us)
+//=====================================================
+
+/*
+#define HW_TIMER_DELAY_1us              1
+#define HW_TIMER_DELAY_5us              1
+#define HW_TIMER_DELAY_10us             1
+#define HW_TIMER_DELAY_100us            1
+#define HW_TIMER_DELAY_500us            1
+#define HW_TIMER_DELAY_1ms              (1 * HW_TIMER_DELAY_1us)
+#define HW_TIMER_DELAY_5ms              (5    * HW_TIMER_DELAY_1ms) / 3
+#define HW_TIMER_DELAY_10ms             (10   * HW_TIMER_DELAY_1ms) / 3
+#define HW_TIMER_DELAY_100ms            (100  * HW_TIMER_DELAY_1ms) / 3
+#define HW_TIMER_DELAY_500ms            (500  * HW_TIMER_DELAY_1ms) / 3
+#define HW_TIMER_DELAY_1s               (1000 * HW_TIMER_DELAY_1ms) / 3
+*/
+
+#define HW_TIMER_DELAY_1us              1
+#define HW_TIMER_DELAY_5us              5
+#define HW_TIMER_DELAY_10us             10
+#define HW_TIMER_DELAY_100us            100
+#define HW_TIMER_DELAY_500us            500
+#define HW_TIMER_DELAY_1ms              (1000 * HW_TIMER_DELAY_1us)
+#define HW_TIMER_DELAY_5ms              (5    * HW_TIMER_DELAY_1ms)
+#define HW_TIMER_DELAY_10ms             (10   * HW_TIMER_DELAY_1ms)
+#define HW_TIMER_DELAY_100ms            (100  * HW_TIMER_DELAY_1ms)
+#define HW_TIMER_DELAY_500ms            (500  * HW_TIMER_DELAY_1ms)
+#define HW_TIMER_DELAY_1s               (1000 * HW_TIMER_DELAY_1ms)
+
+
+//=====================================================
+// set FCIE clock
+//=====================================================
+// [FIXME] -->
+#define FCIE_SLOWEST_CLK                BIT_FCIE_CLK_300K
+#define FCIE_SLOW_CLK                   BIT_FCIE_CLK_48M
+#define FCIE_DEFAULT_CLK                BIT_FCIE_CLK_48M // BIT_FCIE_CLK_36M
+#define FCIE_HS200_CLK                  BIT_FCIE_CLK_200M //BIT_FCIE_CLK_52M
+// <-- [FIXME]
+//=====================================================
+// transfer DMA Address
+//=====================================================
+#define MIU_BUS_WIDTH_BITS              4// 8 bytes width [FIXME]
+/*
+ * Important:
+ * The following buffers should be large enough for a whole eMMC block
+ */
+// FIXME, this is only for verifing IP
+#define DMA_W_ADDR                      0x00300000
+#define DMA_R_ADDR                      0x00600000
+#define DMA_W_SPARE_ADDR                0x00900000
+#define DMA_R_SPARE_ADDR                0x00A80000
+#define DMA_BAD_BLK_BUF                 0x00C00000
+
+//int printf(const char *format, ...);
+
+
+//=====================================================
+// misc
+//=====================================================
+//#define BIG_ENDIAN
+#define LITTLE_ENDIAN
+
+#define BIT_DQS_MODE_MASK               (BIT0|BIT1|BIT2)
+#define BIT_DQS_MODE_SHIFT              0
+
+
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//                               EXTERN GLOBAL FUNCTION
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+#define SDIO_MODE_GPIO_PAD_BPS			1
+#define SDIO_MODE_GPIO_PAD_SDR			2
+#define SDIO_MODE_8BITS_MACRO_SDR		3
+#define SDIO_MODE_8BITS_MACRO_DDR		4
+#define SDIO_MODE_32BITS_MACRO_DDR		5
+#define SDIO_MODE_32BITS_MACRO_SDR104	6
+#define SDIO_MODE_UNKNOWN				7
+
+#define SDIO_PAD_SDR104			SDIO_MODE_32BITS_MACRO_SDR104
+#define SDIO_PAD_SDR50			SDIO_MODE_32BITS_MACRO_SDR104
+#define SDIO_PAD_DDR50			SDIO_MODE_8BITS_MACRO_DDR
+#if 0
+#define SDIO_PAD_SDR25			SDIO_MODE_GPIO_PAD_BPS
+#define SDIO_PAD_SDR12			SDIO_MODE_GPIO_PAD_BPS
+#else
+#define SDIO_PAD_SDR25			SDIO_MODE_GPIO_PAD_SDR
+#define SDIO_PAD_SDR12			SDIO_MODE_GPIO_PAD_SDR
+#endif
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// interrutp vector number
+// check mstar2/hal/[project]/cpu/chip_int.h
+//       mstar2/hal/[project]/cpu/arm64/chip_int.h
+///////////////////////////////////////////////////////////////////////////////////////////////////
+#define FCIE_INT_VECTOR E_IRQ_NFIE
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// new feature or patch different with other project
+///////////////////////////////////////////////////////////////////////////////////////////////////
+#define SDIO_NEW_R2N_PATCH // R2N mode new patch from manhattan 2015.06.09
+#if (ALTERNATIVE_IP == SDIO_IP)
+#define SDIO_R3_CRC_PATCH // response CRC false alarm patch 2015.06.09, SDIO has patch only
+#endif
+
+#define SDIO_ERRDET 			0
+
+#if (defined SDIO_ERRDET) && (SDIO_ERRDET==1)
+#define SDIO_ERRDET_RSP_TO		1
+#define SDIO_ERRDET_RSP_CRC_ERR	1
+#define SDIO_ERRDET_R_CRC_ERR	1
+#define SDIO_ERRDET_W_CRC_STS	1
+#define SDIO_ERRDET_R_SBIT_TO	1 // Manhattan fix counter 2 issue
+#define SDIO_ERRDET_W_MIU_TO	1 //
+#endif
+
+#define ENABLE_FCIE_INTERRUPT_MODE	1
+#define ENABLE_FCIE_ADMA			1
+
+typedef struct _SKEWER {
+
+	unsigned int u32LatchOKStart;
+	unsigned int u32LatchOKEnd;
+	unsigned int u32LatchBest;
+	unsigned char u8_edge;
+
+} SKEWER;
+
+//#define CONFIG_MIU0_BUSADDR 0x20000000
+//#define CONFIG_MIU1_BUSADDR 0xA0000000
+
+U32		HalFcie_SlectBestSkew4(U32 u32_Candidate, SKEWER * pSkewer);
+void	HalFcie_SetTuning(U8 u8Type, U8 u8Count);
+void	HalFcie_SetTriggerLevel(U8 u8STrigLevel);
+
+
+void	HalFcie_ResetIP(void);
+void	HalFcie_Platform_InitChiptop(void);
+U8		HalFcie_GetPadType(void);
+void	HalFcie_SwitchPad(unsigned char);
+U32		HalFcie_clock_setting(U16 u16_ClkParam);
+void	HalFcieDelayMs(U32 u32Ms);
+void	HalFcieDelayUs(U32 u32Us);
+U32		HalFcie_SetClock(U32 u32Clock);
+void	HalFcie_DumpDebugBus(void);
+void	HalFcie_GetSBootGPIOConfig(void);
+S32		HalFcie_GetCardDetect(void);
+S32		HalFcie_GetWriteProtect(void);
+void	HalFcie_SetCardPower(U8 u8OnOff);
+
+#endif // #ifndef __HAL_FCIE_PLATFORM_H__

@@ -1126,6 +1126,7 @@ int gserial_alloc_line(unsigned char *line_num)
 
 	tty_dev = tty_port_register_device(&ports[port_num].port->port,
 			gs_tty_driver, port_num, NULL);
+
 	if (IS_ERR(tty_dev)) {
 		struct gs_port	*port;
 		pr_err("%s: failed to register tty for port %d, err %ld\n",
@@ -1300,7 +1301,8 @@ static int userial_init(void)
 
 	gs_tty_driver->type = TTY_DRIVER_TYPE_SERIAL;
 	gs_tty_driver->subtype = SERIAL_TYPE_NORMAL;
-	gs_tty_driver->flags = TTY_DRIVER_REAL_RAW | TTY_DRIVER_DYNAMIC_DEV;
+	gs_tty_driver->flags = TTY_DRIVER_REAL_RAW | TTY_DRIVER_DYNAMIC_DEV
+				| TTY_DRIVER_RESET_TERMIOS;
 	gs_tty_driver->init_termios = tty_std_termios;
 
 	/* 9600-8-N-1 ... matches defaults expected by "usbser.sys" on
@@ -1311,6 +1313,10 @@ static int userial_init(void)
 			B9600 | CS8 | CREAD | HUPCL | CLOCAL;
 	gs_tty_driver->init_termios.c_ispeed = 9600;
 	gs_tty_driver->init_termios.c_ospeed = 9600;
+
+	gs_tty_driver->init_termios.c_lflag = 0;
+	gs_tty_driver->init_termios.c_iflag = 0;
+	gs_tty_driver->init_termios.c_oflag = 0;
 
 	tty_set_operations(gs_tty_driver, &gs_tty_ops);
 	for (i = 0; i < MAX_U_SERIAL_PORTS; i++)

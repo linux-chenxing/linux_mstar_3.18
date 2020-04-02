@@ -419,6 +419,10 @@ static void init_once(void *foo)
 
 	memset(bdev, 0, sizeof(*bdev));
 	mutex_init(&bdev->bd_mutex);
+#if(1 == MP_FAT_DEBUG_MESSAGE_CONTROL)
+	bdev->msg_count = 0;
+	bdev->not_msg_flag = false;
+#endif
 	INIT_LIST_HEAD(&bdev->bd_inodes);
 	INIT_LIST_HEAD(&bdev->bd_list);
 #ifdef CONFIG_SYSFS

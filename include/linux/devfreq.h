@@ -4,6 +4,7 @@
  *
  * Copyright (C) 2011 Samsung Electronics
  *	MyungJoo Ham <myungjoo.ham@samsung.com>
+ * Copyright (c) 2014, NVIDIA CORPORATION.  All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -35,6 +36,8 @@ struct devfreq;
  *			own protocol with private_data. However, because
  *			this is governor-specific, a governor using this
  *			will be only compatible with devices aware of it.
+ * @busy:		The current status of the device; True if the
+ *			device is busy, false if it is not.
  */
 struct devfreq_dev_status {
 	/* both since the last measure */
@@ -42,6 +45,7 @@ struct devfreq_dev_status {
 	unsigned long busy_time;
 	unsigned long current_frequency;
 	void *private_data;
+	bool busy;
 };
 
 /*
@@ -86,7 +90,7 @@ struct devfreq_dev_profile {
 	int (*get_cur_freq)(struct device *dev, unsigned long *freq);
 	void (*exit)(struct device *dev);
 
-	unsigned int *freq_table;
+	unsigned long *freq_table;
 	unsigned int max_state;
 };
 
@@ -173,6 +177,7 @@ struct devfreq {
 	unsigned int *trans_table;
 	unsigned long *time_in_state;
 	unsigned long last_stat_updated;
+	bool suspended;
 };
 
 #if defined(CONFIG_PM_DEVFREQ)

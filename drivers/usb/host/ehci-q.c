@@ -16,7 +16,13 @@
  * Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include <mstar/mpatch_macro.h>
+
 /* this file is part of ehci-hcd.c */
+#if (MP_USB_MSTAR==1) && (_USB_T3_WBTIMEOUT_PATCH)
+extern void Chip_Flush_Memory(void);
+extern void Chip_Read_Memory( void ) ;
+#endif
 
 /*-------------------------------------------------------------------------*/
 
@@ -213,6 +219,9 @@ static int qtd_copy_status (
 	/* serious "can't proceed" faults reported by the hardware */
 	if (token & QTD_STS_HALT) {
 		if (token & QTD_STS_BABBLE) {
+#if (MP_USB_MSTAR==1)
+			printk("QTD_STS_BABBLE :%x\n",token);
+#endif
 			/* FIXME "must" disable babbling device's port too */
 			status = -EOVERFLOW;
 		/* CERR nonzero + halt --> stall */
@@ -224,6 +233,9 @@ static int qtd_copy_status (
 		 * Which to test first is rather arbitrary.
 		 */
 		} else if (token & QTD_STS_MMF) {
+#if (MP_USB_MSTAR==1)
+			printk("QTD_STS_MMF!\n");
+#endif
 			/* fs/ls interrupt xfer missed the complete-split */
 			status = -EPROTO;
 		} else if (token & QTD_STS_DBE) {
@@ -319,6 +331,7 @@ qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh)
 	qh->qh_state = QH_STATE_COMPLETING;
 	stopped = (state == QH_STATE_IDLE);
 
+	ehci_sync_qh(ehci, qh);
  rescan:
 	last = NULL;
 	last_status = -EINPROGRESS;
@@ -351,6 +364,7 @@ qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh)
 		if (qtd == end)
 			break;
 
+		ehci_sync_qtd(ehci, qtd);
 		/* hardware copies qtd out of qh overlay */
 		rmb ();
 		token = hc32_to_cpu(ehci, qtd->hw_token);
@@ -417,7 +431,27 @@ qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh)
 						& EHCI_LIST_END(ehci))) {
 				stopped = 1;
 			}
+#if (MP_USB_MSTAR==1) && (_USB_SPLIT_MDATA_BLOCKING_PATCH)
+			else if((token & QTD_STS_STS)					/* SplitXstate = 1 in qTD */
+				&& (hc32_to_cpu(ehci, qh->hw->hw_info2) & QH_HUBADDR)	/* hub addr */
+				&& (hc32_to_cpu(ehci, qh->hw->hw_info2) & QH_CMASK)	/* split complite mask */
+				&& usb_pipeint(urb->pipe) && usb_pipein(urb->pipe)	/* Interrupt IN transaction */
+				&& (urb->dev->speed == USB_SPEED_LOW || urb->dev->speed == USB_SPEED_FULL))
+			{
+				u32 hw_token;
 
+				hw_token = hc32_to_cpu(ehci, qh->hw->hw_token);
+				/*
+				 * MDATA: should toggle
+				 * zero-size pkg: should "not" toggle
+				 */
+				//hw_token ^= QTD_TOGGLE;
+				hw_token &= (u32)(~QTD_STS_STS);
+
+				wmb ();
+				qh->hw->hw_token = cpu_to_hc32(ehci, hw_token);
+			}
+#endif
 		/* stop scanning when we reach qtds the hc is using */
 		} else if (likely (!stopped
 				&& ehci->rh_state >= EHCI_RH_RUNNING)) {
@@ -664,6 +698,13 @@ qh_urb_transaction (
 	for (;;) {
 		int this_qtd_len;
 
+#if (MP_USB_MSTAR==1) && (_USB_SHORT_PACKET_LOSE_INT_PATCH)
+		if (is_input && usb_pipebulk (urb->pipe) &&
+			(!(urb->transfer_flags & URB_NO_INTERRUPT)) && (!(urb->transfer_flags & URB_SHORT_NOT_OK)))
+		{
+			token |= QTD_IOC;
+		}
+#endif
 		this_qtd_len = qtd_fill(ehci, qtd, buf, this_sg_len, token,
 				maxpacket);
 		this_sg_len -= this_qtd_len;
@@ -994,6 +1035,7 @@ static void qh_link_async (struct ehci_hcd *ehci, struct ehci_qh *qh)
 	qh->qh_state = QH_STATE_LINKED;
 	qh->xacterrs = 0;
 	qh->exception = 0;
+	wmb();
 	/* qtd completions reported later by interrupt */
 
 	enable_async(ehci);
@@ -1056,7 +1098,9 @@ static struct ehci_qh *qh_append_tds (
 			 */
 			token = qtd->hw_token;
 			qtd->hw_token = HALT_BIT(ehci);
-
+#if (MP_USB_MSTAR==1) && _USB_FRIENDLY_CUSTOMER_PATCH
+			wmb ();
+#endif
 			dummy = qh->dummy;
 
 			dma = dummy->qtd_dma;
@@ -1136,12 +1180,119 @@ submit_async (
 	 */
 	if (likely (qh->qh_state == QH_STATE_IDLE))
 		qh_link_async(ehci, qh);
+
+#if (MP_USB_MSTAR==1) && (_USB_T3_WBTIMEOUT_PATCH)
+	Chip_Flush_Memory();
+#endif
  done:
 	spin_unlock_irqrestore (&ehci->lock, flags);
 	if (unlikely (qh == NULL))
 		qtd_list_free (ehci, urb, qtd_list);
 	return rc;
 }
+
+/*-------------------------------------------------------------------------*/
+#ifdef CONFIG_USB_HCD_TEST_MODE
+/*
+ * This function creates the qtds and submits them for the
+ * SINGLE_STEP_SET_FEATURE Test.
+ * This is done in two parts: first SETUP req for GetDesc is sent then
+ * 15 seconds later, the IN stage for GetDesc starts to req data from dev
+ *
+ * is_setup : i/p arguement decides which of the two stage needs to be
+ * performed; TRUE - SETUP and FALSE - IN+STATUS
+ * Returns 0 if success
+ */
+static int submit_single_step_set_feature(
+	struct usb_hcd  *hcd,
+	struct urb      *urb,
+	int             is_setup
+) {
+	struct ehci_hcd		*ehci = hcd_to_ehci(hcd);
+	struct list_head	qtd_list;
+	struct list_head	*head;
+
+	struct ehci_qtd		*qtd, *qtd_prev;
+	dma_addr_t		buf;
+	int			len, maxpacket;
+	u32			token;
+
+	INIT_LIST_HEAD(&qtd_list);
+	head = &qtd_list;
+
+	/* URBs map to sequences of QTDs:  one logical transaction */
+	qtd = ehci_qtd_alloc(ehci, GFP_KERNEL);
+	if (unlikely(!qtd))
+		return -1;
+	list_add_tail(&qtd->qtd_list, head);
+	qtd->urb = urb;
+
+	token = QTD_STS_ACTIVE;
+	token |= (EHCI_TUNE_CERR << 10);
+
+	len = urb->transfer_buffer_length;
+	/*
+	 * Check if the request is to perform just the SETUP stage (getDesc)
+	 * as in SINGLE_STEP_SET_FEATURE test, DATA stage (IN) happens
+	 * 15 secs after the setup
+	 */
+	if (is_setup) {
+		/* SETUP pid */
+		qtd_fill(ehci, qtd, urb->setup_dma,
+				sizeof(struct usb_ctrlrequest),
+				token | (2 /* "setup" */ << 8), 8);
+
+		submit_async(ehci, urb, &qtd_list, GFP_ATOMIC);
+		return 0; /*Return now; we shall come back after 15 seconds*/
+	}
+
+	/*
+	 * IN: data transfer stage:  buffer setup : start the IN txn phase for
+	 * the get_Desc SETUP which was sent 15seconds back
+	 */
+	token ^= QTD_TOGGLE;   /*We need to start IN with DATA-1 Pid-sequence*/
+	buf = urb->transfer_dma;
+
+	token |= (1 /* "in" */ << 8);  /*This is IN stage*/
+
+	maxpacket = max_packet(usb_maxpacket(urb->dev, urb->pipe, 0));
+
+	qtd_fill(ehci, qtd, buf, len, token, maxpacket);
+
+	/*
+	 * Our IN phase shall always be a short read; so keep the queue running
+	 * and let it advance to the next qtd which zero length OUT status
+	 */
+	qtd->hw_alt_next = EHCI_LIST_END(ehci);
+
+	/* STATUS stage for GetDesc control request */
+	token ^= 0x0100;        /* "in" <--> "out"  */
+	token |= QTD_TOGGLE;    /* force DATA1 */
+
+	qtd_prev = qtd;
+	qtd = ehci_qtd_alloc(ehci, GFP_ATOMIC);
+	if (unlikely(!qtd))
+		goto cleanup;
+	qtd->urb = urb;
+	qtd_prev->hw_next = QTD_NEXT(ehci, qtd->qtd_dma);
+	list_add_tail(&qtd->qtd_list, head);
+
+	/* dont fill any data in such packets */
+	qtd_fill(ehci, qtd, 0, 0, token, 0);
+
+	/* by default, enable interrupt on urb completion */
+	if (likely(!(urb->transfer_flags & URB_NO_INTERRUPT)))
+		qtd->hw_token |= cpu_to_hc32(ehci, QTD_IOC);
+
+	submit_async(ehci, urb, &qtd_list, GFP_KERNEL);
+
+	return 0;
+
+cleanup:
+	qtd_list_free(ehci, urb, head);
+	return -1;
+}
+#endif /* CONFIG_USB_HCD_TEST_MODE */
 
 /*-------------------------------------------------------------------------*/
 
@@ -1158,10 +1309,29 @@ static void single_unlink_async(struct ehci_hcd *ehci, struct ehci_qh *qh)
 	while (prev->qh_next.qh != qh)
 		prev = prev->qh_next.qh;
 
+#ifdef CONFIG_MSTAR_BDMA
+	if (get_64bit_OBF_cipher()) {
+        	m_BDMA_write(qh->qh_dma, prev->qh_dma);
+        	if (prev->hw->hw_next != qh->hw->hw_next) {
+                	printk("[BDMA] hw_next not matched!\n");
+			BUG();
+		}
+	}
+	else
+		prev->hw->hw_next = qh->hw->hw_next;
+#else
 	prev->hw->hw_next = qh->hw->hw_next;
+#endif
 	prev->qh_next = qh->qh_next;
 	if (ehci->qh_scan_next == qh)
 		ehci->qh_scan_next = qh->qh_next.qh;
+
+#if (MP_USB_MSTAR==1) && (_USB_T3_WBTIMEOUT_PATCH)
+	/* must make sure the qh is unlinked before send IAAD to HC.
+	 * wifi driver uses urb with 32KB buffer for iperf test would makes bulk-in timeout.
+	 */
+	Chip_Flush_Memory();
+#endif		
 }
 
 static void start_iaa_cycle(struct ehci_hcd *ehci)
@@ -1243,6 +1413,9 @@ static void end_unlink_async(struct ehci_hcd *ehci)
 		return;
 
 	/* Process the idle QHs */
+#if (MP_USB_MSTAR==1) && (_USB_T3_WBTIMEOUT_PATCH)
+	Chip_Read_Memory();	//Flush Read buffer when H/W finished
+#endif
 	ehci->async_unlinking = true;
 	while (!list_empty(&ehci->async_idle)) {
 		qh = list_first_entry(&ehci->async_idle, struct ehci_qh,

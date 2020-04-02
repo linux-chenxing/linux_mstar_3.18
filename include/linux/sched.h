@@ -1,3 +1,19 @@
+/*
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ *  Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
+ */
+
 #ifndef _LINUX_SCHED_H
 #define _LINUX_SCHED_H
 
@@ -54,6 +70,7 @@ struct sched_param {
 #include <linux/gfp.h>
 
 #include <asm/processor.h>
+#include <mstar/mpatch_macro.h>
 
 struct exec_domain;
 struct futex_pi_state;
@@ -100,6 +117,7 @@ DECLARE_PER_CPU(unsigned long, process_counts);
 extern int nr_processes(void);
 extern unsigned long nr_running(void);
 extern unsigned long nr_iowait(void);
+extern u64 nr_running_integral(unsigned int cpu);
 extern unsigned long nr_iowait_cpu(int cpu);
 extern unsigned long this_cpu_load(void);
 
@@ -258,6 +276,18 @@ extern void show_regs(struct pt_regs *);
  * trace (or NULL if the entire call-chain of the task should be shown).
  */
 extern void show_stack(struct task_struct *task, unsigned long *sp);
+
+#if (MP_DEBUG_TOOL_KDEBUG == 1)
+#ifdef CONFIG_SHOW_FAULT_TRACE_INFO
+extern void dump_pid_maps(struct task_struct *task);
+extern void show_user_stack(struct task_struct *task, struct pt_regs * regs);
+#ifdef CONFIG_ARM
+extern void show_usr_info(struct task_struct *task, struct pt_regs *regs, unsigned long addr);
+#elif defined(CONFIG_MIPS)
+extern void show_info(struct task_struct *task, struct pt_regs * regs);
+#endif
+#endif
+#endif /* MP_DEBUG_TOOL_KDEBUG */
 
 void io_schedule(void);
 long io_schedule_timeout(long timeout);
@@ -480,6 +510,7 @@ struct signal_struct {
 	atomic_t		sigcnt;
 	atomic_t		live;
 	int			nr_threads;
+	struct list_head	thread_head;
 
 	wait_queue_head_t	wait_chldexit;	/* for wait4() */
 
@@ -1041,6 +1072,7 @@ struct task_struct {
 	atomic_t usage;
 	unsigned int flags;	/* per process flags, defined below */
 	unsigned int ptrace;
+	unsigned int yield_count;
 
 #ifdef CONFIG_SMP
 	struct llist_node wake_entry;
@@ -1160,6 +1192,7 @@ struct task_struct {
 	/* PID/PID hash table linkage. */
 	struct pid_link pids[PIDTYPE_MAX];
 	struct list_head thread_group;
+	struct list_head thread_node;
 
 	struct completion *vfork_done;		/* for vfork() */
 	int __user *set_child_tid;		/* CLONE_CHILD_SETTID */
@@ -1379,6 +1412,16 @@ struct task_struct {
 	 */
 	unsigned long timer_slack_ns;
 	unsigned long default_timer_slack_ns;
+#if (MP_DEBUG_TOOL_COREDUMP == 1) || (MP_DEBUG_TOOL_KDEBUG == 1)
+         /* VDLinux, based VDLP.Mstar default patch No.5,show fault user stack, 2010-01-29 */
+#ifdef CONFIG_SHOW_FAULT_TRACE_INFO
+         unsigned long user_ssp;  /* user mode start sp */
+#endif
+#endif /* MP_DEBUG_TOOL_COREDUMP */
+
+#ifdef CONFIG_Kasan_Switch_On
+	unsigned int kasan_depth;
+#endif
 
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 	/* Index of current stored address in ret_stack */
@@ -1409,6 +1452,13 @@ struct task_struct {
 		unsigned long memsw_nr_pages; /* uncharged mem+swap usage */
 	} memcg_batch;
 	unsigned int memcg_kmem_skip_account;
+	struct memcg_oom_info {
+		unsigned int may_oom:1;
+		unsigned int in_memcg_oom:1;
+		unsigned int oom_locked:1;
+		int wakeups;
+		struct mem_cgroup *wait_on_memcg;
+	} memcg_oom;
 #endif
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 	atomic_t ptrace_bp_refcnt;
@@ -1460,6 +1510,15 @@ static inline struct pid *task_pgrp(struct task_struct *task)
 static inline struct pid *task_session(struct task_struct *task)
 {
 	return task->group_leader->pids[PIDTYPE_SID].pid;
+}
+
+static inline struct task_struct *get_thread_process(struct task_struct *thread)
+{
+	struct task_struct *task = thread;
+	while (task->pid != task->tgid)
+		task = task->group_leader;
+
+	return task;
 }
 
 struct pid_namespace;
@@ -1610,6 +1669,9 @@ static inline cputime_t task_gtime(struct task_struct *t)
 extern void task_cputime_adjusted(struct task_struct *p, cputime_t *ut, cputime_t *st);
 extern void thread_group_cputime_adjusted(struct task_struct *p, cputime_t *ut, cputime_t *st);
 
+extern int task_free_register(struct notifier_block *n);
+extern int task_free_unregister(struct notifier_block *n);
+
 /*
  * Per process flags
  */
@@ -1642,6 +1704,7 @@ extern void thread_group_cputime_adjusted(struct task_struct *p, cputime_t *ut, 
 #define PF_MEMPOLICY	0x10000000	/* Non-default NUMA mempolicy */
 #define PF_MUTEX_TESTER	0x20000000	/* Thread belongs to the rt mutex tester */
 #define PF_FREEZER_SKIP	0x40000000	/* Freezer should not count it as freezable */
+#define PF_SUSPEND_TASK 0x80000000      /* this thread called freeze_processes and should not be frozen */
 
 /*
  * Only the _current_ task can read/write to tsk->flags, but other
@@ -1686,6 +1749,17 @@ static inline unsigned int memalloc_noio_save(void)
 static inline void memalloc_noio_restore(unsigned int flags)
 {
 	current->flags = (current->flags & ~PF_MEMALLOC_NOIO) | flags;
+}
+
+static inline bool task_no_new_privs(struct task_struct *p)
+{
+	return p->no_new_privs;
+}
+
+static inline int task_set_no_new_privs(struct task_struct *p)
+{
+	p->no_new_privs = 1;
+	return 0;
 }
 
 /*
@@ -1899,6 +1973,7 @@ extern int task_nice(const struct task_struct *p);
 extern int can_nice(const struct task_struct *p, const int nice);
 extern int task_curr(const struct task_struct *p);
 extern int idle_cpu(int cpu);
+extern int idle_cpu_relaxed(int cpu);
 extern int sched_setscheduler(struct task_struct *, int,
 			      const struct sched_param *);
 extern int sched_setscheduler_nocheck(struct task_struct *, int,
@@ -2166,6 +2241,16 @@ extern bool current_is_single_threaded(void);
 
 #define while_each_thread(g, t) \
 	while ((t = next_thread(t)) != g)
+
+#define __for_each_thread(signal, t)	\
+	list_for_each_entry_rcu(t, &(signal)->thread_head, thread_node)
+
+#define for_each_thread(p, t)		\
+	__for_each_thread((p)->signal, t)
+
+/* Careful: this is a double loop, 'break' won't work as expected. */
+#define for_each_process_thread(p, t)	\
+	for_each_process(p) for_each_thread(p, t)
 
 static inline int get_nr_threads(struct task_struct *tsk)
 {

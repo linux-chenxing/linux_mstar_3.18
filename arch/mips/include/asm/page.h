@@ -210,6 +210,8 @@ extern int __virt_addr_valid(const volatile void *kaddr);
 #define CAC_ADDR(addr)		((addr) - UNCAC_BASE + PAGE_OFFSET -	\
 								PHYS_OFFSET)
 
+#define phys_to_page(phys)	virt_to_page(__pa(phys))
+
 #include <asm-generic/memory_model.h>
 #include <asm-generic/getorder.h>
 

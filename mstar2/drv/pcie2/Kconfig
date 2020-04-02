@@ -1,0 +1,11 @@
+config MSTAR_PCIE2
+	bool "MSTAR PCIE2"
+	depends on PCI && (MSTAR_K7U_CA53 || MSTAR_K7U_CA7 || MSTAR_C2P)
+	select MSTAR_IIC if MSTAR_ARM_BD_FPGA
+	select MSTAR_GPIO if MSTAR_ARM_BD_FPGA
+	help
+	  Say Y here if you want the MStar PCIe host core. Select this if you are having a
+	  problem with PCI support and want to see more of what is going on.
+
+	  When in doubt, say N.
+

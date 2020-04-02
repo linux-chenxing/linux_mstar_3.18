@@ -16,6 +16,10 @@ struct vm_area_struct;		/* vma defining user mapping in mm_types.h */
 #define VM_USERMAP	0x00000008	/* suitable for remap_vmalloc_range */
 #define VM_VPAGES	0x00000010	/* buffer for pages was vmalloc'ed */
 #define VM_UNLIST	0x00000020	/* vm_struct is not listed in vmlist */
+#ifdef CONFIG_Kasan_Switch_On
+#define VM_NO_GUARD	0x00000040	/* don't add guard page */
+#define VM_KASAN	0x00000080      /* has allocated kasan shadow memory */
+#endif
 /* bits [20..32] reserved for arch specific ioremap internals */
 
 /*
@@ -73,9 +77,17 @@ extern void *vmalloc_exec(unsigned long size);
 extern void *vmalloc_32(unsigned long size);
 extern void *vmalloc_32_user(unsigned long size);
 extern void *__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot);
+#ifndef CONFIG_Kasan_Switch_On
 extern void *__vmalloc_node_range(unsigned long size, unsigned long align,
 			unsigned long start, unsigned long end, gfp_t gfp_mask,
 			pgprot_t prot, int node, const void *caller);
+#endif
+#ifdef CONFIG_Kasan_Switch_On
+extern void *__vmalloc_node_range(unsigned long size, unsigned long align,
+			unsigned long start, unsigned long end, gfp_t gfp_mask,
+			pgprot_t prot, unsigned long vm_flags, int node,
+			const void *caller);
+#endif
 extern void vfree(const void *addr);
 
 extern void *vmap(struct page **pages, unsigned int count,
@@ -92,8 +104,18 @@ void vmalloc_sync_all(void);
 
 static inline size_t get_vm_area_size(const struct vm_struct *area)
 {
-	/* return actual size without guard page */
+#ifndef CONFIG_Kasan_Switch_On
+       	/* return actual size without guard page */
 	return area->size - PAGE_SIZE;
+#endif
+
+#ifdef CONFIG_Kasan_Switch_On
+	if (!(area->flags & VM_NO_GUARD))
+		/* return actual size without guard page */
+		return area->size - PAGE_SIZE;
+	else
+		return area->size;
+#endif
 }
 
 extern struct vm_struct *get_vm_area(unsigned long size, unsigned long flags);
@@ -110,6 +132,18 @@ extern struct vm_struct *find_vm_area(const void *addr);
 
 extern int map_vm_area(struct vm_struct *area, pgprot_t prot,
 			struct page ***pages);
+#if ((1 == MP_CMA_PATCH_POOL_UTOPIA_TO_KERNEL) || (1 == CONFIG_MSTAR_MMAHEAP))
+int vmap_page_range(unsigned long start, unsigned long end,
+			   pgprot_t prot, struct page **pages);
+#else
+static int vmap_page_range(unsigned long start, unsigned long end,
+                           pgprot_t prot, struct page **pages);
+#endif
+
+#if (1 == MP_CMA_PATCH_POOL_UTOPIA_TO_KERNEL)
+void free_unmap_vmap_start_end(unsigned long start,unsigned long end);
+#endif
+
 #ifdef CONFIG_MMU
 extern int map_kernel_range_noflush(unsigned long start, unsigned long size,
 				    pgprot_t prot, struct page **pages);

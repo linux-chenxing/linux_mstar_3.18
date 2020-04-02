@@ -1,8 +1,9 @@
 # generic pinmux support
+GCOV_PROFILE := y
 
 ccflags-$(CONFIG_DEBUG_PINCTRL)	+= -DDEBUG
 
-obj-$(CONFIG_PINCTRL)		+= core.o
+obj-$(CONFIG_PINCTRL)		+= core.o pinctrl-utils.o
 obj-$(CONFIG_PINMUX)		+= pinmux.o
 obj-$(CONFIG_PINCONF)		+= pinconf.o
 ifeq ($(CONFIG_OF),y)
@@ -37,6 +38,7 @@ obj-$(CONFIG_PINCTRL_TEGRA)	+= pinctrl-tegra.o
 obj-$(CONFIG_PINCTRL_TEGRA20)	+= pinctrl-tegra20.o
 obj-$(CONFIG_PINCTRL_TEGRA30)	+= pinctrl-tegra30.o
 obj-$(CONFIG_PINCTRL_TEGRA114)	+= pinctrl-tegra114.o
+obj-$(CONFIG_PINCTRL_TEGRA124)	+= pinctrl-tegra124.o
 obj-$(CONFIG_PINCTRL_U300)	+= pinctrl-u300.o
 obj-$(CONFIG_PINCTRL_COH901)	+= pinctrl-coh901.o
 obj-$(CONFIG_PINCTRL_SAMSUNG)	+= pinctrl-samsung.o
@@ -45,6 +47,9 @@ obj-$(CONFIG_PINCTRL_EXYNOS5440)	+= pinctrl-exynos5440.o
 obj-$(CONFIG_PINCTRL_S3C64XX)	+= pinctrl-s3c64xx.o
 obj-$(CONFIG_PINCTRL_XWAY)	+= pinctrl-xway.o
 obj-$(CONFIG_PINCTRL_LANTIQ)	+= pinctrl-lantiq.o
+obj-$(CONFIG_PINCTRL_MAX77660)  += pinctrl-max77660.o
+obj-$(CONFIG_PINCTRL_PALMAS)	+= pinctrl-palmas.o
+obj-$(CONFIG_PINCTRL_AS3722)	+= pinctrl-as3722.o
 
 obj-$(CONFIG_PLAT_ORION)        += mvebu/
 obj-$(CONFIG_ARCH_SHMOBILE)	+= sh-pfc/

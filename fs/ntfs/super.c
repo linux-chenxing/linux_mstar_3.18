@@ -1757,6 +1757,10 @@ static struct lock_class_key
 	lcnbmp_runlist_lock_key, lcnbmp_mrec_lock_key,
 	mftbmp_runlist_lock_key, mftbmp_mrec_lock_key;
 
+#if (MP_NTFS_VOLUME_LABEL==1)
+static void ntfs_put_super(struct super_block *sb);
+#endif
+
 /**
  * load_system_files - open the system files using normal functions
  * @vol:	ntfs super block describing device whose system files to load
@@ -1776,6 +1780,14 @@ static bool load_system_files(ntfs_volume *vol)
 	RESTART_PAGE_HEADER *rp;
 	int err;
 #endif /* NTFS_RW */
+#if (MP_NTFS_VOLUME_LABEL==1)
+	bool volume_name_error_flag=0;
+	int vol_name_err;
+	ATTR_RECORD *a;
+	ntfschar *vname;
+	int j;
+	u32 u;
+#endif
 
 	ntfs_debug("Entering.");
 #ifdef NTFS_RW
@@ -1892,6 +1904,76 @@ get_ctx_vol_failed:
 	vol->vol_flags = vi->flags;
 	vol->major_ver = vi->major_ver;
 	vol->minor_ver = vi->minor_ver;
+#if (MP_NTFS_VOLUME_LABEL==1)
+	/*
+	* Reinitialize the search context for the $Volume/$VOLUME_NAME lookup.
+	*/
+	ntfs_attr_reinit_search_ctx(ctx);
+	if ((vol_name_err=ntfs_attr_lookup(AT_VOLUME_NAME, AT_UNNAMED, 0, 0, 0, NULL, 0,
+			ctx))) {
+		if (vol_name_err != -ENOENT) {
+			ntfs_error(sb,"Failed to lookup of $VOLUME_NAME in "
+					"$Volume failed");
+			volume_name_error_flag=1;
+		}
+		/*
+		* Attribute not present.  This has been seen in the field.
+		* Treat this the same way as if the attribute was present but
+		* had zero length.
+		*/
+		vol->vol_name = ntfs_malloc_nofs(1);
+		if (!vol->vol_name)
+			volume_name_error_flag=1;
+		vol->vol_name[0] = '\0';
+	} else {
+		a = ctx->attr;
+		/* Has to be resident. */
+		if (a->non_resident) {
+			ntfs_error(sb,"$VOLUME_NAME must be resident.\n");
+			vol_name_err = -EIO;
+			volume_name_error_flag=1;
+		}
+		/* Get a pointer to the value of the attribute. */
+		vname = (ntfschar*)(le16_to_cpu(a->data.resident.value_offset) + (char*)a);
+		u = le32_to_cpu(a->data.resident.value_length) / 2;
+		/*
+		* Convert Unicode volume name to current locale multibyte
+		* format.
+		*/
+		vol->vol_name = NULL;
+		if (ntfs_ucstonls(vol,vname, u, (unsigned char**)&vol->vol_name, 0) < 0) {
+			ntfs_error(sb,"Volume name could not be converted "
+				"to current locale");
+			ntfs_debug("Forcing name into ASCII by replacing "
+				"non-ASCII characters with underscores.\n");
+			vol->vol_name = ntfs_malloc_nofs(u + 1);
+			if (!vol->vol_name)
+				volume_name_error_flag=1;
+	
+			for (j = 0; j < (s32)u; j++) {
+				ntfschar uc = le16_to_cpu(vname[j]);
+				if (uc > 0xff)
+					uc = (ntfschar)'_';
+				vol->vol_name[j] = (char)uc;
+			}
+			vol->vol_name[u] = '\0';
+		}
+	}
+	if(1==volume_name_error_flag)
+	{
+		ntfs_error(sb,"Failed get volume label.");
+		if (ctx)
+			 ntfs_attr_put_search_ctx(ctx);
+	
+		ntfs_put_super(sb);
+		return false;
+	}
+	if(vol->vol_name)
+		ntfs_debug("vol->vol_name=%s\n",vol->vol_name);
+	else
+		ntfs_debug("vol->vol_name=NULL\n");
+#endif
+
 	ntfs_attr_put_search_ctx(ctx);
 	unmap_mft_record(NTFS_I(vol->vol_ino));
 	printk(KERN_INFO "NTFS volume version %i.%i.\n", vol->major_ver,
@@ -2441,8 +2523,15 @@ static void ntfs_put_super(struct super_block *sb)
 	unload_nls(vol->nls_map);
 
 	sb->s_fs_info = NULL;
+#if (MP_NTFS_VOLUME_LABEL==1)
+	ntfs_free(vol->vol_name);
+#endif
 	kfree(vol);
 }
+
+#if (MP_NTFS_PAGE_CACHE_READAHEAD == 1)
+#define MAX_READAHEAD_PAGES	64
+#endif
 
 /**
  * get_nr_free_clusters - return the number of free clusters on a volume
@@ -2483,6 +2572,11 @@ static s64 get_nr_free_clusters(ntfs_volume *vol)
 	/* Use multiples of 4 bytes, thus max_size is PAGE_CACHE_SIZE / 4. */
 	ntfs_debug("Reading $Bitmap, max_index = 0x%lx, max_size = 0x%lx.",
 			max_index, PAGE_CACHE_SIZE / 4);
+
+#if (MP_NTFS_PAGE_CACHE_READAHEAD == 1)
+	do_page_cache_readahead(mapping,NULL,0,MAX_READAHEAD_PAGES);     //add for performance issue
+#endif
+
 	for (index = 0; index < max_index; index++) {
 		unsigned long *kaddr;
 
@@ -2510,6 +2604,12 @@ static s64 get_nr_free_clusters(ntfs_volume *vol)
 					PAGE_CACHE_SIZE * BITS_PER_BYTE);
 		kunmap_atomic(kaddr);
 		page_cache_release(page);
+#if (MP_NTFS_PAGE_CACHE_READAHEAD == 1)		
+        if(index%MAX_READAHEAD_PAGES == 0 )
+        {
+             do_page_cache_readahead(mapping,NULL,index+MAX_READAHEAD_PAGES,MAX_READAHEAD_PAGES);
+        }
+#endif		
 	}
 	ntfs_debug("Finished reading $Bitmap, last index = 0x%lx.", index - 1);
 	/*
@@ -3062,6 +3162,9 @@ static void ntfs_big_inode_init_once(void *foo)
  */
 struct kmem_cache *ntfs_attr_ctx_cache;
 struct kmem_cache *ntfs_index_ctx_cache;
+#if (MP_NTFS_READ_PAGES==1)
+struct kmem_cache *ntfs_bio_data_cache;
+#endif
 
 /* Driver wide mutex. */
 DEFINE_MUTEX(ntfs_lock);
@@ -3087,6 +3190,9 @@ static const char ntfs_attr_ctx_cache_name[] = "ntfs_attr_ctx_cache";
 static const char ntfs_name_cache_name[] = "ntfs_name_cache";
 static const char ntfs_inode_cache_name[] = "ntfs_inode_cache";
 static const char ntfs_big_inode_cache_name[] = "ntfs_big_inode_cache";
+#if (MP_NTFS_READ_PAGES==1)
+static const char ntfs_bio_data_cache_name[] = "ntfs_io_data_cache";
+#endif
 
 static int __init init_ntfs_fs(void)
 {
@@ -3154,6 +3260,16 @@ static int __init init_ntfs_fs(void)
 		goto big_inode_err_out;
 	}
 
+#if (MP_NTFS_READ_PAGES==1)
+		ntfs_bio_data_cache = kmem_cache_create(ntfs_bio_data_cache_name,
+												  sizeof(struct submit_rw_io_data), 0, SLAB_HWCACHE_ALIGN, NULL);
+		if (!ntfs_bio_data_cache) {
+			printk(KERN_CRIT "KERNEL SELF NTFS: Failed to create %s!\n",
+					ntfs_bio_data_cache_name);
+			goto submit_io_data_err_out;
+		}
+#endif
+
 	/* Register the ntfs sysctls. */
 	err = ntfs_sysctl(1);
 	if (err) {
@@ -3171,6 +3287,10 @@ static int __init init_ntfs_fs(void)
 	/* Unregister the ntfs sysctls. */
 	ntfs_sysctl(0);
 sysctl_err_out:
+#if (MP_NTFS_READ_PAGES==1)	
+	kmem_cache_destroy(ntfs_bio_data_cache);	  
+submit_io_data_err_out: 
+#endif	
 	kmem_cache_destroy(ntfs_big_inode_cache);
 big_inode_err_out:
 	kmem_cache_destroy(ntfs_inode_cache);
@@ -3200,6 +3320,9 @@ static void __exit exit_ntfs_fs(void)
 	 * destroy cache.
 	 */
 	rcu_barrier();
+#if (MP_NTFS_READ_PAGES==1)	
+	kmem_cache_destroy(ntfs_bio_data_cache);
+#endif	
 	kmem_cache_destroy(ntfs_big_inode_cache);
 	kmem_cache_destroy(ntfs_inode_cache);
 	kmem_cache_destroy(ntfs_name_cache);

@@ -1200,8 +1200,7 @@ void __ref __pci_bus_assign_resources(const struct pci_bus *bus,
 
 		switch (dev->class >> 8) {
 		case PCI_CLASS_BRIDGE_PCI:
-			if (!pci_is_enabled(dev))
-				pci_setup_bridge(b);
+			pci_setup_bridge(b);
 			break;
 
 		case PCI_CLASS_BRIDGE_CARDBUS:
@@ -1636,3 +1635,4 @@ void pci_assign_unassigned_bus_resources(struct pci_bus *bus)
 	__pci_bus_assign_resources(bus, &add_list, NULL);
 	BUG_ON(!list_empty(&add_list));
 }
+EXPORT_SYMBOL_GPL(pci_assign_unassigned_bus_resources);

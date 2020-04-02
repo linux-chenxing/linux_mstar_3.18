@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2012 ARM Ltd.
+ * Copyright (c) 2014, NVIDIA CORPORATION.  All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -20,14 +21,32 @@
 # error "please don't include this file directly"
 #endif
 
-/* We only require natural alignment for exclusive accesses. */
-#define __lock_aligned
+#if defined(CONFIG_ARM64_SIMPLE_SPINLOCK)
+
+typedef volatile u32 arch_spinlock_t;
+
+#define __ARCH_SPIN_LOCK_UNLOCKED	0
+
+typedef volatile u32 arch_rwlock_t;
+
+#define __ARCH_RW_LOCK_UNLOCKED         0
+
+#else /* defined(CONFIG_ARM64_SIMPLE_SPINLOCK) */
+
+#define TICKET_SHIFT	16
 
 typedef struct {
-	volatile unsigned int lock;
-} arch_spinlock_t;
+#ifdef __AARCH64EB__
+	u16 next;
+	u16 owner;
+#else
+	u16 owner;
+	u16 next;
+#endif
+} __aligned(4) arch_spinlock_t;
 
-#define __ARCH_SPIN_LOCK_UNLOCKED	{ 0 }
+#define __ARCH_SPIN_LOCK_UNLOCKED	{ 0 , 0 }
+
 
 typedef struct {
 	volatile unsigned int lock;
@@ -35,4 +54,5 @@ typedef struct {
 
 #define __ARCH_RW_LOCK_UNLOCKED		{ 0 }
 
+#endif /* defined(CONFIG_ARM64_SIMPLE_SPINLOCK) */
 #endif

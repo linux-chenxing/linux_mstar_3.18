@@ -398,6 +398,7 @@ ENDPROC(__irq_usr)
 	.align	5
 __und_usr:
 	usr_entry
+	enable_irq
 
 	mov	r2, r4
 	mov	r3, r5
@@ -482,7 +483,8 @@ ENDPROC(__und_usr)
  */
 	.pushsection .fixup, "ax"
 	.align	2
-4:	mov	pc, r9
+4:	str r4, [sp, #S_PC]
+	mov pc, r9
 	.popsection
 	.pushsection __ex_table,"a"
 	.long	1b, 4b
@@ -515,7 +517,7 @@ ENDPROC(__und_usr)
  *  r9  = normal "successful" return address
  *  r10 = this threads thread_info structure
  *  lr  = unrecognised instruction return address
- * IRQs disabled, FIQs enabled.
+ * IRQs enabled, FIQs enabled.
  */
 	@
 	@ Fall-through from Thumb-2 __und_usr
@@ -622,7 +624,6 @@ call_fpe:
 #endif
 
 do_fpe:
-	enable_irq
 	ldr	r4, .LCfp
 	add	r10, r10, #TI_FPSTATE		@ r10 = workspace
 	ldr	pc, [r4]			@ Call FP module USR entry point
@@ -650,8 +651,7 @@ __und_usr_fault_32:
 	b	1f
 __und_usr_fault_16:
 	mov	r1, #2
-1:	enable_irq
-	mov	r0, sp
+1:	mov	r0, sp
 	adr	lr, BSYM(ret_from_exception)
 	b	__und_fault
 ENDPROC(__und_usr_fault_32)

@@ -18,6 +18,9 @@
 
 /* this file is part of ehci-hcd.c */
 
+#if (MP_USB_MSTAR==1) && defined(CONFIG_USB_EHCI_SUSPEND_PORT)
+#include "ehci-mstar-sysfs.c"
+#endif
 
 /* Display the ports dedicated to the companion controller */
 static ssize_t show_companion(struct device *dev,
@@ -174,6 +177,14 @@ static inline int create_sysfs_files(struct ehci_hcd *ehci)
 		goto out;
 
 	i = device_create_file(controller, &dev_attr_uframe_periodic_max);
+
+#if (MP_USB_MSTAR==1) && defined(CONFIG_USB_EHCI_SUSPEND_PORT)
+	if (i)
+		goto out;
+
+	i = device_create_file(controller, &dev_attr_port_suspend);
+#endif
+
 out:
 	return i;
 }
@@ -187,4 +198,7 @@ static inline void remove_sysfs_files(struct ehci_hcd *ehci)
 		device_remove_file(controller, &dev_attr_companion);
 
 	device_remove_file(controller, &dev_attr_uframe_periodic_max);
+#if (MP_USB_MSTAR==1) && defined(CONFIG_USB_EHCI_SUSPEND_PORT)
+	device_remove_file(controller, &dev_attr_port_suspend);
+#endif
 }

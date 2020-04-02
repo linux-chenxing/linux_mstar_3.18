@@ -161,6 +161,9 @@ static ssize_t ramoops_pstore_read(u64 *id, enum pstore_type_id *type,
 	/* ECC correction notice */
 	ecc_notice_size = persistent_ram_ecc_string(prz, NULL, 0);
 
+	if (!(size + ecc_notice_size))
+		return 0;
+
 	*buf = kmalloc(size + ecc_notice_size + 1, GFP_KERNEL);
 	if (*buf == NULL)
 		return -ENOMEM;
@@ -375,6 +378,12 @@ static int ramoops_init_prz(struct device *dev, struct ramoops_context *cxt,
 	*paddr += sz;
 
 	return 0;
+}
+
+void notrace ramoops_console_write_buf(const char *buf, size_t size)
+{
+	struct ramoops_context *cxt = &oops_cxt;
+	persistent_ram_write(cxt->cprz, buf, size);
 }
 
 static int ramoops_probe(struct platform_device *pdev)

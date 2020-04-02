@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2012 ARM Ltd.
+ * Copyright (c) 2014, NVIDIA CORPORATION.  All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -18,21 +19,173 @@
 
 #include <asm/spinlock_types.h>
 #include <asm/processor.h>
+#include <asm/atomic.h>
 
 /*
  * Spinlock implementation.
  *
- * The old value is read exclusively and the new one, if unlocked, is written
- * exclusively. In case of failure, the loop is restarted.
- *
  * The memory barriers are implicit with the load-acquire and store-release
  * instructions.
- *
- * Unlocked value: 0
- * Locked value: 1
  */
 
-#define arch_spin_is_locked(x)		((x)->lock != 0)
+#if defined(CONFIG_ARM64_SIMPLE_SPINLOCK)
+
+/*
+ * Simple locks.
+ *
+ * These locks are designed to be simpler, faster, and more power efficent when
+ * there are not many cores contending for the lock. It does this by minimizing
+ * the time before executing wfe in the contention case while minimizing the
+ * work in the uncontended case.
+ */
+
+/*
+ * Simple spinlock implementation.
+ *
+ * When the lock != 0, it is held. When the lock == 0, it is free.
+ */
+
+static inline void arch_spin_lock(arch_spinlock_t *lock)
+{
+	do {
+		/* Wait for the lock to be free */
+		while (ldax32(lock))
+			wfe();	/* Go to sleep waiting for a change */
+	} while (stx32(lock, 1));
+}
+
+#define arch_spin_lock_flags(lock, flags) arch_spin_lock(lock)
+
+static inline int arch_spin_trylock(arch_spinlock_t *lock)
+{
+	if (ldax32(lock))
+		return 0;
+	if (stx32(lock, 1))
+		return 0;
+	return 1;
+}
+
+static inline void arch_spin_unlock(arch_spinlock_t *lock)
+{
+	stl32(lock, 0);
+}
+
+static inline int arch_spin_is_locked(arch_spinlock_t *lock)
+{
+	/*
+	 * This needs ldax32() so that __raw_spin_lock() can use wfe() for
+	 * arch_spin_relax().
+	 */
+	return ldax32(lock);
+}
+
+static inline void arch_spin_unlock_wait(arch_spinlock_t *lock)
+{
+	while (ldax32(lock))
+		wfe();
+}
+
+#define arch_spin_relax(x) wfe()
+
+/*
+ * RW lock implementation.
+ *
+ * The lock contains the number of readers. When a writer has the lock the
+ * value is RW_WRITE_LOCK. A writer can obtain the lock only if the value is 0.
+ * A reader will increment the lock value. A reader can obtain the lock any time
+ * it is not RW_WRITE_LOCK.
+ */
+
+
+#define RW_WRITE_LOCK (~0)
+static inline void arch_read_lock(arch_rwlock_t *lock)
+{
+	u32 lockval;
+
+	do {
+		/* Sleep while a writer owns the lock */
+		while ((lockval = ldax32(lock)) == RW_WRITE_LOCK)
+			wfe();
+	} while (stx32(lock, lockval + 1));
+}
+
+static inline void arch_read_unlock(arch_rwlock_t *lock)
+{
+	while (stx32(lock, ldx32(lock) - 1))
+		;
+}
+
+static inline int arch_read_trylock(arch_rwlock_t *lock)
+{
+	u32 lockval;
+
+	/*
+	 * Spin as long as a writer doesn't hold the lock because the contention
+	 * is only with other readers updating the lock value. Also, stx32() may
+	 * return 1 even if the exlusively held address did not change.
+	 */
+	do {
+		lockval = ldax32(lock);
+		if (lockval == RW_WRITE_LOCK)
+			return 0;
+	} while (stx32(lock, lockval + 1));
+	return 1;
+}
+
+static inline int arch_read_can_lock(arch_rwlock_t *lock)
+
+{
+	/*
+	 * This needs ldax32() so that __raw_read_lock() can use wfe() for
+	 * arch_read_relax().
+	 */
+	return ldax32(lock) >= 0;
+}
+
+#define arch_read_relax(x) wfe()
+
+static inline void arch_write_lock(arch_rwlock_t *lock)
+{
+	/* A writer can only obtain the lock when the value is 0 */
+	do {
+		while (ldax32(lock) != 0)
+			wfe();
+	} while (stx32(lock, RW_WRITE_LOCK));
+}
+
+static inline void arch_write_unlock(arch_rwlock_t *lock)
+{
+	stl32(lock, 0);
+}
+
+static inline int arch_write_trylock(arch_rwlock_t *lock)
+{
+	/*
+	 * Spin as long as a nothing else holds the lock because the contention
+	 * is only with others updating the lock value. Also, stx32() may
+	 * return 1 even if the exlusively held address did not change.
+	 */
+	do {
+		if (ldax32(lock) != 0)
+			return 0;
+	} while (stx32(lock, RW_WRITE_LOCK));
+	return 1;
+}
+
+static inline int arch_write_can_lock(arch_rwlock_t *lock)
+
+{
+	/*
+	 * This needs ldax32() so that __raw_write_lock() can use wfe() for
+	 * arch_write_relax().
+	 */
+	return ldax32(lock) == 0;
+}
+
+#define arch_write_relax(x) wfe()
+
+#else /* defined(CONFIG_ARM64_SIMPLE_SPINLOCK) */
+
 #define arch_spin_unlock_wait(lock) \
 	do { while (arch_spin_is_locked(lock)) cpu_relax(); } while (0)
 
@@ -41,32 +194,51 @@
 static inline void arch_spin_lock(arch_spinlock_t *lock)
 {
 	unsigned int tmp;
+	arch_spinlock_t lockval, newval;
 
 	asm volatile(
-	"	sevl\n"
-	"1:	wfe\n"
-	"2:	ldaxr	%w0, %1\n"
-	"	cbnz	%w0, 1b\n"
-	"	stxr	%w0, %w2, %1\n"
-	"	cbnz	%w0, 2b\n"
-	: "=&r" (tmp), "+Q" (lock->lock)
-	: "r" (1)
-	: "cc", "memory");
+	/* Atomically increment the next ticket. */
+"	prfm	pstl1strm, %3\n"
+"1:	ldaxr	%w0, %3\n"
+"	add	%w1, %w0, %w5\n"
+"	stxr	%w2, %w1, %3\n"
+"	cbnz	%w2, 1b\n"
+	/* Did we get the lock? */
+"	eor	%w1, %w0, %w0, ror #16\n"
+"	cbz	%w1, 3f\n"
+	/*
+	 * No: spin on the owner. Send a local event to avoid missing an
+	 * unlock before the exclusive load.
+	 */
+"	sevl\n"
+"2:	wfe\n"
+"	ldaxrh	%w2, %4\n"
+"	eor	%w1, %w2, %w0, lsr #16\n"
+"	cbnz	%w1, 2b\n"
+	/* We got the lock. Critical section starts here. */
+"3:"
+	: "=&r" (lockval), "=&r" (newval), "=&r" (tmp), "+Q" (*lock)
+	: "Q" (lock->owner), "I" (1 << TICKET_SHIFT)
+	: "memory");
 }
 
 static inline int arch_spin_trylock(arch_spinlock_t *lock)
 {
 	unsigned int tmp;
+	arch_spinlock_t lockval;
 
 	asm volatile(
-	"2:	ldaxr	%w0, %1\n"
-	"	cbnz	%w0, 1f\n"
-	"	stxr	%w0, %w2, %1\n"
-	"	cbnz	%w0, 2b\n"
-	"1:\n"
-	: "=&r" (tmp), "+Q" (lock->lock)
-	: "r" (1)
-	: "cc", "memory");
+"	prfm	pstl1strm, %2\n"
+"1:	ldaxr	%w0, %2\n"
+"	eor	%w1, %w0, %w0, ror #16\n"
+"	cbnz	%w1, 2f\n"
+"	add	%w0, %w0, %3\n"
+"	stxr	%w1, %w0, %2\n"
+"	cbnz	%w1, 1b\n"
+"2:"
+	: "=&r" (lockval), "=&r" (tmp), "+Q" (*lock)
+	: "I" (1 << TICKET_SHIFT)
+	: "memory");
 
 	return !tmp;
 }
@@ -74,9 +246,28 @@ static inline int arch_spin_trylock(arch_spinlock_t *lock)
 static inline void arch_spin_unlock(arch_spinlock_t *lock)
 {
 	asm volatile(
-	"	stlr	%w1, %0\n"
-	: "=Q" (lock->lock) : "r" (0) : "memory");
+"	stlrh	%w1, %0\n"
+	: "=Q" (lock->owner)
+	: "r" (lock->owner + 1)
+	: "memory");
 }
+
+static inline int arch_spin_value_unlocked(arch_spinlock_t lock)
+{
+	return lock.owner == lock.next;
+}
+
+static inline int arch_spin_is_locked(arch_spinlock_t *lock)
+{
+	return !arch_spin_value_unlocked(ACCESS_ONCE(*lock));
+}
+
+static inline int arch_spin_is_contended(arch_spinlock_t *lock)
+{
+	arch_spinlock_t lockval = ACCESS_ONCE(*lock);
+	return (lockval.next - lockval.owner) > 1;
+}
+#define arch_spin_is_contended	arch_spin_is_contended
 
 /*
  * Write lock implementation.
@@ -101,7 +292,7 @@ static inline void arch_write_lock(arch_rwlock_t *rw)
 	"	cbnz	%w0, 2b\n"
 	: "=&r" (tmp), "+Q" (rw->lock)
 	: "r" (0x80000000)
-	: "cc", "memory");
+	: "memory");
 }
 
 static inline int arch_write_trylock(arch_rwlock_t *rw)
@@ -115,7 +306,7 @@ static inline int arch_write_trylock(arch_rwlock_t *rw)
 	"1:\n"
 	: "=&r" (tmp), "+Q" (rw->lock)
 	: "r" (0x80000000)
-	: "cc", "memory");
+	: "memory");
 
 	return !tmp;
 }
@@ -156,7 +347,7 @@ static inline void arch_read_lock(arch_rwlock_t *rw)
 	"	cbnz	%w1, 2b\n"
 	: "=&r" (tmp), "=&r" (tmp2), "+Q" (rw->lock)
 	:
-	: "cc", "memory");
+	: "memory");
 }
 
 static inline void arch_read_unlock(arch_rwlock_t *rw)
@@ -170,7 +361,7 @@ static inline void arch_read_unlock(arch_rwlock_t *rw)
 	"	cbnz	%w1, 1b\n"
 	: "=&r" (tmp), "=&r" (tmp2), "+Q" (rw->lock)
 	:
-	: "cc", "memory");
+	: "memory");
 }
 
 static inline int arch_read_trylock(arch_rwlock_t *rw)
@@ -185,7 +376,7 @@ static inline int arch_read_trylock(arch_rwlock_t *rw)
 	"1:\n"
 	: "=&r" (tmp), "+r" (tmp2), "+Q" (rw->lock)
 	:
-	: "cc", "memory");
+	: "memory");
 
 	return !tmp2;
 }
@@ -200,4 +391,5 @@ static inline int arch_read_trylock(arch_rwlock_t *rw)
 #define arch_read_relax(lock)	cpu_relax()
 #define arch_write_relax(lock)	cpu_relax()
 
+#endif /* defined(CONFIG_ARM64_SIMPLE_SPINLOCK) */
 #endif /* __ASM_SPINLOCK_H */

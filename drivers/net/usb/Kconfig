@@ -94,12 +94,13 @@ config USB_RTL8150
 	  module will be called rtl8150.
 
 config USB_RTL8152
-	tristate "Realtek RTL8152 Based USB 2.0 Ethernet Adapters"
+	tristate "Realtek RTL8152/RTL8153 Based USB Ethernet Adapters"
 	select NET_CORE
 	select MII
 	help
 	  This option adds support for Realtek RTL8152 based USB 2.0
-	  10/100 Ethernet adapters.
+	  10/100 Ethernet adapters and RTL8153 based USB 3.0 10/100/1000
+          Ethernet adapters.
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called r8152.
@@ -497,6 +498,15 @@ config USB_CDC_PHONET
 	  cellular modem, as found on most Nokia handsets with the
 	  "PC suite" USB profile.
 
+config USB_CDC_MHI
+	tristate "CDC MHI support"
+	depends on MHI
+	help
+	  This option is for Renesas wireless modem.
+	  Choose this option to support MHI over USB interface to
+	  Renesas Wireless Modem. Tristate by default. Automatically selected based
+	  on CONFIG_MHI.
+
 config USB_IPHETH
 	tristate "Apple iPhone USB Ethernet driver"
 	default n
@@ -533,5 +543,29 @@ config USB_VL600
 
 	  http://ubuntuforums.org/showpost.php?p=10589647&postcount=17
 
+config USB_NET_RAW_IP
+	tristate "RAW-IP Driver for XMM6260 modems"
+	help
+	  Choose this option if you have a XMM6260 modem device with RAW-IP suport.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called rmnet.
+
+config USB_NET_SMSC95XX_VOH_MODE
+	bool "VOH mode for SMSC95XX"
+	depends on USB_NET_SMSC95XX
+	default n
+	help
+	  This option enables VOH mode which is required for SMSC compliance.
+
+config MSM_RMNET_USB
+	tristate "RMNET USB Driver"
+	depends on USB_USBNET
+	help
+	Select this if you have a Qualcomm modem device connected via USB
+	supporting RMNET network interface.
+
+	To compile this driver as a module, choose M here: the module
+	will be called rmnet_usb. If unsure, choose N.
 
 endmenu

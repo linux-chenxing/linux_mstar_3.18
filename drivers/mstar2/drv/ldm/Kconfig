@@ -1,0 +1,17 @@
+choice
+	prompt "Mstar Local Dimming"
+	depends on HAS_LDM
+	default HAS_LD_DMA_MODE
+
+config HAS_LD
+	bool "Local Dimming normal mode"
+	depends on HAS_LDM
+	help
+	    enable MStar local dimming driver.
+	    
+config HAS_LD_DMA_MODE
+	bool "Local Dimming DMA mode"
+	depends on HAS_LDM
+	help
+		enable MStar local dimming DMA driver.
+endchoice

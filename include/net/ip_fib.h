@@ -63,7 +63,12 @@ struct fnhe_hash_bucket {
 	struct fib_nh_exception __rcu	*chain;
 };
 
-#define FNHE_HASH_SIZE		2048
+#ifdef CONFIG_MP_CMA_PATCH_DISABLE_HIORDER
+#define FNHE_HASH_SIZE 1024
+#else
+#define FNHE_HASH_SIZE 2048
+#endif
+		
 #define FNHE_RECLAIM_DEPTH	5
 
 struct fib_nh {

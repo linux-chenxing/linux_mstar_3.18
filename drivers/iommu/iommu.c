@@ -755,7 +755,7 @@ int iommu_domain_has_cap(struct iommu_domain *domain,
 EXPORT_SYMBOL_GPL(iommu_domain_has_cap);
 
 int iommu_map(struct iommu_domain *domain, unsigned long iova,
-	      phys_addr_t paddr, size_t size, int prot)
+	      phys_addr_t paddr, size_t size, unsigned long prot)
 {
 	unsigned long orig_iova = iova;
 	unsigned int min_pagesz;
@@ -831,6 +831,31 @@ int iommu_map(struct iommu_domain *domain, unsigned long iova,
 	return ret;
 }
 EXPORT_SYMBOL_GPL(iommu_map);
+
+int iommu_map_pages(struct iommu_domain *domain, unsigned long iova,
+		    struct page **pages, size_t count, unsigned long prot)
+{
+	int err;
+
+	err = domain->ops->map_pages(domain, iova, pages, count, prot);
+	if (err)
+		iommu_unmap(domain, iova, count << PAGE_SHIFT);
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(iommu_map_pages);
+
+int iommu_map_sg(struct iommu_domain *domain, unsigned long iova,
+		 struct scatterlist *sgl, int nents, unsigned long prot)
+{
+	int err;
+
+	err = domain->ops->map_sg(domain, iova, sgl, nents, prot);
+	if (err)
+		iommu_unmap(domain, iova, sgl->length);
+
+	return err;
+}
 
 size_t iommu_unmap(struct iommu_domain *domain, unsigned long iova, size_t size)
 {

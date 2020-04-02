@@ -19,6 +19,8 @@
 #include <linux/mutex.h>
 #include <linux/gfp.h>
 #include <linux/suspend.h>
+#include <trace/events/power.h>
+#include <asm/io.h>
 
 #include "smpboot.h"
 
@@ -46,6 +48,9 @@ static RAW_NOTIFIER_HEAD(cpu_chain);
  * Should always be manipulated under cpu_add_remove_lock
  */
 static int cpu_hotplug_disabled;
+#ifdef CONFIG_MP_PLATFORM_DVFS_GET_ERR_STATE_FROM_CPUHOTPLG_DISABLE
+static int cpu_hotplug_status_disable_Err_busy;
+#endif
 
 #ifdef CONFIG_HOTPLUG_CPU
 
@@ -158,6 +163,19 @@ void cpu_hotplug_enable(void)
 static void cpu_hotplug_begin(void) {}
 static void cpu_hotplug_done(void) {}
 #endif	/* #else #if CONFIG_HOTPLUG_CPU */
+
+#ifdef CONFIG_MP_PLATFORM_DVFS_GET_ERR_STATE_FROM_CPUHOTPLG_DISABLE
+int cpu_hotplug_GetStatus_disable_Err_busy(void)
+{
+        int ret;
+        cpu_maps_update_begin();
+        ret = cpu_hotplug_status_disable_Err_busy;
+        cpu_maps_update_done();
+
+        return ret;
+}
+EXPORT_SYMBOL(cpu_hotplug_GetStatus_disable_Err_busy);
+#endif
 
 /* Need to know about CPUs going up/down? */
 int __ref register_cpu_notifier(struct notifier_block *nb)
@@ -327,8 +345,8 @@ static int __ref _cpu_down(unsigned int cpu, int tasks_frozen)
 	 *
 	 * Wait for the stop thread to go away.
 	 */
-	while (!idle_cpu(cpu))
-		cpu_relax();
+	while (!idle_cpu_relaxed(cpu))
+		cpu_read_relax();
 
 	/* This actually kills the CPU. */
 	__cpu_die(cpu);
@@ -349,10 +367,18 @@ int __ref cpu_down(unsigned int cpu)
 {
 	int err;
 
+	trace_cpu_hotplug(cpu, POWER_CPU_DOWN_START);
+
 	cpu_maps_update_begin();
+        #ifdef CONFIG_MP_PLATFORM_DVFS_GET_ERR_STATE_FROM_CPUHOTPLG_DISABLE
+        cpu_hotplug_status_disable_Err_busy = 0;
+        #endif
 
 	if (cpu_hotplug_disabled) {
 		err = -EBUSY;
+                #ifdef CONFIG_MP_PLATFORM_DVFS_GET_ERR_STATE_FROM_CPUHOTPLG_DISABLE
+                cpu_hotplug_status_disable_Err_busy =1;
+                #endif
 		goto out;
 	}
 
@@ -360,6 +386,7 @@ int __ref cpu_down(unsigned int cpu)
 
 out:
 	cpu_maps_update_done();
+	trace_cpu_hotplug(cpu, POWER_CPU_DOWN_DONE);
 	return err;
 }
 EXPORT_SYMBOL(cpu_down);
@@ -428,6 +455,8 @@ int __cpuinit cpu_up(unsigned int cpu)
 	pg_data_t	*pgdat;
 #endif
 
+	trace_cpu_hotplug(cpu, POWER_CPU_UP_START);
+
 	if (!cpu_possible(cpu)) {
 		printk(KERN_ERR "can't online cpu %d because it is not "
 			"configured as may-hotadd at boot time\n", cpu);
@@ -461,9 +490,15 @@ int __cpuinit cpu_up(unsigned int cpu)
 #endif
 
 	cpu_maps_update_begin();
+        #ifdef CONFIG_MP_PLATFORM_DVFS_GET_ERR_STATE_FROM_CPUHOTPLG_DISABLE
+        cpu_hotplug_status_disable_Err_busy = 0;
+        #endif
 
 	if (cpu_hotplug_disabled) {
 		err = -EBUSY;
+                #ifdef CONFIG_MP_PLATFORM_DVFS_GET_ERR_STATE_FROM_CPUHOTPLG_DISABLE
+                cpu_hotplug_status_disable_Err_busy = 1;
+                #endif
 		goto out;
 	}
 
@@ -471,6 +506,7 @@ int __cpuinit cpu_up(unsigned int cpu)
 
 out:
 	cpu_maps_update_done();
+	trace_cpu_hotplug(cpu, POWER_CPU_UP_DONE);
 	return err;
 }
 EXPORT_SYMBOL_GPL(cpu_up);
@@ -522,10 +558,15 @@ void __weak arch_enable_nonboot_cpus_begin(void)
 void __weak arch_enable_nonboot_cpus_end(void)
 {
 }
-
+extern clear_magic(void);
+extern void smp_clear_magic(void);
+extern ptrdiff_t mstar_pm_base;
 void __ref enable_nonboot_cpus(void)
 {
 	int cpu, error;
+	ptrdiff_t secondary_lo_addr_reg;
+	ptrdiff_t secondary_hi_addr_reg;
+	ptrdiff_t secondary_magic_reg;
 
 	/* Allow everyone to use the CPU hotplug again */
 	cpu_maps_update_begin();
@@ -546,6 +587,25 @@ void __ref enable_nonboot_cpus(void)
 		printk(KERN_WARNING "Error taking CPU%d up: %d\n", cpu, error);
 	}
 
+	secondary_lo_addr_reg = mstar_pm_base + ( 0x100510 << 1) ;
+	secondary_hi_addr_reg = secondary_lo_addr_reg + 4;
+	secondary_magic_reg = secondary_lo_addr_reg + 8;
+
+	writel_relaxed( 0x0 , (void*)secondary_lo_addr_reg);
+	writel_relaxed( 0x0 , (void*)secondary_hi_addr_reg);
+	writel_relaxed( 0x0 , (void*)secondary_magic_reg);
+
+#if 0
+	// add for WDT (0x30, 8_bit 08/0A)
+	secondary_lo_addr_reg = mstar_pm_base + ( 0x3008 << 1) ;
+	secondary_hi_addr_reg = secondary_lo_addr_reg + 4;
+
+	writel_relaxed( 0x0 , (void*)secondary_lo_addr_reg);
+	writel_relaxed( 0x0 , (void*)secondary_hi_addr_reg);
+#endif
+
+        clear_magic();
+	smp_clear_magic();
 	arch_enable_nonboot_cpus_end();
 
 	cpumask_clear(frozen_cpus);
@@ -726,3 +786,23 @@ void init_cpu_online(const struct cpumask *src)
 {
 	cpumask_copy(to_cpumask(cpu_online_bits), src);
 }
+
+static ATOMIC_NOTIFIER_HEAD(idle_notifier);
+
+void idle_notifier_register(struct notifier_block *n)
+{
+	atomic_notifier_chain_register(&idle_notifier, n);
+}
+EXPORT_SYMBOL_GPL(idle_notifier_register);
+
+void idle_notifier_unregister(struct notifier_block *n)
+{
+	atomic_notifier_chain_unregister(&idle_notifier, n);
+}
+EXPORT_SYMBOL_GPL(idle_notifier_unregister);
+
+void idle_notifier_call_chain(unsigned long val)
+{
+	atomic_notifier_call_chain(&idle_notifier, val, NULL);
+}
+EXPORT_SYMBOL_GPL(idle_notifier_call_chain);

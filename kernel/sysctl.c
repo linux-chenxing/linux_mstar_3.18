@@ -95,6 +95,8 @@
 #if defined(CONFIG_SYSCTL)
 
 /* External variables not in a header file. */
+extern int sysctl_lazy_vfree_pages;
+extern int sysctl_lazy_vfree_tlb_flush_all_threshold;
 extern int sysctl_overcommit_memory;
 extern int sysctl_overcommit_ratio;
 extern int max_threads;
@@ -105,6 +107,11 @@ extern char core_pattern[];
 extern unsigned int core_pipe_limit;
 #endif
 extern int pid_max;
+extern int extra_free_kbytes;
+#if (MP_CACHE_DROP==1)
+extern int kthre_drop_cache_threshold;
+#endif
+extern int min_free_order_shift;
 extern int pid_max_min, pid_max_max;
 extern int percpu_pagelist_fraction;
 extern int compat_log;
@@ -129,8 +136,17 @@ static int __maybe_unused two = 2;
 static int __maybe_unused three = 3;
 static unsigned long one_ul = 1;
 static int one_hundred = 100;
+static int two_hundred = 200;
 #ifdef CONFIG_PRINTK
 static int ten_thousand = 10000;
+#endif
+
+#ifdef CONFIG_MP_ION_PATCH_MSTAR
+extern int mali_alloc_strategy;
+#endif
+
+#ifdef CONFIG_ZRAM
+extern int bypass_zram_watermark;
 #endif
 
 /* this is needed for the proc_doulongvec_minmax of vm_dirty_bytes */
@@ -312,6 +328,20 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= sched_proc_update_handler,
 		.extra1		= &min_wakeup_granularity_ns,
 		.extra2		= &max_wakeup_granularity_ns,
+	},
+	{
+		.procname	= "sched_yield_sleep_threshold",
+		.data		= &sysctl_sched_yield_sleep_threshold,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "sched_yield_sleep_duration",
+		.data		= &sysctl_sched_yield_sleep_duration,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
 	},
 #ifdef CONFIG_SMP
 	{
@@ -1074,6 +1104,20 @@ static struct ctl_table kern_table[] = {
 
 static struct ctl_table vm_table[] = {
 	{
+		.procname	= "lazy_vfree_pages",
+		.data		= &sysctl_lazy_vfree_pages,
+		.maxlen		= sizeof(sysctl_lazy_vfree_pages),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "lazy_vfree_tlb_flush_all_threshold",
+		.data		= &sysctl_lazy_vfree_tlb_flush_all_threshold,
+		.maxlen		= sizeof(sysctl_lazy_vfree_tlb_flush_all_threshold),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
 		.procname	= "overcommit_memory",
 		.data		= &sysctl_overcommit_memory,
 		.maxlen		= sizeof(sysctl_overcommit_memory),
@@ -1181,7 +1225,7 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &zero,
-		.extra2		= &one_hundred,
+		.extra2		= &two_hundred,
 	},
 #ifdef CONFIG_HUGETLB_PAGE
 	{
@@ -1270,6 +1314,31 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= min_free_kbytes_sysctl_handler,
 		.extra1		= &zero,
+	},
+	{
+		.procname	= "extra_free_kbytes",
+		.data		= &extra_free_kbytes,
+		.maxlen		= sizeof(extra_free_kbytes),
+		.mode		= 0644,
+		.proc_handler	= min_free_kbytes_sysctl_handler,
+		.extra1		= &zero,
+	},
+#if (MP_CACHE_DROP==1)
+	{
+		.procname	= "kthre_drop_cache_threshold",
+		.data		= &kthre_drop_cache_threshold,
+		.maxlen 	= sizeof(kthre_drop_cache_threshold),
+		.mode		= 0644,
+		.proc_handler	= kthre_drop_cache_threshold_sysctl_handler,
+		.extra1 	= &zero,
+	},	
+#endif
+	{
+		.procname	= "min_free_order_shift",
+		.data		= &min_free_order_shift,
+		.maxlen		= sizeof(min_free_order_shift),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec
 	},
 	{
 		.procname	= "percpu_pagelist_fraction",
@@ -1449,6 +1518,46 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_doulongvec_minmax,
 	},
+#ifdef CONFIG_HAVE_ARCH_MMAP_RND_BITS
+	{
+		.procname	= "mmap_rnd_bits",
+		.data		= &mmap_rnd_bits,
+		.maxlen		= sizeof(mmap_rnd_bits),
+		.mode		= 0600,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= (void *)&mmap_rnd_bits_min,
+		.extra2		= (void *)&mmap_rnd_bits_max,
+	},
+#endif
+#ifdef CONFIG_HAVE_ARCH_MMAP_RND_COMPAT_BITS
+	{
+		.procname	= "mmap_rnd_compat_bits",
+		.data		= &mmap_rnd_compat_bits,
+		.maxlen		= sizeof(mmap_rnd_compat_bits),
+		.mode		= 0600,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= (void *)&mmap_rnd_compat_bits_min,
+		.extra2		= (void *)&mmap_rnd_compat_bits_max,
+	},
+#endif
+#ifdef CONFIG_MP_ION_PATCH_MSTAR
+	{
+		.procname	= "mali_alloc_strategy",
+		.data		= &mali_alloc_strategy,
+		.maxlen		= sizeof(int),
+		.mode		= 0666,
+		.proc_handler	= proc_dointvec,	
+	},
+#endif
+#ifdef CONFIG_ZRAM
+	{
+		.procname	= "bypass_zram_watermark",
+		.data		= &bypass_zram_watermark,
+		.maxlen		= sizeof(int),
+		.mode		= 0666,
+		.proc_handler	= proc_dointvec,
+	},
+#endif
 	{ }
 };
 

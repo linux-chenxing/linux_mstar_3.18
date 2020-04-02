@@ -106,6 +106,10 @@ ifeq ("$(origin W)", "command line")
   export KBUILD_ENABLE_EXTRA_GCC_CHECKS := $(W)
 endif
 
+# convert changelist string in types.h into standard format
+TMP := $(shell grep Change include/linux/types.h && sed -i 's/$$Change: \([0-9]\{6,\}\) $$\\n/\1\\n/' include/linux/types.h)
+TMP :=
+
 # That's our default target when none is given on the command line
 PHONY := _all
 _all:
@@ -165,12 +169,26 @@ export srctree objtree VPATH
 # then ARCH is assigned, getting whatever value it gets normally, and 
 # SUBARCH is subsequently ignored.
 
-SUBARCH := $(shell uname -m | sed -e s/i.86/x86/ -e s/x86_64/x86/ \
-				  -e s/sun4u/sparc64/ \
-				  -e s/arm.*/arm/ -e s/sa110/arm/ \
-				  -e s/s390x/s390/ -e s/parisc64/parisc/ \
-				  -e s/ppc.*/powerpc/ -e s/mips.*/mips/ \
-				  -e s/sh[234].*/sh/ -e s/aarch64.*/arm64/ )
+# SUBARCH := $(shell uname -m | sed -e s/i.86/x86/ -e s/x86_64/x86/ \
+#				  -e s/sun4u/sparc64/ \
+#				  -e s/arm.*/arm/ -e s/sa110/arm/ \
+#				  -e s/s390x/s390/ -e s/parisc64/parisc/ \
+#				  -e s/ppc.*/powerpc/ -e s/mips.*/mips/ \
+#				  -e s/sh[234].*/sh/ -e s/aarch64.*/arm64/ )
+#wc means count the number of CONFIG_ARM/CONFIG_MIPS
+target_ARM = $(shell cat .config | sed -n '/CONFIG_ARM=/p' | wc -l )
+target_ARM64 = $(shell cat .config | sed -n '/CONFIG_ARM64=/p' | wc -l )
+target_MIPS = $(shell cat .config | sed -n '/CONFIG_MIPS=/p' | wc -l )
+
+ifeq ($(target_ARM),1)
+        SUBARCH = arm
+endif
+ifeq ($(target_ARM64),1)
+        SUBARCH = arm64
+endif
+ifeq ($(target_MIPS),1)
+        SUBARCH = mips
+endif
 
 # Cross compiling and selecting different set of gcc/bin-utils
 # ---------------------------------------------------------------------------
@@ -244,6 +262,9 @@ HOSTCXX      = g++
 HOSTCFLAGS   = -Wall -Wmissing-prototypes -Wstrict-prototypes -O2 -fomit-frame-pointer
 HOSTCXXFLAGS = -O2
 
+HOSTCFLAGS   += -m32
+HOSTCXXFLAGS += -m32
+HOSTLDFLAGS  += -m32
 # Decide whether to build built-in, modular, or both.
 # Normally, just do built-in.
 
@@ -374,6 +395,11 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -Werror-implicit-function-declaration \
 		   -Wno-format-security \
 		   -fno-delete-null-pointer-checks
+
+#if defined(CONFIG_MSTAR_ARM)
+KBUILD_CFLAGS   += -fno-peephole2
+#endif
+
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS   := -D__ASSEMBLY__
@@ -385,18 +411,26 @@ KBUILD_LDFLAGS_MODULE := -T $(srctree)/scripts/module-common.lds
 KERNELRELEASE = $(shell cat include/config/kernel.release 2> /dev/null)
 KERNELVERSION = $(VERSION)$(if $(PATCHLEVEL),.$(PATCHLEVEL)$(if $(SUBLEVEL),.$(SUBLEVEL)))$(EXTRAVERSION)
 
+ifeq ($(DEBUGKERNEL),1)
+KCONFIG_DEBUG_PATH = lib/Kconfig.debug
+else
+KCONFIG_DEBUG_PATH = lib/Kconfig.debug.performance
+endif
+
 export VERSION PATCHLEVEL SUBLEVEL KERNELRELEASE KERNELVERSION
 export ARCH SRCARCH CONFIG_SHELL HOSTCC HOSTCFLAGS CROSS_COMPILE AS LD CC
 export CPP AR NM STRIP OBJCOPY OBJDUMP
 export MAKE AWK GENKSYMS INSTALLKERNEL PERL UTS_MACHINE
 export HOSTCXX HOSTCXXFLAGS LDFLAGS_MODULE CHECK CHECKFLAGS
+export HOSTLDFLAGS
 
 export KBUILD_CPPFLAGS NOSTDINC_FLAGS LINUXINCLUDE OBJCOPYFLAGS LDFLAGS
-export KBUILD_CFLAGS CFLAGS_KERNEL CFLAGS_MODULE CFLAGS_GCOV
+export KBUILD_CFLAGS CFLAGS_KERNEL CFLAGS_MODULE CFLAGS_GCOV CFLAGS_KASAN
 export KBUILD_AFLAGS AFLAGS_KERNEL AFLAGS_MODULE
 export KBUILD_AFLAGS_MODULE KBUILD_CFLAGS_MODULE KBUILD_LDFLAGS_MODULE
 export KBUILD_AFLAGS_KERNEL KBUILD_CFLAGS_KERNEL
 export KBUILD_ARFLAGS
+export KCONFIG_DEBUG_PATH
 
 # When compiling out-of-tree modules, put MODVERDIR in the module
 # tree rather than in the kernel tree. The kernel tree might
@@ -500,6 +534,8 @@ config: scripts_basic outputmakefile FORCE
 	$(Q)$(MAKE) $(build)=scripts/kconfig $@
 
 %config: scripts_basic outputmakefile FORCE
+	./mpatch_gen.sh
+	./gen_cl.sh
 	$(Q)mkdir -p include/linux include/config
 	$(Q)$(MAKE) $(build)=scripts/kconfig $@
 
@@ -573,8 +609,16 @@ all: vmlinux
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS	+= -Os $(call cc-disable-warning,maybe-uninitialized,)
 else
+ifdef CONFIG_LESS_GCC_OPT
+KBUILD_CFLAGS	+= -O1
+else
 KBUILD_CFLAGS	+= -O2
 endif
+endif
+
+# conserve stack if available
+# do this early so that an architecture can override it.
+KBUILD_CFLAGS   += $(call cc-option,-fconserve-stack)
 
 include $(srctree)/arch/$(SRCARCH)/Makefile
 
@@ -666,7 +710,9 @@ KBUILD_ARFLAGS := $(call ar-option,D)
 ifeq ($(shell $(CONFIG_SHELL) $(srctree)/scripts/gcc-goto.sh $(CC)), y)
 	KBUILD_CFLAGS += -DCC_HAVE_ASM_GOTO
 endif
-
+ifeq ($(CONFIG_Kasan_Switch_On),y)
+include $(srctree)/scripts/Makefile.kasan
+endif
 # Add user supplied CPPFLAGS, AFLAGS and CFLAGS as the last assignments
 KBUILD_CPPFLAGS += $(KCPPFLAGS)
 KBUILD_AFLAGS += $(KAFLAGS)
@@ -735,6 +781,18 @@ export mod_sign_cmd
 ifeq ($(KBUILD_EXTMOD),)
 core-y		+= kernel/ mm/ fs/ ipc/ security/ crypto/ block/
 
+#for kdebugd
+ifdef CONFIG_KDEBUGD
+KDBGINCLUDE     := -Ikernel/kdebugd\
+		-Ikernel/kdebugd/include \
+		-Ikernel/kdebugd/include/kdebugd \
+                -Ikernel/kdebugd/aop \
+                -Ikernel/kdebugd/elf \
+                -Ikernel/kdebugd/elf/dem_src
+
+LINUXINCLUDE    += $(KDBGINCLUDE)
+export LINUXINCLUDE
+endif
 vmlinux-dirs	:= $(patsubst %/,%,$(filter %/, $(init-y) $(init-m) \
 		     $(core-y) $(core-m) $(drivers-y) $(drivers-m) \
 		     $(net-y) $(net-m) $(libs-y) $(libs-m)))
@@ -797,7 +855,7 @@ $(vmlinux-dirs): prepare scripts
 # Store (new) KERNELRELASE string in include/config/kernel.release
 include/config/kernel.release: include/config/auto.conf FORCE
 	$(Q)rm -f $@
-	$(Q)echo "$(KERNELVERSION)$$($(CONFIG_SHELL) $(srctree)/scripts/setlocalversion $(srctree))" > $@
+	$(Q)echo "$(KERNELVERSION)" > $@
 
 
 # Things we need to do before we recursively start building the kernel
@@ -912,6 +970,7 @@ headers_install_all:
 
 PHONY += headers_install
 headers_install: __headers
+	@cp -f ./include/mstar/mpatch_macro.h ./include/uapi/mstar/mpatch_macro.h
 	$(if $(wildcard $(srctree)/arch/$(hdr-arch)/include/uapi/asm/Kbuild),, \
 	  $(error Headers not exportable for the $(SRCARCH) architecture))
 	$(Q)$(MAKE) $(hdr-inst)=include/uapi
@@ -947,7 +1006,8 @@ modules: $(vmlinux-dirs) $(if $(KBUILD_BUILTIN),vmlinux) modules.builtin
 	@$(kecho) '  Building modules, stage 2.';
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modpost
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.fwinst obj=firmware __fw_modbuild
-
+	@$(MAKE) -C ./mstar2 xckover
+	
 modules.builtin: $(vmlinux-dirs:%=%/modules.builtin)
 	$(Q)$(AWK) '!x[$$0]++' $^ > $(objtree)/modules.builtin
 
@@ -1059,7 +1119,7 @@ mrproper: clean archmrproper $(mrproper-dirs)
 PHONY += distclean
 
 distclean: mrproper
-	@find $(srctree) $(RCS_FIND_IGNORE) \
+	@find -L $(srctree) $(RCS_FIND_IGNORE) \
 		\( -name '*.orig' -o -name '*.rej' -o -name '*~' \
 		-o -name '*.bak' -o -name '#*#' -o -name '.*.orig' \
 		-o -name '.*.rej' \
@@ -1087,6 +1147,9 @@ boards := $(wildcard $(srctree)/arch/$(SRCARCH)/configs/*_defconfig)
 boards := $(notdir $(boards))
 board-dirs := $(dir $(wildcard $(srctree)/arch/$(SRCARCH)/configs/*/*_defconfig))
 board-dirs := $(sort $(notdir $(board-dirs:/=)))
+
+debug:
+	@echo  'Cleaning machine:$(CLEAN_FILES)'
 
 help:
 	@echo  'Cleaning targets:'
@@ -1267,8 +1330,19 @@ endif # KBUILD_EXTMOD
 clean: $(clean-dirs)
 	$(call cmd,rmdirs)
 	$(call cmd,rmfiles)
-	@find $(if $(KBUILD_EXTMOD), $(KBUILD_EXTMOD), .) $(RCS_FIND_IGNORE) \
+	@find -L $(if $(KBUILD_EXTMOD), $(KBUILD_EXTMOD), .) $(RCS_FIND_IGNORE) \
 		\( -name '*.[oas]' -o -name '*.ko' -o -name '.*.cmd' \
+		-o -name '*.ko.*' \
+		-o -name '.*.d' -o -name '.*.tmp' -o -name '*.mod.c' \
+		-o -name '*.symtypes' -o -name 'modules.order' \
+		-o -name modules.builtin -o -name '.tmp_*.o.*' \
+		-o -name '*.gcno' \) -type f -print | xargs rm -f
+#for release, we need to reserve mhal_dlc.o while clean due  to the elimination of mhal_dlc.c
+rlsclean: $(clean-dirs)
+	$(call cmd,rmdirs)
+	$(call cmd,rmfiles)
+	@find -L $(if $(KBUILD_EXTMOD), $(KBUILD_EXTMOD), .) $(RCS_FIND_IGNORE) \
+		\( -not -name mhal_dlc.o -name '*.[oas]' -o -name '*.ko' -o -name '.*.cmd' \
 		-o -name '*.ko.*' \
 		-o -name '.*.d' -o -name '.*.tmp' -o -name '*.mod.c' \
 		-o -name '*.symtypes' -o -name 'modules.order' \

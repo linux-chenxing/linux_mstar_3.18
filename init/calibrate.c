@@ -10,6 +10,7 @@
 #include <linux/timex.h>
 #include <linux/smp.h>
 #include <linux/percpu.h>
+#include <mstar/mpatch_macro.h>
 
 unsigned long lpj_fine;
 unsigned long preset_lpj;
@@ -95,7 +96,7 @@ static unsigned long __cpuinit calibrate_delay_direct(void)
 		 * >= 12.5% apart, redo calibration.
 		 */
 		if (start >= post_end)
-			printk(KERN_NOTICE "calibrate_delay_direct() ignoring "
+			pr_info("calibrate_delay_direct() ignoring "
 					"timer_rate as we had a TSC wrap around"
 					" start=%lu >=post_end=%lu\n",
 				start, post_end);
@@ -134,15 +135,13 @@ static unsigned long __cpuinit calibrate_delay_direct(void)
 		good_timer_count = 0;
 		if ((measured_times[max] - estimate) <
 				(estimate - measured_times[min])) {
-			printk(KERN_NOTICE "calibrate_delay_direct() dropping "
-					"min bogoMips estimate %d = %lu\n",
-				min, measured_times[min]);
+			pr_info("%s() dropping min delay estimate %d = %lu\n",
+				__func__, min, measured_times[min]);
 			measured_times[min] = 0;
 			min = max;
 		} else {
-			printk(KERN_NOTICE "calibrate_delay_direct() dropping "
-					"max bogoMips estimate %d = %lu\n",
-				max, measured_times[max]);
+			pr_info("%s() dropping max delay estimate %d = %lu\n",
+				__func__, max, measured_times[max]);
 			measured_times[max] = 0;
 			max = min;
 		}
@@ -160,7 +159,7 @@ static unsigned long __cpuinit calibrate_delay_direct(void)
 
 	}
 
-	printk(KERN_NOTICE "calibrate_delay_direct() failed to get a good "
+	pr_info("calibrate_delay_direct() failed to get a good "
 	       "estimate for loops_per_jiffy.\nProbably due to long platform "
 		"interrupts. Consider using \"lpj=\" boot option.\n");
 	return 0;
@@ -180,6 +179,9 @@ static unsigned long __cpuinit calibrate_delay_direct(void) {return 0;}
  */
 #define LPS_PREC 8
 
+#if (MP_Android_MSTAR_HARDCODE_LPJ == 1)
+        extern unsigned int query_frequency(void);
+#else //CONFIG_MP_Android_MSTAR_HARDCODE_LPJ
 static unsigned long __cpuinit calibrate_delay_converge(void)
 {
 	/* First stage - slowly accelerate to find initial bounds */
@@ -243,6 +245,7 @@ recalibrate:
 
 	return lpj;
 }
+#endif
 
 static DEFINE_PER_CPU(unsigned long, cpu_loops_per_jiffy) = { 0 };
 
@@ -264,6 +267,9 @@ void __cpuinit calibrate_delay(void)
 	unsigned long lpj;
 	static bool printed;
 	int this_cpu = smp_processor_id();
+#if (MP_Android_MSTAR_HARDCODE_LPJ == 1)
+	int cpu_clock;
+#endif
 
 	if (per_cpu(cpu_loops_per_jiffy, this_cpu)) {
 		lpj = per_cpu(cpu_loops_per_jiffy, this_cpu);
@@ -288,13 +294,28 @@ void __cpuinit calibrate_delay(void)
 	} else {
 		if (!printed)
 			pr_info("Calibrating delay loop... ");
-		lpj = calibrate_delay_converge();
+#if (MP_Android_MSTAR_HARDCODE_LPJ == 1)
+			cpu_clock = query_frequency();
+			#if defined(CONFIG_ARM)
+			lpj = ((cpu_clock*10/110 )*1092912)/10;  // lpj =( cpu_clock / 1100 MHZ) * 4378620
+			#elif defined(CONFIG_ARM64)
+			lpj = ((cpu_clock*10/1008 )*1092912);  // lpj =( cpu_clock / 1008 MHZ) * 4378620			
+                        #else
+			lpj = (((cpu_clock/1000000)*10/110 )*27648)/10 ; //MIPS case
+			#endif
+		
+		        /*temporalily not used*/
+			//lpj = CONFIG_LPJ_VALUE;
+#else
+lpj = calibrate_delay_converge();
+#endif /*MP_Android_MSTAR_HARDCODE_LPJ*/
 	}
 	per_cpu(cpu_loops_per_jiffy, this_cpu) = lpj;
 	if (!printed)
 		pr_cont("%lu.%02lu BogoMIPS (lpj=%lu)\n",
 			lpj/(500000/HZ),
 			(lpj/(5000/HZ)) % 100, lpj);
+	
 
 	loops_per_jiffy = lpj;
 	printed = true;

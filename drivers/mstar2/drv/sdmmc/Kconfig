@@ -1,0 +1,82 @@
+config MSTAR_SDMMC
+	bool "Mstar SD/MMC Card Interface Support"
+	depends on MMC
+	default n
+	---help---
+        Enable SD/MMC Driver Support for MStar Product
+
+
+config MSTAR_SDMMC_TCARD
+	bool "Mstar SD/MMC T-Flash Card Using"
+	depends on MSTAR_SDMMC
+	default n
+  ---help---
+        For T-Flash Socket, We don't use WP Pin
+
+
+config MSTAR_SDMMC1_MAXCLK
+    int "Mstar SD/MMC1 Maximum Clock"
+    depends on MSTAR_SDMMC
+    default 32000000
+    range 300000 50000000
+    ---help---
+      The maximun Clock of SDMMC1
+
+config MSTAR_SDMMC2_MAXCLK
+    int "Mstar SD/MMC2 Maximum Clock"
+    depends on MSTAR_SDMMC
+    default 32000000
+    range 300000 50000000
+    ---help---
+      The maximun Clock of SDMMC2
+
+config MSTAR_SDMMC1_HOTP
+	bool "Mstar SD/MMC1 Hotplug Support"
+	depends on MSTAR_SDMMC
+	default n
+  ---help---
+        For SD1, Whether we need to run hotplug funciton (HW consideration)
+
+
+config MSTAR_SDMMC2_HOTP
+	bool "Mstar SD/MMC2 Hotplug Support"
+	depends on MSTAR_SDMMC
+	default n
+  ---help---
+        For SD2, Whether we need to run hotplug funciton (HW consideration)
+
+config MSTAR_SDMMC1_WP
+	bool "Mstar SD/MMC1 Write Protect Support"
+	depends on MSTAR_SDMMC
+	default n
+  ---help---
+        For SD1, write protect pin detection
+
+
+config MSTAR_SDMMC2_WP
+	bool "Mstar SD/MMC2 Write Protect Support"
+	depends on MSTAR_SDMMC
+	default n
+  ---help---
+        For SD2, write protect pin detection
+
+config MSTAR_SDMMC1_FAKECDZ
+	bool "Mstar SD/MMC1 Fake CDZ"
+	depends on !MSTAR_SDMMC1_HOTP && MSTAR_SDMMC
+	default n
+  ---help---
+        For SD1, Whether we need to assume card detection always true (HW consideration)
+
+config MSTAR_SDMMC2_FAKECDZ
+	bool "Mstar SD/MMC2 Fake CDZ"
+	depends on !MSTAR_SDMMC2_HOTP && MSTAR_SDMMC
+	default n
+  ---help---
+        For SD2, Whether we need to assume card detection always true (HW consideration)
+
+config MSTAR_SDMMC_DUALCARDS
+	bool "FCIE & SDIO connect to SD card & SDIO device"
+	depends on MSTAR_SDMMC
+	default n
+  ---help---
+        For SD card & WiFi module work at the same time

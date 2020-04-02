@@ -238,7 +238,7 @@ struct tty_struct {
 	int index;
 
 	/* Protects ldisc changes: Lock tty not pty */
-	struct mutex ldisc_mutex;
+	struct ld_semaphore ldisc_sem;
 	struct tty_ldisc *ldisc;
 
 	struct mutex atomic_write_lock;

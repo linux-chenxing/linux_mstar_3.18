@@ -82,6 +82,7 @@ void sort_extable(struct exception_table_entry *start,
 void sort_main_extable(void);
 void trim_init_extable(struct module *m);
 
+#ifndef CONFIG_Kasan_Switch_On
 #ifdef MODULE
 #define MODULE_GENERIC_TABLE(gtype,name)			\
 extern const struct gtype##_id __mod_##gtype##_table		\
@@ -89,6 +90,18 @@ extern const struct gtype##_id __mod_##gtype##_table		\
 
 #else  /* !MODULE */
 #define MODULE_GENERIC_TABLE(gtype,name)
+#endif
+#endif
+
+#ifdef CONFIG_Kasan_Switch_On
+#ifdef MODULE
+#define MODULE_GENERIC_TABLE(type,name)			\
+extern const typeof(name) __mod_##type##__##name##_device_table	\
+  __attribute__ ((unused, alias(__stringify(name))))
+
+#else  /* !MODULE */
+#define MODULE_GENERIC_TABLE(gtype,name)
+#endif
 #endif
 
 /* Generic info of form tag = "info" */

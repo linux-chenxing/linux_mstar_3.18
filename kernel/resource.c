@@ -35,7 +35,13 @@ EXPORT_SYMBOL(ioport_resource);
 
 struct resource iomem_resource = {
 	.name	= "PCI mem",
-	.start	= 0,
+#ifdef CONFIG_MSTAR_CURRY  || defined(CONFIG_MSTAR_C2P)
+	.start	= 0x00000000,
+#elif defined CONFIG_MSTAR_K6
+	.start	= 0x1F800000,
+#else
+	.start	= 0xF0000000,
+#endif
 	.end	= -1,
 	.flags	= IORESOURCE_MEM,
 };

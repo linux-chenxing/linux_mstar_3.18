@@ -84,8 +84,6 @@ static int alarmtimer_rtc_add_device(struct device *dev,
 
 	if (!rtc->ops->set_alarm)
 		return -1;
-	if (!device_may_wakeup(rtc->dev.parent))
-		return -1;
 
 	spin_lock_irqsave(&rtcdev_lock, flags);
 	if (!rtcdev) {
@@ -116,10 +114,6 @@ static void alarmtimer_rtc_interface_remove(void)
 	class_interface_unregister(&alarmtimer_rtc_interface);
 }
 #else
-struct rtc_device *alarmtimer_get_rtcdev(void)
-{
-	return NULL;
-}
 #define rtcdev (NULL)
 static inline int alarmtimer_rtc_interface_setup(void) { return 0; }
 static inline void alarmtimer_rtc_interface_remove(void) { }
@@ -199,6 +193,12 @@ static enum hrtimer_restart alarmtimer_fired(struct hrtimer *timer)
 
 }
 
+ktime_t alarm_expires_remaining(const struct alarm *alarm)
+{
+	struct alarm_base *base = &alarm_bases[alarm->type];
+	return ktime_sub(alarm->node.expires, base->gettime());
+}
+
 #ifdef CONFIG_RTC_CLASS
 /**
  * alarmtimer_suspend - Suspend time callback
@@ -247,10 +247,22 @@ static int alarmtimer_suspend(struct device *dev)
 	if (min.tv64 == 0)
 		return 0;
 
+	/*
+	 * Alarmtimer suspend return -EBUSY If the next alarm
+	 * will fire in less than 2 seconds. In this case, suspend
+	 * will fail, and MStar STR will go to AC.
+	 * 
+	 * MStar STR don't allow suspend fail like this, so the
+	 * following lines is deleted.
+	 */
+#if (CONFIG_MP_MSTAR_STR_BASE != 1)
 	if (ktime_to_ns(min) < 2 * NSEC_PER_SEC) {
 		__pm_wakeup_event(ws, 2 * MSEC_PER_SEC);
+		dev_err(dev, "RTC waketime %lld less than 2 sec\n",
+			ktime_to_ns(min));
 		return -EBUSY;
 	}
+#endif
 
 	/* Setup an rtc timer to fire that far in the future */
 	rtc_timer_cancel(rtc, &rtctimer);
@@ -260,8 +272,10 @@ static int alarmtimer_suspend(struct device *dev)
 
 	/* Set alarm, if in the past reject suspend briefly to handle */
 	ret = rtc_timer_start(rtc, &rtctimer, now, ktime_set(0, 0));
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(dev, "rtc_timer_start failed: %d\n", ret);
 		__pm_wakeup_event(ws, MSEC_PER_SEC);
+	}
 	return ret;
 }
 #else
@@ -305,7 +319,7 @@ void alarm_init(struct alarm *alarm, enum alarmtimer_type type,
 }
 
 /**
- * alarm_start - Sets an alarm to fire
+ * alarm_start - Sets an absolute alarm to fire
  * @alarm: ptr to alarm to set
  * @start: time to run the alarm
  */
@@ -322,6 +336,31 @@ int alarm_start(struct alarm *alarm, ktime_t start)
 				HRTIMER_MODE_ABS);
 	spin_unlock_irqrestore(&base->lock, flags);
 	return ret;
+}
+
+/**
+ * alarm_start_relative - Sets a relative alarm to fire
+ * @alarm: ptr to alarm to set
+ * @start: time relative to now to run the alarm
+ */
+int alarm_start_relative(struct alarm *alarm, ktime_t start)
+{
+	struct alarm_base *base = &alarm_bases[alarm->type];
+
+	start = ktime_add(start, base->gettime());
+	return alarm_start(alarm, start);
+}
+
+void alarm_restart(struct alarm *alarm)
+{
+	struct alarm_base *base = &alarm_bases[alarm->type];
+	unsigned long flags;
+
+	spin_lock_irqsave(&base->lock, flags);
+	hrtimer_set_expires(&alarm->timer, alarm->node.expires);
+	hrtimer_restart(&alarm->timer);
+	alarmtimer_enqueue(base, alarm);
+	spin_unlock_irqrestore(&base->lock, flags);
 }
 
 /**
@@ -394,6 +433,12 @@ u64 alarm_forward(struct alarm *alarm, ktime_t now, ktime_t interval)
 	return overrun;
 }
 
+u64 alarm_forward_now(struct alarm *alarm, ktime_t interval)
+{
+	struct alarm_base *base = &alarm_bases[alarm->type];
+
+	return alarm_forward(alarm, base->gettime(), interval);
+}
 
 
 

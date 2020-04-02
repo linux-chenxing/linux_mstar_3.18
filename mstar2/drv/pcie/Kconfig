@@ -1,0 +1,7 @@
+config MSTAR_PCIE
+
+tristate "PCIE"
+ 
+help
+    MStar Host PCIE driver function
+    

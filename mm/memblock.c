@@ -855,6 +855,13 @@ phys_addr_t __init_memblock memblock_start_of_DRAM(void)
 	return memblock.memory.regions[0].base;
 }
 
+#if defined(CONFIG_MP_PLATFORM_ARM_64bit_POARTING)
+/* lowest region size */
+phys_addr_t memblock_size_of_first_region(void)
+{
+	return memblock.memory.regions[0].size;
+}
+#endif
 phys_addr_t __init_memblock memblock_end_of_DRAM(void)
 {
 	int idx = memblock.memory.cnt - 1;
@@ -981,13 +988,12 @@ void __init_memblock memblock_set_current_limit(phys_addr_t limit)
 {
 	memblock.current_limit = limit;
 }
-
 static void __init_memblock memblock_dump(struct memblock_type *type, char *name)
 {
 	unsigned long long base, size;
 	int i;
 
-	pr_info(" %s.cnt  = 0x%lx\n", name, type->cnt);
+	pr_info(" %s.cnt = 0x%lx\n", name, type->cnt);
 
 	for (i = 0; i < type->cnt; i++) {
 		struct memblock_region *rgn = &type->regions[i];

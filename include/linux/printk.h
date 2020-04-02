@@ -8,6 +8,7 @@
 
 extern const char linux_banner[];
 extern const char linux_proc_banner[];
+extern const char mstar_kernel_version[];
 
 static inline int printk_get_level(const char *buffer)
 {
@@ -47,8 +48,12 @@ static inline void console_silent(void)
 
 static inline void console_verbose(void)
 {
+#ifdef CONFIG_MP_PRINTK_NO_CONSOLE_VERBOSE
+
+#else 
 	if (console_loglevel)
 		console_loglevel = 15;
+#endif
 }
 
 struct va_format {

@@ -278,7 +278,7 @@ struct pcmcia_device_id {
 #define INPUT_DEVICE_ID_KEY_MAX		0x2ff
 #define INPUT_DEVICE_ID_REL_MAX		0x0f
 #define INPUT_DEVICE_ID_ABS_MAX		0x3f
-#define INPUT_DEVICE_ID_MSC_MAX		0x07
+#define INPUT_DEVICE_ID_MSC_MAX		0x09
 #define INPUT_DEVICE_ID_LED_MAX		0x0f
 #define INPUT_DEVICE_ID_SND_MAX		0x07
 #define INPUT_DEVICE_ID_FF_MAX		0x7f
@@ -419,6 +419,17 @@ struct rpmsg_device_id {
 struct i2c_device_id {
 	char name[I2C_NAME_SIZE];
 	kernel_ulong_t driver_data;	/* Data private to the driver */
+};
+
+/* mipi_bif */
+
+#define MIPI_BIF_NAME_SIZE	20
+#define MIPI_BIF_MODULE_PREFIX "mipi_bif:"
+
+struct mipi_bif_device_id {
+	char name[MIPI_BIF_NAME_SIZE];
+	kernel_ulong_t driver_data	/* Data private to the driver */
+			__attribute__((aligned(sizeof(kernel_ulong_t))));
 };
 
 /* spi */
@@ -562,6 +573,15 @@ struct x86_cpu_id {
 #define X86_FAMILY_ANY 0
 #define X86_MODEL_ANY  0
 #define X86_FEATURE_ANY 0	/* Same as FPU, you can't test for that */
+
+/*
+ * Generic table type for matching CPU features.
+ * @feature:	the bit number of the feature (0 - 65535)
+ */
+
+struct cpu_feature {
+	__u16	feature;
+};
 
 #define IPACK_ANY_FORMAT 0xff
 #define IPACK_ANY_ID (~0)

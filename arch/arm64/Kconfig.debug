@@ -6,6 +6,18 @@ config FRAME_POINTER
 	bool
 	default y
 
+config ARM_PTDUMP
+	bool "Export kernel pagetable layout to userspace via debugfs"
+	depends on DEBUG_KERNEL
+	select DEBUG_FS
+	---help---
+	  Say Y here if you want to show the kernel pagetable layout in a
+	  debugfs file. This information is only useful for kernel developers
+	  who are working in architecture specific areas of the kernel.
+	  It is probably not a good idea to enable this feature in a production
+	  kernel.
+	  If in doubt, say "N"
+
 config DEBUG_STACK_USAGE
 	bool "Enable stack utilization instrumentation"
 	depends on DEBUG_KERNEL
@@ -29,5 +41,18 @@ config PID_IN_CONTEXTIDR
 	  the CONTEXTIDR register, at the expense of some additional
 	  instructions during context switch. Say Y here only if you are
 	  planning to use hardware trace tools with this kernel.
+
+config SHOW_FAULT_TRACE_INFO
+    bool "Show trace info on user page fault"
+	   default y 
+	   depends on MP_DEBUG_TOOL_CODEDUMP || MP_DEBUG_TOOL_KDEBUG	
+    help
+       Shows trace information when "Segmentation fault" or "Bus error" occurs.
+       Prints registers, call stack, maps, user stack, etc.
+
+config SHOW_PC_LR_INFO
+     bool "Show address range including PC, LR"
+     depends on SHOW_FAULT_TRACE_INFO
+     default y
 
 endmenu

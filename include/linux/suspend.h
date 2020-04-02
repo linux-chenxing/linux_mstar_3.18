@@ -320,6 +320,19 @@ extern unsigned long get_safe_page(gfp_t gfp_mask);
 extern void hibernation_set_ops(const struct platform_hibernation_ops *ops);
 extern int hibernate(void);
 extern bool system_entering_hibernation(void);
+
+#if defined(CONFIG_MSTAR_FASTBOOT)
+extern unsigned int fastboot_get_cpy_pages(void);
+extern unsigned int fastboot_get_meta_pages(void);
+extern void set_mstar_fastboot(void);
+extern void unset_mstar_fastboot(void);
+extern int is_mstar_fastboot(void);
+extern int fastboot_init_header(void *info);
+extern int fastboot_write(unsigned int flags);
+extern void fastboot_reset_onresume(void);
+extern int fastboot_getbootmode(void);
+#endif
+
 #else /* CONFIG_HIBERNATION */
 static inline void register_nosave_region(unsigned long b, unsigned long e) {}
 static inline void register_nosave_region_late(unsigned long b, unsigned long e) {}
@@ -339,6 +352,7 @@ static inline bool system_entering_hibernation(void) { return false; }
 #define PM_POST_SUSPEND		0x0004 /* Suspend finished */
 #define PM_RESTORE_PREPARE	0x0005 /* Going to restore a saved image */
 #define PM_POST_RESTORE		0x0006 /* Restore failed */
+#define PM_USERSPACE_FROZEN	0x0007 /* Userspace frozen */
 
 extern struct mutex pm_mutex;
 

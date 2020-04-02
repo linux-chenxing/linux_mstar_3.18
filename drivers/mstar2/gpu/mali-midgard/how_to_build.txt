@@ -1,0 +1,10 @@
+<This is an example of how to build Mali kernel driver of the Midgard architecture>
+
+If you want to build Mali kernel driver of r7p0-02rel0 for Kano Android Marshmallow, please follow the commands below.
+
+cd r7p0-02rel0/drivers
+CONFIG=kano-android-marshmallow-64 KDIR={path_to_kernel} make
+
+Two variables you have to specify are:
+KDIR: The path to the Linux kernel
+CONFIG: The project you want to build Mali kernel driver for. You can check bldsys/profiles for available profiles

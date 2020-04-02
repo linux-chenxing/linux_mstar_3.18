@@ -23,6 +23,10 @@
 #include <linux/idr.h>
 #include <linux/acpi.h>
 
+#if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
+#include <asm/dma-iommu.h>
+#endif
+
 #include "base.h"
 #include "power/power.h"
 

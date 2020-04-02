@@ -28,45 +28,6 @@
 #include <kernel-entry-init.h>
 
 	/*
-	 * inputs are the text nasid in t1, data nasid in t2.
-	 */
-	.macro MAPPED_KERNEL_SETUP_TLB
-#ifdef CONFIG_MAPPED_KERNEL
-	/*
-	 * This needs to read the nasid - assume 0 for now.
-	 * Drop in 0xffffffffc0000000 in tlbhi, 0+VG in tlblo_0,
-	 * 0+DVG in tlblo_1.
-	 */
-	dli	t0, 0xffffffffc0000000
-	dmtc0	t0, CP0_ENTRYHI
-	li	t0, 0x1c000		# Offset of text into node memory
-	dsll	t1, NASID_SHFT		# Shift text nasid into place
-	dsll	t2, NASID_SHFT		# Same for data nasid
-	or	t1, t1, t0		# Physical load address of kernel text
-	or	t2, t2, t0		# Physical load address of kernel data
-	dsrl	t1, 12			# 4K pfn
-	dsrl	t2, 12			# 4K pfn
-	dsll	t1, 6			# Get pfn into place
-	dsll	t2, 6			# Get pfn into place
-	li	t0, ((_PAGE_GLOBAL|_PAGE_VALID| _CACHE_CACHABLE_COW) >> 6)
-	or	t0, t0, t1
-	mtc0	t0, CP0_ENTRYLO0	# physaddr, VG, cach exlwr
-	li	t0, ((_PAGE_GLOBAL|_PAGE_VALID| _PAGE_DIRTY|_CACHE_CACHABLE_COW) >> 6)
-	or	t0, t0, t2
-	mtc0	t0, CP0_ENTRYLO1	# physaddr, DVG, cach exlwr
-	li	t0, 0x1ffe000		# MAPPED_KERN_TLBMASK, TLBPGMASK_16M
-	mtc0	t0, CP0_PAGEMASK
-	li	t0, 0			# KMAP_INX
-	mtc0	t0, CP0_INDEX
-	li	t0, 1
-	mtc0	t0, CP0_WIRED
-	tlbwi
-#else
-	mtc0	zero, CP0_WIRED
-#endif
-	.endm
-
-	/*
 	 * For the moment disable interrupts, mark the kernel mode and
 	 * set ST0_KX so that the CPU does not spit fire when using
 	 * 64-bit addresses.  A full initialization of the CPU's status
@@ -119,7 +80,246 @@
 	setup_c0_status 0 ST0_BEV
 #endif
 	.endm
+#ifdef CONFIG_MP_PLATFORM_MIPS
+# ================================================================
+# Dean add
+# ================================================================
+M_DebugCOUNTDM      = (0x1  << 25)
+INITIAL_STATUS      = 0x10400000
+INITIAL_CONFIG0     = 0x00000002 #Uncached
 
+S_Config1IL         = 19
+M_Config1IL         = (0x7  << S_Config1IL)
+S_Config1IS         = 22
+M_Config1IS         = (0x7  << S_Config1IS)
+S_Config1IA         = 16
+M_Config1IA         = (0x7  << S_Config1IA)
+
+S_Config1DL         = 10
+M_Config1DL         = (0x7  << S_Config1DL)
+S_Config1DS         = 13
+M_Config1DS         = (0x7  << S_Config1DS)
+S_Config1DA         = 7
+M_Config1DA         = (0x7  << S_Config1DA)
+
+Index_Store_Tag_I   = 0x8
+Index_Store_Tag_D   = 0x9
+A_KSEG0BASE         = 0x80000000
+
+M_ConfigK0          = (0x7  << 0)
+## #ifdef CONFIG_MSTAR_EUCLID
+## K_CacheAttrCN       = (0x2  << 0)
+## #else
+K_CacheAttrCN       = (0x3  << 0) #Cacheable, noncoherent, write-back, write allocate.
+## #endif
+
+## Debug register
+R_DEBUG = 0xBF206700 // mailbox 0
+
+.macro WREG reg, value
+lui     $8, \reg >> 16
+li      $9, \value
+sw      $9, (\reg & 0xFFFF)($8)
+.endm
+
+#-------------------------------------------------------------------------------------------------
+# BOOT_InitReg
+# @param  None
+# @return None
+# @note   Init CPU Registers
+#-------------------------------------------------------------------------------------------------
+#BOOT_InitReg:
+.macro BOOT_InitReg
+
+    # INIT DEBUG
+    mfc0    $8, $23
+    and     $8, (~M_DebugCOUNTDM)
+    mtc0    $8, $23
+
+    # CLEAR COUNT
+    mtc0    $0, $9
+
+    # INIT STATUS
+    li      $8, INITIAL_STATUS
+    mtc0    $8, $12
+
+    # INIT CAUSE
+    mtc0    $0, $13
+
+    # INIT CONFIG
+	li	    $8, INITIAL_CONFIG0
+	mtc0	$8, $16
+
+#    jr      $31
+#    nop
+.endm
+
+#-------------------------------------------------------------------------------------------------
+# BOOT_InitCache
+# @param  None
+# @return None
+# @note   Init I-cache and D-cache
+#-------------------------------------------------------------------------------------------------
+# BOOT_InitCache:
+.macro BOOT_InitCache
+
+    # Clear TagLo & TagHi
+    mtc0    $0, $28
+    mtc0    $0, $29
+
+    # Config1
+    mfc0    $8, $16, 1
+
+    ### INIT I-CACHE ###
+
+    # Line Size $10
+    li      $9, M_Config1IL
+    and     $9, $8, $9
+    srl     $9, $9, S_Config1IL
+    beqz    $9, Icache_done    # no Icache
+    nop
+    li      $10, 2
+    sll     $10, $10, $9
+
+    # Sets per way $11
+    li      $9, M_Config1IS
+    and     $9, $8, $9
+    srl     $9, $9, S_Config1IS
+    li      $11, 64
+    sll     $11, $11, $9
+
+    # Associativity $12
+    li      $9, M_Config1IA
+    and     $9, $8, $9
+    srl     $9, $9, S_Config1IA
+    add     $12, $9, 1
+
+    li      $14, A_KSEG0BASE
+    move    $15, $11
+
+Icache_loop:
+    # Invalidate each tag entry
+    cache   Index_Store_Tag_I, 0($14)
+    add     $14, $10
+    sub     $15, 1
+    bnez    $15, Icache_loop
+    nop
+    move    $15, $11
+    sub     $12, 1
+    bnez    $12, Icache_loop
+    nop
+
+Icache_done:
+
+
+    ### INIT D-CACHE ###
+
+    # Line Size $10
+    li      $9, M_Config1DL
+    and     $9, $8, $9
+    srl     $9, $9, S_Config1DL
+    beqz    $9, Dcache_done    # no Dcache
+    nop
+    li      $10, 2
+    sll     $10, $10, $9
+
+    # Sets per way $11
+    li      $9, M_Config1DS
+    and     $9, $8, $9
+    srl     $9, $9, S_Config1DS
+    li      $11, 64
+    sll     $11, $11, $9
+
+    # Associativity $12
+    li      $9, M_Config1DA
+    and     $9, $8, $9
+    srl     $9, $9, S_Config1DA
+    add     $12, $9, 1
+
+    li      $14, A_KSEG0BASE
+    move    $15, $11
+
+Dcache_loop:
+    # Invalidate each tag entry
+    cache   Index_Store_Tag_D, 0($14)
+    add     $14, $10
+    sub     $15, 1
+    bnez    $15, Dcache_loop
+    nop
+    move    $15, $11
+    sub     $12, 1
+    bnez    $12, Dcache_loop
+    nop
+
+Dcache_done:
+
+    # Enable cache
+    mfc0    $8, $16
+    and     $8, (~M_ConfigK0)
+    li      $8, (K_CacheAttrCN)
+    mtc0    $8, $16
+.endm
+
+#-------------------------------------------------------------------------------------------------
+# MStar L2 cache operation
+#-------------------------------------------------------------------------------------------------
+
+#include <mstar/mstar_chip.h>
+.macro hal_mstar_rreg reg
+    li t1, \reg
+    lh t0, 0(t1)
+.endm
+
+.macro hal_mstar_wreg reg,val
+    li t1, \reg
+    ori t0,zero,\val
+    sh t0,0(t1)
+.endm
+
+.macro  hal_mstar_cache_op_fire reg,mode
+    li t1,\reg
+    ori t0,zero,\mode
+    ori t2,zero,REG_CACHE_OP_FIRE
+    add t0,t0,t2
+    sh t0,0(t1)
+.endm
+
+    ##### Invalid L2 cache #####
+.macro  hal_mstar_L2_cache_invalid
+    # Check if L2 cache is enabled
+    hal_mstar_rreg REG_PREFTECH_L2_CONFIG
+    ori t1,zero,PREFTECH_L2_CONFIG_DISABLE
+    and t0,t0,t1
+    bne t0,zero,1f
+    nop
+
+    # Check if L2 cache is initialized
+    hal_mstar_rreg REG_PREFTECH_L2_CONTROL
+    ori t1,zero,PREFTECH_L2_CONTROL_MODE
+    and t0,t0,t1
+    beq t0,zero,1f
+    nop
+
+    # Start to send command to invalid L2 cache
+    hal_mstar_rreg R_DEBUG # Dummy read
+    hal_mstar_wreg REG_PREFTECH_L2_CONTROL,L2_OP_MODE
+    hal_mstar_rreg R_DEBUG # Dummy read
+    hal_mstar_cache_op_fire REG_PREFTECH_L2_CONTROL,L2_OP_MODE
+
+2:
+    hal_mstar_rreg R_DEBUG # Dummy read
+    hal_mstar_rreg REG_PREFTECH_L2_CONTROL
+    andi t0,t0,PREFTECH_L2_CONTROL_MODE
+    beq t0,zero,2b
+    nop
+    li t1,REG_PREFTECH_L2_CONTROL
+    sh zero,0(t1)
+
+1:
+    sync
+.endm
+# ================================================================
+#endif //CONFIG_MP_PLATFORM_MIPS
 #ifndef CONFIG_NO_EXCEPT_FILL
 	/*
 	 * Reserved space for exception handlers.
@@ -144,6 +344,29 @@ FEXPORT(__kernel_entry)
 
 NESTED(kernel_entry, 16, sp)			# kernel entry point
 
+#ifdef CONFIG_MP_PLATFORM_MIPS
+# ================================================================
+# Dean add
+# ================================================================
+	# Clear CPU reset register
+	# Initialize Regs
+
+#ifdef CONFIG_MP_PLATFORM_LZMA_BIN_COMPRESSED
+#ifdef CONFIG_KERNEL_GZIP
+	BOOT_InitReg
+	nop
+    ## Need to invalid MStar L2 cache before L1 cache enable
+    hal_mstar_L2_cache_invalid
+	nop
+
+	# Initialize Cache
+    BOOT_InitCache
+	nop
+#endif
+#endif
+
+# ================================================================
+#endif //CONFIG_MP_PLATFORM_MIPS
 	kernel_entry_setup			# cpu specific setup
 
 	setup_c0_status_pri

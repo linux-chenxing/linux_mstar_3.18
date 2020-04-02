@@ -452,16 +452,22 @@ static void rcu_print_detail_task_stall_rnp(struct rcu_node *rnp)
 {
 	unsigned long flags;
 	struct task_struct *t;
+	struct list_head *lp;
 
 	raw_spin_lock_irqsave(&rnp->lock, flags);
 	if (!rcu_preempt_blocked_readers_cgp(rnp)) {
-		raw_spin_unlock_irqrestore(&rnp->lock, flags);
-		return;
+	    raw_spin_unlock_irqrestore(&rnp->lock, flags);        
+	    return;
 	}
-	t = list_entry(rnp->gp_tasks,
-		       struct task_struct, rcu_node_entry);
-	list_for_each_entry_continue(t, &rnp->blkd_tasks, rcu_node_entry)
-		sched_show_task(t);
+
+	lp = &rnp->blkd_tasks;
+	if(list_empty(lp)) {
+	    printk(KERN_ERR "blkd_tasks is empty\n");
+	} else {
+	    list_for_each_entry(t, lp, rcu_node_entry)
+	    sched_show_task(t); 
+	}
+    
 	raw_spin_unlock_irqrestore(&rnp->lock, flags);
 }
 

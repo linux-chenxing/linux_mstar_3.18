@@ -153,6 +153,7 @@ struct ip_reply_arg {
 				/* -1 if not needed */ 
 	int	    bound_dev_if;
 	u8  	    tos;
+	kuid_t	    uid;
 }; 
 
 #define IP_REPLY_ARG_NOSRCCHECK 1
@@ -224,6 +225,9 @@ extern int sysctl_ip_dynaddr;
 extern void ipfrag_init(void);
 
 extern void ip_static_sysctl_init(void);
+
+#define IP4_REPLY_MARK(net, mark) \
+	((net)->ipv4.sysctl_fwmark_reflect ? (mark) : 0)
 
 static inline bool ip_is_fragment(const struct iphdr *iph)
 {
@@ -454,7 +458,7 @@ extern int	compat_ip_getsockopt(struct sock *sk, int level,
 			int optname, char __user *optval, int __user *optlen);
 extern int	ip_ra_control(struct sock *sk, unsigned char on, void (*destructor)(struct sock *));
 
-extern int 	ip_recv_error(struct sock *sk, struct msghdr *msg, int len, int *addr_len);
+extern int 	ip_recv_error(struct sock *sk, struct msghdr *msg, int len);
 extern void	ip_icmp_error(struct sock *sk, struct sk_buff *skb, int err, 
 			      __be16 port, u32 info, u8 *payload);
 extern void	ip_local_error(struct sock *sk, int err, __be32 daddr, __be16 dport,

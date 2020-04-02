@@ -30,6 +30,15 @@
 #include "debug.h"
 #include "ntfs.h"
 
+#if (MP_NTFS_VOLUME_ID==1)
+#define NTFS_IOCTL_GET_VOLUME_ID	_IOR('r', 0x12, __u32)
+#endif
+
+#if (MP_NTFS_VOLUME_LABEL==1)
+#define NTFS_VOLUME_NAME_LEN 64
+#define NTFS_IOCTL_GET_VOLUME_LABEL	_IOR('r', 0x13, __u32)
+#endif
+
 /**
  * The little endian Unicode string $I30 as a global constant.
  */
@@ -1568,6 +1577,97 @@ static int ntfs_dir_fsync(struct file *filp, loff_t start, loff_t end,
 
 #endif /* NTFS_RW */
 
+#if (MP_NTFS_VOLUME_ID==1)
+static int ntfs_ioctl_volume_id(struct inode *dir, unsigned long arg)
+{
+    struct super_block *sb = dir->i_sb;
+    char __user *v;
+    ntfs_volume *vol = NTFS_SB(sb);
+    char vn[64]={0};
+	unsigned long copy_ret;
+	/*N.B. To print a 64-bit variable,should write "%llu"
+	But here to consistent with blkid command get UUID,here choose use "%llx"(notice here not use "0x%llx").*/
+	#if 0
+	sprintf(vn, "%llu",  (unsigned long long)(vol->serial_no));
+	#else
+	sprintf(vn, "%llx",  (unsigned long long)(vol->serial_no));	
+	#endif
+    v = (char __user *)arg;
+
+    if(v == NULL )
+        return -EFAULT;
+
+
+    //APP must pay attention to the mem overwrite risk
+    copy_ret = copy_to_user(v,vn, NTFS_VOLUME_NAME_LEN );
+
+	return 0;
+}
+#endif
+
+#if (MP_NTFS_VOLUME_LABEL==1)
+static int ntfs_ioctl_volume_label(struct inode *dir, unsigned long arg)
+{
+	struct super_block *sb = dir->i_sb;
+	char __user *v;
+    ntfs_volume *vol = NTFS_SB(sb);
+    char * vn = vol->vol_name;
+	unsigned long copy_ret;
+	if(vn == NULL)
+        return -EFAULT;
+    v = (char __user *)arg;
+
+    if(v == NULL)
+        return -EFAULT;
+    //APP must pay attention to the mem overwrite risk
+    copy_ret = copy_to_user(v,vn, NTFS_VOLUME_NAME_LEN );
+
+	return 0;
+}
+#endif
+
+#if (MP_NTFS_IOCTL==1)
+static long ntfs_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    char __user *v;
+    struct inode *inode;
+    if(filp == NULL)
+		return -EFAULT;
+	v = (char __user *)arg;
+    if(v == NULL)
+		return -EFAULT;
+
+    inode = filp->f_mapping->host;
+	switch(cmd){
+#if (MP_NTFS_VOLUME_LABEL==1)
+	case NTFS_IOCTL_GET_VOLUME_LABEL:		
+		return ntfs_ioctl_volume_label(inode, arg);
+#endif
+#if (MP_NTFS_VOLUME_ID==1)
+    case NTFS_IOCTL_GET_VOLUME_ID:
+        return ntfs_ioctl_volume_id(inode,arg);
+#endif
+	default:
+		return -EFAULT;
+	}
+
+    return -EFAULT;
+}
+
+#if defined(CONFIG_COMPAT)
+static long compat_ntfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	if (!filp->f_op || !filp->f_op->unlocked_ioctl)
+		return -ENOTTY;
+
+    //for in ntfs,input parameter "arg" is about "char __user *",
+    //so here in compat_ioctl can use unlocked_ioctl directly.
+	return filp->f_op->unlocked_ioctl(filp, cmd, arg);
+}
+#endif
+
+#endif
+
 const struct file_operations ntfs_dir_ops = {
 	.llseek		= generic_file_llseek,	/* Seek inside directory. */
 	.read		= generic_read_dir,	/* Return -EISDIR. */
@@ -1579,5 +1679,13 @@ const struct file_operations ntfs_dir_ops = {
 #endif /* NTFS_RW */
 	/*.ioctl	= ,*/			/* Perform function on the
 						   mounted filesystem. */
+#if (MP_NTFS_IOCTL==1)
+	.unlocked_ioctl = ntfs_ioctl,			/* Perform function on the
+							   mounted filesystem. */
+#if defined(CONFIG_COMPAT)
+	.compat_ioctl = compat_ntfs_ioctl,
+#endif
+
+#endif						   
 	.open		= ntfs_dir_open,	/* Open directory. */
 };

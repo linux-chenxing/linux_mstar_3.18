@@ -18,7 +18,17 @@
 #include <linux/freezer.h>
 #include <linux/ptrace.h>
 #include <linux/uaccess.h>
+#include <linux/preempt.h>
 #include <trace/events/sched.h>
+#if (MP_CACHE_DROP==1)
+#include <linux/kernel.h>
+#include <linux/mm.h>
+#include <linux/fs.h>
+#include <linux/writeback.h>
+#include <linux/sysctl.h>
+#include <linux/gfp.h>
+#include "../fs/internal.h"
+#endif
 
 static DEFINE_SPINLOCK(kthread_create_lock);
 static LIST_HEAD(kthread_create_list);
@@ -190,7 +200,17 @@ static int kthread(void *_create)
 	/* OK, tell user we're spawned, wait for stop or wakeup */
 	__set_current_state(TASK_UNINTERRUPTIBLE);
 	create->result = current;
+
+	/*
+	 * Disable preemption so we enter TASK_UNINTERRUPTIBLE after
+	 * complete() instead of possibly being preempted. This speeds
+	 * up clients that do a kthread_bind() directly after
+	 * creation.
+	 */
+	preempt_disable();
 	complete(&create->done);
+	preempt_enable_no_resched();
+
 	schedule();
 
 	ret = -EINTR;
@@ -479,6 +499,80 @@ int kthreadd(void *unused)
 
 	return 0;
 }
+
+#if (MP_CACHE_DROP==1)
+#define DROP_CACHE_THRESHOLD ((140)*(1024))
+
+int drop_cache_free_kbytes=DROP_CACHE_THRESHOLD;
+extern int kthre_drop_cache_threshold;
+
+extern unsigned long shrink_slab(struct shrink_control *shrink,
+			  unsigned long nr_pages_scanned,
+			  unsigned long lru_pages);
+
+static void drop_pagecache_sb_kthre(struct super_block *sb, void *unused)
+{
+	struct inode *inode, *toput_inode = NULL;
+
+	spin_lock(&inode_sb_list_lock);
+	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+		spin_lock(&inode->i_lock);
+		if ((inode->i_state & (I_FREEING|I_WILL_FREE|I_NEW)) ||
+		    (inode->i_mapping->nrpages == 0)) {
+			spin_unlock(&inode->i_lock);
+			continue;
+		}
+		__iget(inode);
+		spin_unlock(&inode->i_lock);
+		spin_unlock(&inode_sb_list_lock);
+		invalidate_mapping_pages(inode->i_mapping, 0, -1);
+		iput(toput_inode);
+		toput_inode = inode;
+		spin_lock(&inode_sb_list_lock);
+	}
+	spin_unlock(&inode_sb_list_lock);
+	iput(toput_inode);
+}
+
+int kthre_drop_cache(void *unused)
+{
+	struct sysinfo i;
+	signed long timeout;
+
+    /*these "current" related code referred from kthreadd function */
+    set_task_comm(current, "dropcache");
+    ignore_signals(current);
+    current->flags |= PF_NOFREEZE;
+    
+	while(1)
+	{
+		si_meminfo(&i);
+		if(kthre_drop_cache_threshold > 0)
+			drop_cache_free_kbytes=kthre_drop_cache_threshold;
+		else
+			drop_cache_free_kbytes=DROP_CACHE_THRESHOLD;
+		if (((i.freeram)<< (PAGE_SHIFT - 10)) < drop_cache_free_kbytes)//KB
+		{
+			iterate_supers(drop_pagecache_sb_kthre, NULL);
+
+			//drop slab
+			{
+				int nr_objects;
+				struct shrink_control shrink = {
+				.gfp_mask = GFP_KERNEL,
+				};
+
+				do {
+					nr_objects = shrink_slab(&shrink, 1000, 1000);
+				} while (nr_objects > 10);
+			}
+
+			si_meminfo(&i);
+		}
+		timeout = schedule_timeout_interruptible(msecs_to_jiffies(1000));
+	}
+}
+#endif
 
 void __init_kthread_worker(struct kthread_worker *worker,
 				const char *name,

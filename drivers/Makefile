@@ -5,6 +5,10 @@
 # Rewritten to use lists instead of if-statements.
 #
 
+obj-$(CONFIG_EDP_FRAMEWORK)    += edp/
+obj-$(CONFIG_SYSEDP_FRAMEWORK) += edp/
+obj-$(CONFIG_CPUQUIET_FRAMEWORK) += cpuquiet/
+
 obj-y				+= irqchip/
 obj-y				+= bus/
 
@@ -95,9 +99,11 @@ obj-y				+= i2c/ media/
 obj-$(CONFIG_PPS)		+= pps/
 obj-$(CONFIG_PTP_1588_CLOCK)	+= ptp/
 obj-$(CONFIG_W1)		+= w1/
+obj-$(CONFIG_STAGING)		+= staging/
 obj-$(CONFIG_POWER_SUPPLY)	+= power/
 obj-$(CONFIG_HWMON)		+= hwmon/
 obj-$(CONFIG_THERMAL)		+= thermal/
+obj-$(CONFIG_TRUSTY)		+= trusty/
 obj-$(CONFIG_WATCHDOG)		+= watchdog/
 obj-$(CONFIG_MD)		+= md/
 obj-$(CONFIG_BT)		+= bluetooth/
@@ -111,6 +117,7 @@ obj-$(CONFIG_CPU_IDLE)		+= cpuidle/
 obj-y				+= mmc/
 obj-$(CONFIG_MEMSTICK)		+= memstick/
 obj-y				+= leds/
+obj-$(CONFIG_SWITCH)		+= switch/
 obj-$(CONFIG_INFINIBAND)	+= infiniband/
 obj-$(CONFIG_SGI_SN)		+= sn/
 obj-y				+= firmware/
@@ -129,7 +136,6 @@ obj-$(CONFIG_SSB)		+= ssb/
 obj-$(CONFIG_BCMA)		+= bcma/
 obj-$(CONFIG_VHOST_RING)	+= vhost/
 obj-$(CONFIG_VLYNQ)		+= vlynq/
-obj-$(CONFIG_STAGING)		+= staging/
 obj-y				+= platform/
 #common clk code
 obj-y				+= clk/
@@ -152,3 +158,13 @@ obj-$(CONFIG_IIO)		+= iio/
 obj-$(CONFIG_VME_BUS)		+= vme/
 obj-$(CONFIG_IPACK_BUS)		+= ipack/
 obj-$(CONFIG_NTB)		+= ntb/
+obj-$(CONFIG_MIPI_BIF)		+= mipi_bif/
+obj-$(CONFIG_MSTAR_CHIP)        += mstar2/
+ifeq ($(CONFIG_MSTAR_3RD_PARTY), y)
+obj-$(CONFIG_MSTAR_CHIP)        += mstar3party/
+endif
+
+# HTC stability files
+obj-y += htc_debug/stability/
+
+obj-$(CONFIG_SMAF)              += smaf/

@@ -100,6 +100,24 @@ config AD7280
 	  To compile this driver as a module, choose M here: the
 	  module will be called ad7280a
 
+config MAX77660_ADC
+	bool "Maxim MAX77660 ADC sub module"
+	depends on MFD_MAX77660
+	help
+	 MAX77660 is a pmic for smartphones and tablets which supports
+	 13 channel ADC. Add iio driver to read teh different channel of
+	 ADCs.
+
+config AS3722_ADC_EXTCON
+	tristate "AS3722 General Purpose ADC with EXTCON"
+	depends on MFD_AS3722
+	depends on EXTCON
+	help
+	 AS3722 AMS chip is used in smartphones and tablets which supports a
+	 two channel ADC. Support the continuous mode of scanning and
+	 notification through extcon.
+
+
 config LPC32XX_ADC
 	tristate "NXP LPC32XX ADC"
 	depends on ARCH_LPC32XX
@@ -129,5 +147,13 @@ config SPEAR_ADC
 	help
 	  Say yes here to build support for the integrated ADC inside the
 	  ST SPEAr SoC. Provides direct access via sysfs.
+
+config PALMAS_GPADC
+	tristate "TI Palmas General Purpose ADC"
+	depends on MFD_PALMAS
+	help
+	 Palmas series pmic chip is used in smartphones and tablets
+	 which supports a 16 channel GPADC. Add iio driver to read
+	 different channel of GPADCs.
 
 endmenu

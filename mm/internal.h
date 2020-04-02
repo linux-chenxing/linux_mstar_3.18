@@ -105,6 +105,18 @@ extern void prep_compound_page(struct page *page, unsigned long order);
 extern bool is_free_buddy_page(struct page *page);
 #endif
 
+#ifdef CONFIG_CMA
+static inline int is_cma_page(struct page *page)
+{
+	unsigned mt = get_pageblock_migratetype(page);
+	if (mt == MIGRATE_ISOLATE || mt == MIGRATE_CMA)
+		return true;
+	return false;
+}
+#else
+#define is_cma_page(page) 0
+#endif
+
 #if defined CONFIG_COMPACTION || defined CONFIG_CMA
 
 /*
@@ -135,6 +147,12 @@ struct compact_control {
 	int migratetype;		/* MOVABLE, RECLAIMABLE etc */
 	struct zone *zone;
 	bool contended;			/* True if a lock was contended */
+
+#ifdef CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA
+	int (*isvalid_migrate_pfn) (struct compact_control *cc, unsigned long pfn);
+	int (*isvalid_free_pfn) (struct compact_control *cc, unsigned long pfn);
+	int (*migration_completed)(struct compact_control *cc, unsigned long free_pfn,unsigned long migrate_pfn);
+#endif
 };
 
 unsigned long
@@ -373,5 +391,41 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 #define ALLOC_HIGH		0x20 /* __GFP_HIGH set */
 #define ALLOC_CPUSET		0x40 /* check for correct cpuset */
 #define ALLOC_CMA		0x80 /* allow allocations from CMA areas */
+
+#ifdef CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA
+#ifdef CONFIG_MP_CMA_PATCH_COMPACTION_FROM_NONCMA_TO_CMA_DEBUG
+void ZONE_CMA_COHERENCE_CHK(int nolock);
+#define MS_CMA_BUG_ON(condition) BUG_ON(condition)
+#define MS_CMA_BUG()   BUG()
+#else
+#define ZONE_CMA_COHERENCE_CHK(nolock) do{ }while(0)
+#define MS_CMA_BUG_ON(condition) do{ }while(0)
+#define MS_CMA_BUG()  do{ }while(0)
+#endif
+#endif
+
+#ifdef CONFIG_CMA
+#ifdef CONFIG_MP_CMA_PATCH_CMA_AGGRESSIVE_ALLOC
+#ifdef CONFIG_MP_CMA_PATCH_CMA_MORE_AGGRESSIVE_ALLOC
+
+bool zone_watermark_with_cma_ok(struct zone *z, int order, unsigned long mark,
+              int classzone_idx, int alloc_flags);
+
+bool zone_watermark_with_cma_ok_safe(struct zone *z, int order, unsigned long mark,
+              int classzone_idx, int alloc_flags);
+#endif
+#endif
+#endif
+
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+
+#include <linux/stacktrace.h>
+#include <linux/memblock.h>
+void notify_free_page(struct page *page, int count);
+void notify_alloc_page(struct page *page, int count, gfp_t gfp_mask);
+void notify_migrate_page(struct page *page_src, struct page *page_dst);
+void show_page_trace_statics(void);
+
+#endif
 
 #endif	/* __MM_INTERNAL_H */

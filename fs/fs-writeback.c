@@ -32,6 +32,9 @@
  * 4MB minimal write chunk size
  */
 #define MIN_WRITEBACK_PAGES	(4096UL >> (PAGE_CACHE_SHIFT - 10))
+#if (MP_USB_STR_PATCH == 1) && defined(CONFIG_SUSPEND)
+extern bool is_suspending(void);
+#endif
 
 /*
  * Passed into wb_writeback(), essentially a subset of writeback_control
@@ -1025,7 +1028,8 @@ void bdi_writeback_workfn(struct work_struct *work)
 	struct backing_dev_info *bdi = wb->bdi;
 	long pages_written;
 
-	set_worker_desc("flush-%s", dev_name(bdi->dev));
+	set_worker_desc("flush-%s", bdi->dev ?
+			dev_name(bdi->dev) : bdi->name);
 	current->flags |= PF_SWAPWRITE;
 
 	if (likely(!current_is_workqueue_rescuer() ||
@@ -1155,7 +1159,7 @@ void __mark_inode_dirty(struct inode *inode, int flags)
 	if ((inode->i_state & flags) == flags)
 		return;
 
-	if (unlikely(block_dump))
+	if (unlikely(block_dump > 1))
 		block_dump___mark_inode_dirty(inode);
 
 	spin_lock(&inode->i_lock);
@@ -1289,6 +1293,9 @@ void writeback_inodes_sb_nr(struct super_block *sb,
 			    unsigned long nr,
 			    enum wb_reason reason)
 {
+#if (MP_USB_STR_PATCH == 1) && defined(CONFIG_SUSPEND)
+    unsigned long timeleft;
+#endif
 	DECLARE_COMPLETION_ONSTACK(done);
 	struct wb_writeback_work work = {
 		.sb			= sb,
@@ -1303,7 +1310,45 @@ void writeback_inodes_sb_nr(struct super_block *sb,
 		return;
 	WARN_ON(!rwsem_is_locked(&sb->s_umount));
 	bdi_queue_work(sb->s_bdi, &work);
+
+#if (MP_USB_STR_PATCH == 1) && defined(CONFIG_SUSPEND)
+	while(1)
+	{
+		timeleft=wait_for_completion_timeout(&done,msecs_to_jiffies(1000));
+    	if(timeleft)
+    	{
+    		break;
+    	}
+		if(is_suspending())
+		{
+		  	struct wb_writeback_work *work2;
+			while(!list_empty(&sb->s_bdi->work_list))
+		  	{
+				work2 = NULL;
+			  	spin_lock_bh(&sb->s_bdi->wb_lock);
+			  	if (!list_empty(&sb->s_bdi->work_list))
+			  	{
+					work2 = list_entry(sb->s_bdi->work_list.next,
+						  struct wb_writeback_work, list);
+				  	list_del_init(&work2->list);
+			  	}
+			  	spin_unlock_bh(&sb->s_bdi->wb_lock);
+				if (work2) {
+					if(work2->done)
+						complete(work2->done);
+					else
+					{
+						kfree(work2);
+					}
+				}
+			}
+			break;
+		}
+	}
+#else
 	wait_for_completion(&done);
+#endif
+
 }
 EXPORT_SYMBOL(writeback_inodes_sb_nr);
 
@@ -1370,6 +1415,10 @@ EXPORT_SYMBOL(try_to_writeback_inodes_sb);
  */
 void sync_inodes_sb(struct super_block *sb)
 {
+
+#if (MP_USB_STR_PATCH == 1) && defined(CONFIG_SUSPEND)
+	unsigned long timeleft;
+#endif
 	DECLARE_COMPLETION_ONSTACK(done);
 	struct wb_writeback_work work = {
 		.sb		= sb,
@@ -1386,7 +1435,44 @@ void sync_inodes_sb(struct super_block *sb)
 	WARN_ON(!rwsem_is_locked(&sb->s_umount));
 
 	bdi_queue_work(sb->s_bdi, &work);
+#if (MP_USB_STR_PATCH == 1) && defined(CONFIG_SUSPEND)
+	while(1)
+	{
+		timeleft=wait_for_completion_timeout(&done,msecs_to_jiffies(1000));
+		if(timeleft)
+		{
+			break;
+		}
+		if(is_suspending())
+		{
+			struct wb_writeback_work *work2;
+			while(!list_empty(&sb->s_bdi->work_list))
+			{
+				work2 = NULL;
+				spin_lock_bh(&sb->s_bdi->wb_lock);
+				if (!list_empty(&sb->s_bdi->work_list))
+				{
+					work2 = list_entry(sb->s_bdi->work_list.next,
+							 struct wb_writeback_work, list);
+					list_del_init(&work2->list);
+				}
+				spin_unlock_bh(&sb->s_bdi->wb_lock);
+				if(work2) {
+					if(work2->done)
+						complete(work2->done);
+					else
+					{
+						kfree(work2);
+					}
+				}
+			}
+			break;
+		}
+	}
+#else
 	wait_for_completion(&done);
+#endif
+
 
 	wait_sb_inodes(sb);
 }

@@ -23,6 +23,7 @@ config SND_SOC_ALL_CODECS
 	select SND_SOC_ADS117X
 	select SND_SOC_AK4104 if SPI_MASTER
 	select SND_SOC_AK4535 if I2C
+	select SND_SOC_AK4618 if I2C
 	select SND_SOC_AK4641 if I2C
 	select SND_SOC_AK4642 if I2C
 	select SND_SOC_AK4671 if I2C
@@ -41,6 +42,7 @@ config SND_SOC_ALL_CODECS
 	select SND_SOC_DA732X if I2C
 	select SND_SOC_DA9055 if I2C
 	select SND_SOC_DFBMCS320
+	select SND_SOC_DMIC
 	select SND_SOC_ISABELLE if I2C
 	select SND_SOC_JZ4740_CODEC
 	select SND_SOC_LM4857 if I2C
@@ -51,11 +53,17 @@ config SND_SOC_ALL_CODECS
 	select SND_SOC_MAX9850 if I2C
 	select SND_SOC_MAX9768 if I2C
 	select SND_SOC_MAX9877 if I2C
+	select SND_SOC_MAX97236 if I2C
 	select SND_SOC_MC13783 if MFD_MC13XXX
 	select SND_SOC_ML26124 if I2C
 	select SND_SOC_OMAP_HDMI_CODEC if OMAP4_DSS_HDMI
 	select SND_SOC_PCM3008
 	select SND_SOC_RT5631 if I2C
+	select SND_SOC_RT5639 if I2C
+	select SND_SOC_RT5640 if I2C
+	select SND_SOC_RT5645 if I2C
+	select SND_SOC_RT5677 if I2C
+	select SND_SOC_RT5506 if I2C
 	select SND_SOC_SGTL5000 if I2C
 	select SND_SOC_SI476X if MFD_SI476X_CORE
 	select SND_SOC_SN95031 if INTEL_SCU_IPC
@@ -68,6 +76,8 @@ config SND_SOC_ALL_CODECS
 	select SND_SOC_TLV320AIC23 if I2C
 	select SND_SOC_TLV320AIC26 if SPI_MASTER
 	select SND_SOC_TLV320AIC32X4 if I2C
+	select SND_SOC_TLV320AIC326X if I2C
+	select SND_SOC_TLV320AIC325X if I2C
 	select SND_SOC_TLV320AIC3X if I2C
 	select SND_SOC_TPA6130A2 if I2C
 	select SND_SOC_TLV320DAC33 if I2C
@@ -196,6 +206,9 @@ config SND_SOC_AK4104
 config SND_SOC_AK4535
 	tristate
 
+config SND_SOC_AK4618
+	tristate
+
 config SND_SOC_AK4641
 	tristate
 
@@ -296,6 +309,18 @@ config SND_SOC_PCM3008
 config SND_SOC_RT5631
 	tristate
 
+config SND_SOC_RT5639
+	tristate
+
+config SND_SOC_RT5640
+	tristate
+
+config SND_SOC_RT5645
+	tristate
+
+config SND_SOC_RT5677
+	tristate
+
 #Freescale sgtl5000 codec
 config SND_SOC_SGTL5000
 	tristate
@@ -350,6 +375,33 @@ config SND_SOC_TWL4030
 
 config SND_SOC_TWL6040
 	tristate
+
+config SND_SOC_AIC_CFW_OPS
+	bool
+	help
+	  say yes here if you want to support minidsp firmware of
+	  Texas Instruments AIC3262 or AIC3256 codec.
+
+config SND_SOC_TLV320AIC326X
+	tristate "TI AIC326x Codec"
+	select AIC3262_CODEC
+	select SND_SOC_AIC_CFW_OPS
+	help
+	  Say yes here if you want support for Texas Instruments AIC3262 audio
+	  codec.
+	  This driver provides support for accessing the device AIC3262,
+	  additional drivers must be enabled in order to use the
+	  functionality of the device.
+
+config SND_SOC_TLV320AIC325X
+	tristate
+	select SND_SOC_AIC_CFW_OPS
+	help
+	  Say yes here if you want support for Texas Instruments AIC3256 audio
+	  codec.
+	  This driver provides support for accessing the device AIC3256,
+	  additional drivers must be enabled in order to use the
+	  functionality of the device.
 
 config SND_SOC_UDA134X
        tristate
@@ -517,6 +569,9 @@ config SND_SOC_MAX9768
 config SND_SOC_MAX9877
 	tristate
 
+config SND_SOC_MAX97236
+	tristate
+
 config SND_SOC_MC13783
 	tristate
 
@@ -525,3 +580,20 @@ config SND_SOC_ML26124
 
 config SND_SOC_TPA6130A2
 	tristate
+
+config SND_SOC_RT5506
+	tristate
+
+config AMP_TFA9895
+	tristate "NXP TFA9895 Speaker AMP Driver"
+	depends on I2C=y
+	help
+	  NXP TFA9895 Speaker AMP Driver
+	  implemented by HTC.
+
+config AMP_TFA9895L
+	tristate "NXP TFA9895L Speaker AMP Driver"
+	depends on I2C=y
+	help
+	  NXP TFA9895L Speaker AMP Driver
+	  implemented by HTC.

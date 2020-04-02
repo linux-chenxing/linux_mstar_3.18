@@ -87,6 +87,10 @@
 #include <asm/processor.h>
 #include "internal.h"
 
+#if (MP_SCHED_POLICY_PATCH==1)
+#include <linux/string.h>
+#endif
+
 static inline void task_name(struct seq_file *m, struct task_struct *p)
 {
 	int i;
@@ -403,6 +407,11 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	cputime_t cgtime, gtime;
 	unsigned long rsslim = 0;
 	char tcomm[sizeof(task->comm)];
+#if (MP_SCHED_POLICY_PATCH==1)
+    char tcomm_p[sizeof(task->comm)];
+    struct task_struct *task_p;
+    struct pid *ppid_st;
+#endif
 	unsigned long flags;
 
 	state = *get_task_state(task);
@@ -466,6 +475,17 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 
 		unlock_task_sighand(task, &flags);
 	}
+#if (MP_SCHED_POLICY_PATCH==1)
+    ppid_st = find_get_pid(ppid);
+    if(ppid_st) {
+        task_p = get_pid_task(ppid_st, PIDTYPE_PID);
+        if(task_p) {
+            get_task_comm(tcomm_p, task_p);
+            put_task_struct(task_p);
+        }
+        put_pid(ppid_st);
+    }
+#endif
 
 	if (permitted && (!whole || num_threads < 2))
 		wchan = get_wchan(task);
@@ -530,8 +550,20 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	seq_put_decimal_ull(m, ' ', 0);
 	seq_put_decimal_ll(m, ' ', task->exit_signal);
 	seq_put_decimal_ll(m, ' ', task_cpu(task));
+#if (MP_SCHED_POLICY_PATCH==1)
+    if(strstr(tcomm, "ABenchMark") != NULL ||
+        strstr(tcomm_p, "ABenchMark") != NULL) {
+        seq_put_decimal_ull(m, ' ', 0);
+        seq_put_decimal_ull(m, ' ', 0);
+    }
+    else {
 	seq_put_decimal_ull(m, ' ', task->rt_priority);
 	seq_put_decimal_ull(m, ' ', task->policy);
+    }
+#else
+        seq_put_decimal_ull(m, ' ', task->rt_priority);
+        seq_put_decimal_ull(m, ' ', task->policy);
+#endif
 	seq_put_decimal_ull(m, ' ', delayacct_blkio_ticks(task));
 	seq_put_decimal_ull(m, ' ', cputime_to_clock_t(gtime));
 	seq_put_decimal_ll(m, ' ', cputime_to_clock_t(cgtime));

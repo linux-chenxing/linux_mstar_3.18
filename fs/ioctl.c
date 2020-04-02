@@ -445,9 +445,13 @@ int ioctl_preallocate(struct file *filp, void __user *argp)
 
 	return do_fallocate(filp, FALLOC_FL_KEEP_SIZE, sr.l_start, sr.l_len);
 }
-
+#if (1 == MP_CMA_PATCH_POOL_UTOPIA_TO_KERNEL)
+    int file_ioctl(struct file *filp, unsigned int cmd,
+		unsigned long arg)
+#else
 static int file_ioctl(struct file *filp, unsigned int cmd,
 		unsigned long arg)
+#endif		
 {
 	struct inode *inode = file_inode(filp);
 	int __user *p = (int __user *)arg;
@@ -464,7 +468,9 @@ static int file_ioctl(struct file *filp, unsigned int cmd,
 
 	return vfs_ioctl(filp, cmd, arg);
 }
-
+#if (1 == MP_CMA_PATCH_POOL_UTOPIA_TO_KERNEL)
+EXPORT_SYMBOL(file_ioctl);
+#endif
 static int ioctl_fionbio(struct file *filp, int __user *argp)
 {
 	unsigned int flag;

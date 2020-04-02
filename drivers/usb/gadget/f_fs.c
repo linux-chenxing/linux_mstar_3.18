@@ -2,6 +2,8 @@
  * f_fs.c -- user mode file system API for USB composite function controllers
  *
  * Copyright (C) 2010 Samsung Electronics
+ * Copyright (c) 2014, NVIDIA CORPORATION.  All rights reserved.
+ *
  * Author: Michal Nazarewicz <mina86@mina86.com>
  *
  * Based on inode.c (GadgetFS) which was:
@@ -734,6 +736,9 @@ static const struct file_operations ffs_ep0_operations = {
 	.read =		ffs_ep0_read,
 	.release =	ffs_ep0_release,
 	.unlocked_ioctl =	ffs_ep0_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl =	ffs_ep0_ioctl,
+#endif
 };
 
 
@@ -953,6 +958,9 @@ static const struct file_operations ffs_epfile_operations = {
 	.read =		ffs_epfile_read,
 	.release =	ffs_epfile_release,
 	.unlocked_ioctl =	ffs_epfile_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl =	ffs_epfile_ioctl,
+#endif
 };
 
 
@@ -1561,7 +1569,12 @@ static int ffs_func_eps_enable(struct ffs_function *func)
 	spin_lock_irqsave(&func->ffs->eps_lock, flags);
 	do {
 		struct usb_endpoint_descriptor *ds;
-		ds = ep->descs[ep->descs[1] ? 1 : 0];
+		int desc_idx = ffs->gadget->speed == USB_SPEED_HIGH ? 1 : 0;
+		ds = ep->descs[desc_idx];
+		if (!ds) {
+			ret = -EINVAL;
+			break;
+		}
 
 		ep->ep->driver_data = ep;
 		ep->ep->desc = ds;

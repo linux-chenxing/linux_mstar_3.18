@@ -414,8 +414,28 @@ void __ext4_error(struct super_block *sb, const char *function,
 	va_start(args, fmt);
 	vaf.fmt = fmt;
 	vaf.va = &args;
+#if(1 == MP_FAT_DEBUG_MESSAGE_CONTROL)
+	if(sb->s_bdev != NULL && sb->s_bdev->bd_disk != NULL){
+		if((sb->s_bdev->bd_disk->flags & GENHD_FL_UP) == 0){
+			if(false == sb->not_msg_flag && sb->msg_count < 50)
+			{
+				sb->msg_count++;
+			}
+			else if(50 == sb->msg_count && false == sb->not_msg_flag)
+			{
+				sb->not_msg_flag = true;
+			}
+		}
+	}
+	if(false == sb->not_msg_flag)
+	{
+		printk(KERN_CRIT "ext4-fs error (device %s): %s:%d: comm %s: %pV\n",
+			sb->s_id, function, line, current->comm, &vaf);
+	}
+#else
 	printk(KERN_CRIT "EXT4-fs error (device %s): %s:%d: comm %s: %pV\n",
 	       sb->s_id, function, line, current->comm, &vaf);
+#endif
 	va_end(args);
 	save_error_info(sb, function, line);
 
@@ -3283,7 +3303,10 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 	if (!sbi)
 		goto out_free_orig;
-
+#if(1 == MP_FAT_DEBUG_MESSAGE_CONTROL)
+	sb->msg_count = 0;
+	sb->not_msg_flag = false;
+#endif
 	sbi->s_blockgroup_lock =
 		kzalloc(sizeof(struct blockgroup_lock), GFP_KERNEL);
 	if (!sbi->s_blockgroup_lock) {
@@ -3581,8 +3604,8 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_inodes_per_block = blocksize / EXT4_INODE_SIZE(sb);
 	if (sbi->s_inodes_per_block == 0)
 		goto cantfind_ext4;
-	sbi->s_itb_per_group = sbi->s_inodes_per_group /
-					sbi->s_inodes_per_block;
+	sbi->s_itb_per_group = DIV_ROUND_UP(sbi->s_inodes_per_group,
+					sbi->s_inodes_per_block);
 	sbi->s_desc_per_block = blocksize / EXT4_DESC_SIZE(sb);
 	sbi->s_sbh = bh;
 	sbi->s_mount_state = le16_to_cpu(es->s_state);

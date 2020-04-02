@@ -35,6 +35,42 @@
 #include <asm/traps.h>
 #include <asm/dma-coherence.h>
 
+#if defined(CONFIG_MP_MIPS_L2_CACHE)
+//L2 cache
+#if defined(CONFIG_MSTAR_TITANIA8) || \
+    defined(CONFIG_MSTAR_TITANIA9) || \
+    defined(CONFIG_MSTAR_JANUS2) || \
+    defined(CONFIG_MSTAR_TITANIA11) || \
+    defined(CONFIG_MSTAR_TITANIA12) || \
+    defined(CONFIG_MSTAR_TITANIA13) || \
+    defined(CONFIG_MSTAR_AMBER1) || \
+    defined(CONFIG_MSTAR_AMBER6) || \
+    defined(CONFIG_MSTAR_AMBER7) || \
+    defined(CONFIG_MSTAR_AMETHYST) || \
+    defined(CONFIG_MSTAR_AMBER5) || \
+    defined(CONFIG_MSTAR_KAISERIN) || \
+    defined(CONFIG_MSTAR_KENYA) || \
+    defined(CONFIG_MSTAR_KERES) || \
+    defined(CONFIG_MSTAR_KIRIN) || \
+	defined(CONFIG_MSTAR_KRIS) || \
+    defined(CONFIG_MSTAR_EMERALD) || \
+    defined(CONFIG_MSTAR_NUGGET) || \
+	defined(CONFIG_MSTAR_NIKON) || \
+	defined(CONFIG_MSTAR_MILAN) || \
+	defined(CONFIG_MSTAR_KIWI) || \
+	defined(CONFIG_MSTAR_KAYLA) || \
+	defined(CONFIG_MSTAR_KRATOS) 
+        extern void Chip_L2_cache_inv( unsigned long addr, unsigned long size);
+        extern void Chip_L2_cache_wback( unsigned long addr, unsigned long size);
+        extern void Chip_L2_cache_wback_inv( unsigned long addr, unsigned long size);
+        extern int smp_call_function(void(*func)(void *info), void *info, int wait);
+#endif
+
+extern unsigned int bMPoolInit;
+extern void Chip_Flush_Memory(void);
+
+extern int smp_call_function(void(*func)(void *info), void *info, int wait);
+#endif /* CONFIG_MP_MIPS_L2_CACHE */
 /*
  * Special Variant of smp_call_function for use by cache functions:
  *
@@ -606,7 +642,7 @@ static void r4k_dma_cache_wback_inv(unsigned long addr, unsigned long size)
 			r4k_blast_scache();
 		else
 			blast_scache_range(addr, addr + size);
-		__sync();
+            __sync();
 		return;
 	}
 
@@ -623,7 +659,43 @@ static void r4k_dma_cache_wback_inv(unsigned long addr, unsigned long size)
 	}
 
 	bc_wback_inv(addr, size);
-	__sync();
+    __sync();
+#if defined(CONFIG_MP_MIPS_L2_CACHE)
+
+#if defined(CONFIG_MSTAR_TITANIA8) || \
+    defined(CONFIG_MSTAR_TITANIA9) || \
+    defined(CONFIG_MSTAR_JANUS2) || \
+    defined(CONFIG_MSTAR_TITANIA11) || \
+    defined(CONFIG_MSTAR_TITANIA12) || \
+    defined(CONFIG_MSTAR_TITANIA13) || \
+    defined(CONFIG_MSTAR_AMBER1) || \
+    defined(CONFIG_MSTAR_AMBER6) || \
+    defined(CONFIG_MSTAR_AMBER7) || \
+    defined(CONFIG_MSTAR_AMETHYST) || \
+    defined(CONFIG_MSTAR_AMBER5) || \
+    defined(CONFIG_MSTAR_KAISERIN) || \
+    defined(CONFIG_MSTAR_KENYA) || \
+    defined(CONFIG_MSTAR_KERES) || \
+    defined(CONFIG_MSTAR_KIRIN) || \
+	defined(CONFIG_MSTAR_KRIS) || \
+    defined(CONFIG_MSTAR_EMERALD) || \
+    defined(CONFIG_MSTAR_NUGGET) || \
+    defined(CONFIG_MSTAR_NIKON) || \
+    defined(CONFIG_MSTAR_MILAN) || \
+	defined(CONFIG_MSTAR_KIWI) || \
+	defined(CONFIG_MSTAR_KAYLA) || \
+	defined(CONFIG_MSTAR_KRATOS) 
+    if(  ( 0x80000000 <= addr )   && ( addr < 0xA0000000) )
+    {
+        Chip_L2_cache_wback_inv( addr&0x0FFFFFFF , size);
+    }
+    else //  high mem, user space
+    {
+        Chip_L2_cache_wback_inv( 0 , 0xFFFFFFFF );
+    }
+#endif
+
+#endif /* CONFIG_MP_MIPS_L2_CACHE */
 }
 
 static void r4k_dma_cache_inv(unsigned long addr, unsigned long size)
@@ -631,10 +703,46 @@ static void r4k_dma_cache_inv(unsigned long addr, unsigned long size)
 	/* Catch bad driver code */
 	BUG_ON(size == 0);
 
+#if defined(CONFIG_MP_MIPS_L2_CACHE)
+
+#if defined(CONFIG_MSTAR_TITANIA8) || \
+    defined(CONFIG_MSTAR_TITANIA9) || \
+    defined(CONFIG_MSTAR_JANUS2) || \
+    defined(CONFIG_MSTAR_TITANIA11) || \
+    defined(CONFIG_MSTAR_TITANIA12) || \
+    defined(CONFIG_MSTAR_TITANIA13) || \
+    defined(CONFIG_MSTAR_AMBER1) || \
+    defined(CONFIG_MSTAR_AMBER6) || \
+    defined(CONFIG_MSTAR_AMBER7) || \
+    defined(CONFIG_MSTAR_AMETHYST) || \
+    defined(CONFIG_MSTAR_AMBER5) || \
+    defined(CONFIG_MSTAR_KAISERIN) || \
+    defined(CONFIG_MSTAR_KENYA) || \
+    defined(CONFIG_MSTAR_KERES) || \
+    defined(CONFIG_MSTAR_KIRIN) || \
+	defined(CONFIG_MSTAR_KRIS) || \
+    defined(CONFIG_MSTAR_EMERALD) || \
+    defined(CONFIG_MSTAR_NUGGET) || \
+	defined(CONFIG_MSTAR_NIKON) || \
+	defined(CONFIG_MSTAR_MILAN) || \
+	defined(CONFIG_MSTAR_KIWI) || \
+	defined(CONFIG_MSTAR_KAYLA) || \
+	defined(CONFIG_MSTAR_KRATOS) 
+        if(  ( 0x80000000 <= addr )   && ( addr < 0xA0000000) )
+        {
+        	Chip_L2_cache_inv(addr&0x0FFFFFFF, size);
+        }
+#endif
+
+#endif /* CONFIG_MP_MIPS_L2_CACHE */
+
 	if (cpu_has_inclusive_pcaches) {
 		if (size >= scache_size)
 			r4k_blast_scache();
 		else {
+			unsigned long lsize = cpu_scache_line_size();
+			unsigned long almask = ~(lsize - 1);
+
 			/*
 			 * There is no clearly documented alignment requirement
 			 * for the cache instruction on MIPS processors and
@@ -643,21 +751,29 @@ static void r4k_dma_cache_inv(unsigned long addr, unsigned long size)
 			 * hit ops with insufficient alignment.	 Solved by
 			 * aligning the address to cache line size.
 			 */
+			cache_op(Hit_Writeback_Inv_SD, addr & almask);
+			cache_op(Hit_Writeback_Inv_SD,
+				 (addr + size - 1) & almask);
 			blast_inv_scache_range(addr, addr + size);
 		}
-		__sync();
+
 		return;
 	}
 
 	if (cpu_has_safe_index_cacheops && size >= dcache_size) {
 		r4k_blast_dcache();
 	} else {
+		unsigned long lsize = cpu_dcache_line_size();
+		unsigned long almask = ~(lsize - 1);
+
 		R4600_HIT_CACHEOP_WAR_IMPL;
+		cache_op(Hit_Writeback_Inv_D, addr & almask);
+		cache_op(Hit_Writeback_Inv_D, (addr + size - 1)  & almask);
 		blast_inv_dcache_range(addr, addr + size);
 	}
 
 	bc_inv(addr, size);
-	__sync();
+    __sync();
 }
 #endif /* CONFIG_DMA_NONCOHERENT */
 
@@ -787,12 +903,12 @@ static inline void alias_74k_erratum(struct cpuinfo_mips *c)
 	 * having aliases.
 	 */
 	if ((c->processor_id & 0xff) <= PRID_REV_ENCODE_332(2, 4, 0))
-		c->dcache.flags |= MIPS_CACHE_VTAG;
+		c->icache.flags |= MIPS_CACHE_VTAG;
 	if ((c->processor_id & 0xff) == PRID_REV_ENCODE_332(2, 4, 0))
 		write_c0_config6(read_c0_config6() | MIPS_CONF6_SYND);
 	if (((c->processor_id & 0xff00) == PRID_IMP_1074K) &&
 	    ((c->processor_id & 0xff) <= PRID_REV_ENCODE_332(1, 1, 0))) {
-		c->dcache.flags |= MIPS_CACHE_VTAG;
+		c->icache.flags |= MIPS_CACHE_VTAG;
 		write_c0_config6(read_c0_config6() | MIPS_CONF6_SYND);
 	}
 }

@@ -29,6 +29,7 @@
 #include <linux/hw_breakpoint.h>
 #include <linux/smp.h>
 #include <linux/cpu_pm.h>
+#include <linux/sched.h>
 
 #include <asm/cacheflush.h>
 #include <asm/cputype.h>
@@ -37,6 +38,7 @@
 #include <asm/kdebug.h>
 #include <asm/traps.h>
 #include <asm/hardware/coresight.h>
+#include <mstar/mpatch_macro.h>
 
 /* Breakpoint currently in use for each BRP. */
 static DEFINE_PER_CPU(struct perf_event *, bp_on_reg[ARM_MAX_BRP]);
@@ -257,6 +259,7 @@ static int enable_monitor_mode(void)
 		break;
 	case ARM_DEBUG_ARCH_V7_ECP14:
 	case ARM_DEBUG_ARCH_V7_1:
+	case ARM_DEBUG_ARCH_V8:
 		ARM_DBG_WRITE(c0, c2, 2, (dscr | ARM_DSCR_MDBGEN));
 		isb();
 		break;
@@ -344,13 +347,13 @@ int arch_install_hw_breakpoint(struct perf_event *bp)
 		/* Breakpoint */
 		ctrl_base = ARM_BASE_BCR;
 		val_base = ARM_BASE_BVR;
-		slots = (struct perf_event **)__get_cpu_var(bp_on_reg);
+		slots = this_cpu_ptr(bp_on_reg);
 		max_slots = core_num_brps;
 	} else {
 		/* Watchpoint */
 		ctrl_base = ARM_BASE_WCR;
 		val_base = ARM_BASE_WVR;
-		slots = (struct perf_event **)__get_cpu_var(wp_on_reg);
+		slots = this_cpu_ptr(wp_on_reg);
 		max_slots = core_num_wrps;
 	}
 
@@ -396,12 +399,12 @@ void arch_uninstall_hw_breakpoint(struct perf_event *bp)
 	if (info->ctrl.type == ARM_BREAKPOINT_EXECUTE) {
 		/* Breakpoint */
 		base = ARM_BASE_BCR;
-		slots = (struct perf_event **)__get_cpu_var(bp_on_reg);
+		slots = this_cpu_ptr(bp_on_reg);
 		max_slots = core_num_brps;
 	} else {
 		/* Watchpoint */
 		base = ARM_BASE_WCR;
-		slots = (struct perf_event **)__get_cpu_var(wp_on_reg);
+		slots = this_cpu_ptr(wp_on_reg);
 		max_slots = core_num_wrps;
 	}
 
@@ -697,7 +700,7 @@ static void watchpoint_handler(unsigned long addr, unsigned int fsr,
 	struct arch_hw_breakpoint *info;
 	struct arch_hw_breakpoint_ctrl ctrl;
 
-	slots = (struct perf_event **)__get_cpu_var(wp_on_reg);
+	slots = this_cpu_ptr(wp_on_reg);
 
 	for (i = 0; i < core_num_wrps; ++i) {
 		rcu_read_lock();
@@ -768,7 +771,7 @@ static void watchpoint_single_step_handler(unsigned long pc)
 	struct perf_event *wp, **slots;
 	struct arch_hw_breakpoint *info;
 
-	slots = (struct perf_event **)__get_cpu_var(wp_on_reg);
+	slots = this_cpu_ptr(wp_on_reg);
 
 	for (i = 0; i < core_num_wrps; ++i) {
 		rcu_read_lock();
@@ -802,7 +805,7 @@ static void breakpoint_handler(unsigned long unknown, struct pt_regs *regs)
 	struct arch_hw_breakpoint *info;
 	struct arch_hw_breakpoint_ctrl ctrl;
 
-	slots = (struct perf_event **)__get_cpu_var(bp_on_reg);
+	slots = this_cpu_ptr(bp_on_reg);
 
 	/* The exception entry code places the amended lr in the PC. */
 	addr = regs->ARM_pc;
@@ -851,6 +854,10 @@ unlock:
  * Called from either the Data Abort Handler [watchpoint] or the
  * Prefetch Abort Handler [breakpoint] with interrupts disabled.
  */
+#if (MP_DEBUG_TOOL_COREDUMP == 1)
+extern  void show_usr_info(struct task_struct *task, struct pt_regs *regs, unsigned long addr);
+#endif /*MP_DEBUG_TOOL_COREDUMP*/
+
 static int hw_breakpoint_pending(unsigned long addr, unsigned int fsr,
 				 struct pt_regs *regs)
 {
@@ -873,6 +880,15 @@ static int hw_breakpoint_pending(unsigned long addr, unsigned int fsr,
 	case ARM_ENTRY_ASYNC_WATCHPOINT:
 		WARN(1, "Asynchronous watchpoint exception taken. Debugging results may be unreliable\n");
 	case ARM_ENTRY_SYNC_WATCHPOINT:
+		#if (MP_DEBUG_TOOL_COREDUMP == 1)
+		#ifdef	CONFIG_SHOW_FAULT_TRACE_INFO
+		#ifdef CONFIG_ANDROID
+                        /*prevent kernel coredump message mess up with Android coredump message*/
+                #else
+                        show_usr_info(current,regs,addr);/*for watchpoint*/
+                #endif /*CONFIG_ANDROID*/
+		#endif/*CONFIG_SHOW_FAULT_TRACE_INFO*/		
+		#endif /*MP_DEBUG_TOOL_COREDUMP*/
 		watchpoint_handler(addr, fsr, regs);
 		break;
 	default:

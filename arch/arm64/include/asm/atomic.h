@@ -4,6 +4,7 @@
  * Copyright (C) 1996 Russell King.
  * Copyright (C) 2002 Deep Blue Solutions Ltd.
  * Copyright (C) 2012 ARM Ltd.
+ * Copyright (C) 2014, NVIDIA CORPORATION.  All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -37,6 +38,71 @@
  */
 #define atomic_read(v)	(*(volatile int *)&(v)->counter)
 #define atomic_set(v,i)	(((v)->counter) = (i))
+#define cpu_relaxed_read_atomic(v)	ldax32((volatile int *)&(v->counter))
+
+/*
+ * Macros for generating inline functions to use special load and store
+ * instructions (exlusive and  aquire/release).
+ */
+
+#define _LD(_name, _type, _inst, _reg)					       \
+static inline _type _name (volatile _type *p)				       \
+{									       \
+	_type ret;							       \
+	asm volatile(							       \
+		_inst " %" _reg "0, %1": "=&r" (ret) : "Q" (*p) : "memory");   \
+	return ret;							       \
+}
+
+#define _STX(_name, _type, _inst, _reg)					       \
+static inline int _name (volatile _type *p, _type v)			       \
+{									       \
+	int ret;							       \
+	asm volatile(							       \
+		 _inst " %" _reg "0, %" _reg "1, %2"			       \
+		: "=&r" (ret)						       \
+		: "r" (v), "Q" (*p)					       \
+		: "memory");						       \
+	return ret;							       \
+}
+
+#define _STL(_name, _type, _inst, _reg)					       \
+static inline void _name (volatile _type *p, _type v)			       \
+{									       \
+	asm volatile(							       \
+		 _inst " %" _reg "0, %1"				       \
+		:							       \
+		: "r" (v), "Q" (*p)					       \
+		: "memory");						       \
+}
+
+_LD(  ldx64, u64,   "ldxr", "x")
+_STX( stx64, u64,   "stxr", "x")
+_LD( ldax64, u64,  "ldaxr", "x")
+_STX(stlx64, u64,  "stlxr", "x")
+_LD(  lda64, u64,   "ldar", "x")
+_STL( stl64, u64,   "stlr", "x")
+
+_LD(  ldx32, u32,   "ldxr", "w")
+_STX( stx32, u32,   "stxr", "w")
+_LD( ldax32, u32,  "ldaxr", "w")
+_STX(stlx32, u32,  "stlxr", "w")
+_LD(  lda32, u32,   "ldar", "w")
+_STL( stl32, u32,   "stlr", "w")
+
+_LD(  ldx16, u16,  "ldxrh", "w")
+_STX( stx16, u16,  "stxrh", "w")
+_LD( ldax16, u16, "ldaxrh", "w")
+_STX(stlx16, u16, "stlxrh", "w")
+_LD(  lda16, u16,  "ldarh", "w")
+_STL( stl16, u16,  "stlrh", "w")
+
+_LD(   ldx8,  u8,  "ldxrb", "w")
+_STX(  stx8,  u8,  "stxrb", "w")
+_LD(  ldax8,  u8, "ldaxrb", "w")
+_STX( stlx8,  u8, "stlxrb", "w")
+_LD(   lda8,  u8,  "ldarb", "w")
+_STL(  stl8,  u8,  "stlrb", "w")
 
 /*
  * AArch64 UP and SMP safe atomic ops.  We use load exclusive and
@@ -54,8 +120,7 @@ static inline void atomic_add(int i, atomic_t *v)
 "	stxr	%w1, %w0, %2\n"
 "	cbnz	%w1, 1b"
 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)
-	: "Ir" (i)
-	: "cc");
+	: "Ir" (i));
 }
 
 static inline int atomic_add_return(int i, atomic_t *v)
@@ -64,14 +129,15 @@ static inline int atomic_add_return(int i, atomic_t *v)
 	int result;
 
 	asm volatile("// atomic_add_return\n"
-"1:	ldaxr	%w0, %2\n"
+"1:	ldxr	%w0, %2\n"
 "	add	%w0, %w0, %w3\n"
 "	stlxr	%w1, %w0, %2\n"
 "	cbnz	%w1, 1b"
 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)
 	: "Ir" (i)
-	: "cc", "memory");
+	: "memory");
 
+	smp_mb();
 	return result;
 }
 
@@ -86,8 +152,7 @@ static inline void atomic_sub(int i, atomic_t *v)
 "	stxr	%w1, %w0, %2\n"
 "	cbnz	%w1, 1b"
 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)
-	: "Ir" (i)
-	: "cc");
+	: "Ir" (i));
 }
 
 static inline int atomic_sub_return(int i, atomic_t *v)
@@ -96,14 +161,15 @@ static inline int atomic_sub_return(int i, atomic_t *v)
 	int result;
 
 	asm volatile("// atomic_sub_return\n"
-"1:	ldaxr	%w0, %2\n"
+"1:	ldxr	%w0, %2\n"
 "	sub	%w0, %w0, %w3\n"
 "	stlxr	%w1, %w0, %2\n"
 "	cbnz	%w1, 1b"
 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)
 	: "Ir" (i)
-	: "cc", "memory");
+	: "memory");
 
+	smp_mb();
 	return result;
 }
 
@@ -112,32 +178,21 @@ static inline int atomic_cmpxchg(atomic_t *ptr, int old, int new)
 	unsigned long tmp;
 	int oldval;
 
+	smp_mb();
+
 	asm volatile("// atomic_cmpxchg\n"
-"1:	ldaxr	%w1, %2\n"
+"1:	ldxr	%w1, %2\n"
 "	cmp	%w1, %w3\n"
 "	b.ne	2f\n"
-"	stlxr	%w0, %w4, %2\n"
+"	stxr	%w0, %w4, %2\n"
 "	cbnz	%w0, 1b\n"
 "2:"
 	: "=&r" (tmp), "=&r" (oldval), "+Q" (ptr->counter)
 	: "Ir" (old), "r" (new)
-	: "cc", "memory");
-
-	return oldval;
-}
-
-static inline void atomic_clear_mask(unsigned long mask, unsigned long *addr)
-{
-	unsigned long tmp, tmp2;
-
-	asm volatile("// atomic_clear_mask\n"
-"1:	ldxr	%0, %2\n"
-"	bic	%0, %0, %3\n"
-"	stxr	%w1, %0, %2\n"
-"	cbnz	%w1, 1b"
-	: "=&r" (tmp), "=&r" (tmp2), "+Q" (*addr)
-	: "Ir" (mask)
 	: "cc");
+
+	smp_mb();
+	return oldval;
 }
 
 #define atomic_xchg(v, new) (xchg(&((v)->counter), new))
@@ -187,8 +242,7 @@ static inline void atomic64_add(u64 i, atomic64_t *v)
 "	stxr	%w1, %0, %2\n"
 "	cbnz	%w1, 1b"
 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)
-	: "Ir" (i)
-	: "cc");
+	: "Ir" (i));
 }
 
 static inline long atomic64_add_return(long i, atomic64_t *v)
@@ -197,14 +251,15 @@ static inline long atomic64_add_return(long i, atomic64_t *v)
 	unsigned long tmp;
 
 	asm volatile("// atomic64_add_return\n"
-"1:	ldaxr	%0, %2\n"
+"1:	ldxr	%0, %2\n"
 "	add	%0, %0, %3\n"
 "	stlxr	%w1, %0, %2\n"
 "	cbnz	%w1, 1b"
 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)
 	: "Ir" (i)
-	: "cc", "memory");
+	: "memory");
 
+	smp_mb();
 	return result;
 }
 
@@ -219,8 +274,7 @@ static inline void atomic64_sub(u64 i, atomic64_t *v)
 "	stxr	%w1, %0, %2\n"
 "	cbnz	%w1, 1b"
 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)
-	: "Ir" (i)
-	: "cc");
+	: "Ir" (i));
 }
 
 static inline long atomic64_sub_return(long i, atomic64_t *v)
@@ -229,14 +283,15 @@ static inline long atomic64_sub_return(long i, atomic64_t *v)
 	unsigned long tmp;
 
 	asm volatile("// atomic64_sub_return\n"
-"1:	ldaxr	%0, %2\n"
+"1:	ldxr	%0, %2\n"
 "	sub	%0, %0, %3\n"
 "	stlxr	%w1, %0, %2\n"
 "	cbnz	%w1, 1b"
 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)
 	: "Ir" (i)
-	: "cc", "memory");
+	: "memory");
 
+	smp_mb();
 	return result;
 }
 
@@ -245,17 +300,20 @@ static inline long atomic64_cmpxchg(atomic64_t *ptr, long old, long new)
 	long oldval;
 	unsigned long res;
 
+	smp_mb();
+
 	asm volatile("// atomic64_cmpxchg\n"
-"1:	ldaxr	%1, %2\n"
+"1:	ldxr	%1, %2\n"
 "	cmp	%1, %3\n"
 "	b.ne	2f\n"
-"	stlxr	%w0, %4, %2\n"
+"	stxr	%w0, %4, %2\n"
 "	cbnz	%w0, 1b\n"
 "2:"
 	: "=&r" (res), "=&r" (oldval), "+Q" (ptr->counter)
 	: "Ir" (old), "r" (new)
-	: "cc", "memory");
+	: "cc");
 
+	smp_mb();
 	return oldval;
 }
 
@@ -267,11 +325,12 @@ static inline long atomic64_dec_if_positive(atomic64_t *v)
 	unsigned long tmp;
 
 	asm volatile("// atomic64_dec_if_positive\n"
-"1:	ldaxr	%0, %2\n"
+"1:	ldxr	%0, %2\n"
 "	subs	%0, %0, #1\n"
 "	b.mi	2f\n"
 "	stlxr	%w1, %0, %2\n"
 "	cbnz	%w1, 1b\n"
+"	dmb	ish\n"
 "2:"
 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)
 	:

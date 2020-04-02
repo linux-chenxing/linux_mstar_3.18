@@ -5,6 +5,7 @@
 #
 
 MKIMAGE=$(type -path "${CROSS_COMPILE}mkimage")
+MKIMAGE=arch/arm/boot/mkimage
 
 if [ -z "${MKIMAGE}" ]; then
 	MKIMAGE=$(type -path mkimage)
@@ -16,4 +17,8 @@ if [ -z "${MKIMAGE}" ]; then
 fi
 
 # Call "mkimage" to create U-Boot image
+if [ -f arch/arm/boot/zImage ];then
+	cp -f arch/arm/boot/zImage arch/arm/boot/zImage.cp
+	gzip -f -9 arch/arm/boot/zImage.cp
+fi
 ${MKIMAGE} "$@"

@@ -64,6 +64,12 @@ UTS_VERSION="$UTS_VERSION $CONFIG_FLAGS $TIMESTAMP"
 UTS_LEN=64
 UTS_TRUNCATE="cut -b -$UTS_LEN"
 
+# MStar version control
+MSTAR_KERCODE="KERCODE:KERNEL"
+MSTAR_KERVER="KERVER:3.$(date +%s)"
+MSTAR_BUILDHASH="BUILDHASH:$(perl get_last_commit.pl)"
+MSTAR_BUILDDATE="BUILDDATE:$(date +%Y%m%d%H)"
+
 # Generate a temporary compile.h
 
 ( echo /\* This file is auto generated, version $VERSION \*/
@@ -77,6 +83,11 @@ UTS_TRUNCATE="cut -b -$UTS_LEN"
   echo \#define LINUX_COMPILE_HOST \"`echo $LINUX_COMPILE_HOST | $UTS_TRUNCATE`\"
 
   echo \#define LINUX_COMPILER \"`$CC -v 2>&1 | tail -n 1`\"
+
+  echo \#define KERCODE \"`echo $MSTAR_KERCODE`\"
+  echo \#define KERVER \"`echo $MSTAR_KERVER`\"
+  echo \#define BUILDHASH \"`echo $MSTAR_BUILDHASH`\"
+  echo \#define BUILDDATE \"`echo $MSTAR_BUILDDATE`\"
 ) > .tmpcompile
 
 # Only replace the real compile.h if the new one is different,

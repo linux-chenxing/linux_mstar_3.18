@@ -186,6 +186,10 @@ config PINCTRL_TEGRA114
 	bool
 	select PINCTRL_TEGRA
 
+config PINCTRL_TEGRA124
+	bool
+	select PINCTRL_TEGRA
+
 config PINCTRL_U300
 	bool "U300 pin controller driver"
 	depends on ARCH_U300
@@ -223,6 +227,26 @@ config PINCTRL_S3C64XX
 
 source "drivers/pinctrl/mvebu/Kconfig"
 source "drivers/pinctrl/sh-pfc/Kconfig"
+
+config PINCTRL_MAX77660
+	tristate "MAX77660 Pincontrol support"
+	depends on MFD_MAX77660
+	help
+	  MAX77660 is a PMIC from MAXIM for smartphone and tablets. This PMIC
+
+config PINCTRL_PALMAS
+	tristate "PALMAS Pincontrol support"
+	depends on MFD_PALMAS
+	select PINMUX
+	select GENERIC_PINCONF
+	help
+	  PALMAS is a PMIC series from TI for smartphone and tablets. This PMIC
+	  has some pins i.e. named as GPIOx which can be act as GPIO or in
+	  alternate mode for special functionality. Also these pins can be
+	  configured for open drain, pullup, pull down etc.
+	  Say yes here to get support for pinmux configuration for this PMIC
+	  device.
+
 source "drivers/pinctrl/spear/Kconfig"
 source "drivers/pinctrl/vt8500/Kconfig"
 
@@ -230,6 +254,17 @@ config PINCTRL_XWAY
 	bool
 	depends on SOC_TYPE_XWAY
 	depends on PINCTRL_LANTIQ
+
+config PINCTRL_AS3722
+	bool "Pinctrl and GPIO driver for ams AS3722 PMIC"
+	depends on MFD_AS3722 && GPIOLIB
+	select PINMUX
+	select GENERIC_PINCONF
+	help
+	  AS3722 device supports the configuration of GPIO pins for different
+	  functionality. This driver supports the pinmux, push-pull and
+	  open drain configuration for the GPIO pins of AS3722 devices. It also
+	  supports the GPIO functionality through gpiolib.
 
 endmenu
 

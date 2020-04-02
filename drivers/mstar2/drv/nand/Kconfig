@@ -1,0 +1,36 @@
+
+config MSTAR_NAND
+  select MTD
+  select MTD_BLKDEVS
+  select MTD_OOPS
+
+  select MTD_NAND_PLATFORM
+  select MTD_CMDLINE_PARTS
+  select MTD_UBI
+
+  select MTD_NAND
+  
+  tristate "NAND"
+  default n
+
+help
+    Enable MSTAR FCIE NAND driver
+
+config MTD_SLC_WRITE
+  bool "MTD Write/Read SLC partition"
+  depends on MSTAR_NAND	
+  default n
+  help   
+    Support Write/Read SLC Partition
+    
+config MSTAR_NAND_CHK_VERSION
+  tristate "MStar NAND driver - check version"
+  depends on MSTAR_NAND
+  help
+    MStar NAND driver - check version.    
+config MSTAR_UNFD_BLK
+	bool "mstar unfd ftl block device interface"
+    depends on MSTAR_NAND
+	default n
+	help
+		Enable Mstar unfd_FTL block device interface

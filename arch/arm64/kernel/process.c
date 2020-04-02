@@ -33,6 +33,7 @@
 #include <linux/kallsyms.h>
 #include <linux/init.h>
 #include <linux/cpu.h>
+#include <linux/cpuidle.h>
 #include <linux/elfcore.h>
 #include <linux/pm.h>
 #include <linux/tick.h>
@@ -50,6 +51,8 @@
 #include <asm/processor.h>
 #include <asm/stacktrace.h>
 
+#include <mach/system.h>
+#include <mstar/mpatch_macro.h>
 static void setup_restart(void)
 {
 	/*
@@ -75,14 +78,48 @@ void soft_restart(unsigned long addr)
 	cpu_reset(addr);
 }
 
+
+#if (MP_PLATFORM_PM == 1)
+static void arm_machine_restart(char mode, const char *cmd)
+{
+	/*
+	 * Tell the mm system that we are going to reboot -
+	 * we may need it to insert some 1:1 mappings so that
+	 * soft boot works.
+	 */
+	setup_mm_for_reboot();
+
+#ifndef CONFIG_MP_PLATFORM_ARM
+	/* Clean and invalidate caches */
+	flush_cache_all();
+
+	/* Turn D-cache off */
+	cpu_cache_off();
+
+	/* Push out any further dirty data, and ensure cache is empty */
+	flush_cache_all();
+#endif
+	/*
+	 * Now call the architecture specific reboot code.
+	 */
+	arch_reset(mode, cmd);
+}
+#else
+static void arm_machine_restart(char mode, const char *cmd){}
+#endif
 /*
  * Function pointers to optional machine specific functions
  */
 void (*pm_power_off)(void);
 EXPORT_SYMBOL_GPL(pm_power_off);
 
-void (*arm_pm_restart)(char str, const char *cmd);
+void (*arm_pm_restart)(char str, const char *cmd) = arm_machine_restart;
 EXPORT_SYMBOL_GPL(arm_pm_restart);
+
+
+void (*pm_power_reset)(void);
+EXPORT_SYMBOL(pm_power_reset);
+
 
 void arch_cpu_idle_prepare(void)
 {
@@ -98,9 +135,18 @@ void arch_cpu_idle(void)
 	 * This should do all the clock switching and wait for interrupt
 	 * tricks
 	 */
-	cpu_do_idle();
-	local_irq_enable();
+	if (cpuidle_idle_call()) {
+		cpu_do_idle();
+		local_irq_enable();
+	}
 }
+
+#ifdef CONFIG_HOTPLUG_CPU
+void arch_cpu_idle_dead(void)
+{
+	cpu_die();
+}
+#endif
 
 void machine_shutdown(void)
 {
@@ -117,6 +163,10 @@ void machine_halt(void)
 
 void machine_power_off(void)
 {
+	/* Disable interrupts and preemption */
+	local_irq_disable();
+	preempt_disable();
+
 	machine_shutdown();
 	if (pm_power_off)
 		pm_power_off();
@@ -141,21 +191,98 @@ void machine_restart(char *cmd)
 	while (1);
 }
 
+/*
+ * dump a block of kernel memory from around the given address
+ */
+static void show_data(unsigned long addr, int nbytes, const char *name)
+{
+	int	i, j;
+	int	nlines;
+	u32	*p;
+
+	/*
+	 * don't attempt to dump non-kernel addresses or
+	 * values that are probably just small negative numbers
+	 */
+	if (addr < PAGE_OFFSET || addr > -256UL)
+		return;
+
+	printk("\n%s: %#lx:\n", name, addr);
+
+	/*
+	 * round address down to a 32 bit boundary
+	 * and always dump a multiple of 32 bytes
+	 */
+	p = (u32 *)(addr & ~(sizeof(u32) - 1));
+	nbytes += (addr & (sizeof(u32) - 1));
+	nlines = (nbytes + 31) / 32;
+
+
+	for (i = 0; i < nlines; i++) {
+		/*
+		 * just display low 16 bits of address to keep
+		 * each line of the dump < 80 characters
+		 */
+		printk("%04lx ", (unsigned long)p & 0xffff);
+		for (j = 0; j < 8; j++) {
+			u32	data;
+			if (probe_kernel_address(p, data)) {
+				printk(" ********");
+			} else {
+				printk(" %08x", data);
+			}
+			++p;
+		}
+		printk("\n");
+	}
+}
+
+static void show_extra_register_data(struct pt_regs *regs, int nbytes)
+{
+	mm_segment_t fs;
+	unsigned int i;
+
+	fs = get_fs();
+	set_fs(KERNEL_DS);
+	show_data(regs->pc - nbytes, nbytes * 2, "PC");
+	show_data(regs->regs[30] - nbytes, nbytes * 2, "LR");
+	show_data(regs->sp - nbytes, nbytes * 2, "SP");
+	for (i = 0; i < 30; i++) {
+		char name[4];
+		snprintf(name, sizeof(name), "X%u", i);
+		show_data(regs->regs[i] - nbytes, nbytes * 2, name);
+	}
+	set_fs(fs);
+}
+
 void __show_regs(struct pt_regs *regs)
 {
-	int i;
+	int i, top_reg;
+	u64 lr, sp;
+
+	if (compat_user_mode(regs)) {
+		lr = regs->compat_lr;
+		sp = regs->compat_sp;
+		top_reg = 12;
+	} else {
+		lr = regs->regs[30];
+		sp = regs->sp;
+		top_reg = 29;
+	}
 
 	show_regs_print_info(KERN_DEFAULT);
 	print_symbol("PC is at %s\n", instruction_pointer(regs));
-	print_symbol("LR is at %s\n", regs->regs[30]);
+	print_symbol("LR is at %s\n", lr);
 	printk("pc : [<%016llx>] lr : [<%016llx>] pstate: %08llx\n",
-	       regs->pc, regs->regs[30], regs->pstate);
-	printk("sp : %016llx\n", regs->sp);
-	for (i = 29; i >= 0; i--) {
+	       regs->pc, lr, regs->pstate);
+	printk("sp : %016llx\n", sp);
+	for (i = top_reg; i >= 0; i--) {
 		printk("x%-2d: %016llx ", i, regs->regs[i]);
 		if (i % 2 == 0)
 			printk("\n");
 	}
+	if (!user_mode(regs))
+		show_extra_register_data(regs, 128);
 	printk("\n");
 }
 
@@ -184,7 +311,7 @@ void release_thread(struct task_struct *dead_task)
 
 int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 {
-	fpsimd_save_state(&current->thread.fpsimd_state);
+	fpsimd_preserve_current_state();
 	*dst = *src;
 	return 0;
 }
@@ -205,6 +332,11 @@ int copy_thread(unsigned long clone_flags, unsigned long stack_start,
 		if (is_compat_thread(task_thread_info(p))) {
 			if (stack_start)
 				childregs->compat_sp = stack_start;
+#if (MP_DEBUG_TOOL_KDEBUG == 1)
+#ifdef CONFIG_SHOW_FAULT_TRACE_INFO
+				p->user_ssp = childregs->ARM_sp;
+#endif /*CONFIG_SHOW_FAULT_TRACE_INFO*/
+#endif/*MP_DEBUG_TOOL_KDEBUG*/
 		} else {
 			/*
 			 * Read the current TLS pointer from tpidr_el0 as it may be
@@ -290,6 +422,7 @@ struct task_struct *__switch_to(struct task_struct *prev,
 unsigned long get_wchan(struct task_struct *p)
 {
 	struct stackframe frame;
+	unsigned long stack_page;
 	int count = 0;
 	if (!p || p == current || p->state == TASK_RUNNING)
 		return 0;
@@ -297,9 +430,11 @@ unsigned long get_wchan(struct task_struct *p)
 	frame.fp = thread_saved_fp(p);
 	frame.sp = thread_saved_sp(p);
 	frame.pc = thread_saved_pc(p);
+	stack_page = (unsigned long)task_stack_page(p);
 	do {
-		int ret = unwind_frame(&frame);
-		if (ret < 0)
+		if (frame.sp < stack_page ||
+		    frame.sp >= stack_page + THREAD_SIZE ||
+		    unwind_frame(&frame))
 			return 0;
 		if (!in_sched_functions(frame.pc))
 			return frame.pc;
@@ -328,4 +463,14 @@ unsigned long arch_randomize_brk(struct mm_struct *mm)
 unsigned long randomize_et_dyn(unsigned long base)
 {
 	return randomize_base(base);
+}
+
+void arch_cpu_idle_enter(void)
+{
+	idle_notifier_call_chain(IDLE_START);
+}
+
+void arch_cpu_idle_exit(void)
+{
+	idle_notifier_call_chain(IDLE_END);
 }

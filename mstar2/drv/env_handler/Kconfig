@@ -1,0 +1,21 @@
+config MSTAR_ENABLE_ENV_HANDLER
+        bool "Enable env handler"
+help
+    Enable mstar env handler driver function
+default y
+
+
+config MSTAR_ENV_HANDLER_1
+        string "Env handler"
+depends on MSTAR_ENABLE_ENV_HANDLER    
+help
+    MStar Env handler driver function
+default MBOOT
+
+config MSTAR_ENV_HANDLER_2
+        string "Env handler"
+depends on MSTAR_ENABLE_ENV_HANDLER    
+help
+    MStar Env handler driver function
+default MPOOL
+

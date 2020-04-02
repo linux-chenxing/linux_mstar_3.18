@@ -157,6 +157,12 @@ enum fullness_group {
 	ZS_FULL
 };
 
+#ifdef CONFIG_MP_ZRAM_ZRAM_USING_CMA_PAGES
+extern struct page *mstar_zram_alloc_cma(size_t size, gfp_t flags);
+extern void mstar_zram_free_cma(struct page *free_page);
+extern bool is_mstar_kmalloc(struct page *check_page);
+#endif
+
 /*
  * We assign a page to ZS_ALMOST_EMPTY fullness group when:
  *	n <= N / f, where
@@ -494,7 +500,11 @@ static void free_zspage(struct page *first_page)
 	head_extra = (struct page *)page_private(first_page);
 
 	reset_page(first_page);
+#ifndef CONFIG_MP_ZRAM_ZRAM_USING_CMA_PAGES
 	__free_page(first_page);
+#else
+	mstar_zram_free_cma(first_page);
+#endif
 
 	/* zspage with only 1 system page */
 	if (!head_extra)
@@ -503,10 +513,19 @@ static void free_zspage(struct page *first_page)
 	list_for_each_entry_safe(nextp, tmp, &head_extra->lru, lru) {
 		list_del(&nextp->lru);
 		reset_page(nextp);
+#ifndef CONFIG_MP_ZRAM_ZRAM_USING_CMA_PAGES
 		__free_page(nextp);
+#else
+		mstar_zram_free_cma(nextp);
+#endif
+			
 	}
 	reset_page(head_extra);
+#ifndef CONFIG_MP_ZRAM_ZRAM_USING_CMA_PAGES
 	__free_page(head_extra);
+#else
+	mstar_zram_free_cma(head_extra);
+#endif
 }
 
 /* Initialize a newly allocated zspage */
@@ -575,10 +594,16 @@ static struct page *alloc_zspage(struct size_class *class, gfp_t flags)
 	 * identify the last page.
 	 */
 	error = -ENOMEM;
+	/* we may have several pages need to be allocated(all pages are linked together), and the first page will be first_page */
 	for (i = 0; i < class->pages_per_zspage; i++) {
 		struct page *page;
 
+		/* zram alloc page always "order 0" */
+#ifndef CONFIG_MP_ZRAM_ZRAM_USING_CMA_PAGES
 		page = alloc_page(flags);
+#else
+		page = mstar_zram_alloc_cma(PAGE_SIZE, flags);
+#endif
 		if (!page)
 			goto cleanup;
 
@@ -590,11 +615,11 @@ static struct page *alloc_zspage(struct size_class *class, gfp_t flags)
 			first_page->inuse = 0;
 		}
 		if (i == 1)
-			first_page->private = (unsigned long)page;
+			first_page->private = (unsigned long)page;	// first sub_page
 		if (i >= 1)
-			page->first_page = first_page;
+			page->first_page = first_page;				// sub_pages
 		if (i >= 2)
-			list_add(&page->lru, &prev_page->lru);
+			list_add(&page->lru, &prev_page->lru);		// sub_pages are linked together
 		if (i == class->pages_per_zspage - 1)	/* last page */
 			SetPagePrivate2(page);
 		prev_page = page;

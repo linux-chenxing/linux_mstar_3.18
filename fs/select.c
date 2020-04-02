@@ -12,6 +12,8 @@
  *  24 January 2000
  *     Changed sys_poll()/do_poll() to use PAGE_SIZE chunk-based allocation 
  *     of fds to overcome nfds < 16390 descriptors limit (Tigran Aivazian).
+  *
+  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -27,6 +29,7 @@
 #include <linux/rcupdate.h>
 #include <linux/hrtimer.h>
 #include <linux/sched/rt.h>
+#include <linux/freezer.h>
 
 #include <asm/uaccess.h>
 
@@ -203,7 +206,7 @@ static int __pollwake(wait_queue_t *wait, unsigned mode, int sync, void *key)
 	return default_wake_function(&dummy_wait, mode, sync, key);
 }
 
-static int pollwake(wait_queue_t *wait, unsigned mode, int sync, void *key)
+int pollwake(wait_queue_t *wait, unsigned mode, int sync, void *key)
 {
 	struct poll_table_entry *entry;
 
@@ -212,6 +215,7 @@ static int pollwake(wait_queue_t *wait, unsigned mode, int sync, void *key)
 		return 0;
 	return __pollwake(wait, mode, sync, key);
 }
+EXPORT_SYMBOL(pollwake);
 
 /* Add a new entry */
 static void __pollwait(struct file *filp, wait_queue_head_t *wait_address,
@@ -236,7 +240,8 @@ int poll_schedule_timeout(struct poll_wqueues *pwq, int state,
 
 	set_current_state(state);
 	if (!pwq->triggered)
-		rc = schedule_hrtimeout_range(expires, slack, HRTIMER_MODE_ABS);
+		rc = freezable_schedule_hrtimeout_range(expires, slack,
+							HRTIMER_MODE_ABS);
 	__set_current_state(TASK_RUNNING);
 
 	/*

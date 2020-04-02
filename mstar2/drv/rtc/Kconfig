@@ -1,0 +1,8 @@
+config MSTAR_RTC
+
+tristate "RTC"
+#depends on WATCHDOG
+default n 
+help
+    MStar Watchdog driver function
+    

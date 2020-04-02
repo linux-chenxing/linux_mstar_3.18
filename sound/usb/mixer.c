@@ -939,6 +939,29 @@ static int get_min_max_with_quirks(struct usb_mixer_elem_info *cval,
 		if (get_ctl_value(cval, UAC_GET_RES, (cval->control << 8) | minchn, &cval->res) < 0) {
 			cval->res = 1;
 		} else {
+#if (MP_USB_MSTAR==1)
+			if ( (USB_ID_VENDOR(cval->mixer->chip->usb_id) == 0x0ac8) &&
+				((USB_ID_PRODUCT(cval->mixer->chip->usb_id) == 0x3420) ||
+				(USB_ID_PRODUCT(cval->mixer->chip->usb_id) == 0x3500)) )
+			{
+				//This camera would timeout when it received UAC_SET_RES,
+				//and will stall commands after that.
+				printk("skip UAC_SET_RES for special device...\n");
+			}
+			else
+			{
+				int last_valid_res = cval->res;
+
+				while (cval->res > 1) {
+					if (snd_usb_mixer_set_ctl_value(cval, UAC_SET_RES,
+									(cval->control << 8) | minchn, cval->res / 2) < 0)
+						break;
+					cval->res /= 2;
+				}
+				if (get_ctl_value(cval, UAC_GET_RES, (cval->control << 8) | minchn, &cval->res) < 0)
+					cval->res = last_valid_res;
+			}
+#else
 			int last_valid_res = cval->res;
 
 			while (cval->res > 1) {
@@ -949,6 +972,7 @@ static int get_min_max_with_quirks(struct usb_mixer_elem_info *cval,
 			}
 			if (get_ctl_value(cval, UAC_GET_RES, (cval->control << 8) | minchn, &cval->res) < 0)
 				cval->res = last_valid_res;
+#endif
 		}
 		if (cval->res == 0)
 			cval->res = 1;

@@ -1,0 +1,8 @@
+config MSTAR_CLKM
+
+tristate "MSTAR Clock Manager"
+
+help
+    MStar clock manager driver
+default n
+    

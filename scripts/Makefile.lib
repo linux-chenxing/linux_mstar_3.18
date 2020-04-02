@@ -119,6 +119,18 @@ _c_flags += $(if $(patsubst n%,, \
 		$(CFLAGS_GCOV))
 endif
 
+#
+# Enable address sanitizer flags for kernel except some files or directories
+# we don't want to check (depends on variables KASAN_SANITIZE_obj.o, KASAN_SANITIZE)
+#
+ifeq ($(CONFIG_Kasan_Switch_On),y)
+ifeq ($(CONFIG_KASAN),y)
+_c_flags += $(if $(patsubst n%,, \
+		$(KASAN_SANITIZE_$(basetarget).o)$(KASAN_SANITIZE)y), \
+		$(CFLAGS_KASAN))
+endif
+endif
+
 # If building the kernel in a separate objtree expand all occurrences
 # of -Idir to -I$(srctree)/dir except for absolute paths (starting with '/').
 
@@ -152,6 +164,7 @@ ld_flags       = $(LDFLAGS) $(ldflags-y)
 dtc_cpp_flags  = -Wp,-MD,$(depfile).pre.tmp -nostdinc                    \
 		 -I$(srctree)/arch/$(SRCARCH)/boot/dts                   \
 		 -I$(srctree)/arch/$(SRCARCH)/boot/dts/include           \
+		 $(DTCCPP_FLAGS)                                         \
 		 -undef -D__DTS__
 
 # Finds the multi-part object the current object will be linked into
@@ -273,6 +286,12 @@ $(obj)/%.dtb: $(src)/%.dts FORCE
 
 dtc-tmp = $(subst $(comma),_,$(dot-target).dts.tmp)
 
+# cat
+# ---------------------------------------------------------------------------
+# Concatentate multiple files together
+quiet_cmd_cat = CAT     $@
+cmd_cat = (cat $(filter-out FORCE,$^) > $@) || (rm -f $@; false)
+
 # Bzip2
 # ---------------------------------------------------------------------------
 
@@ -318,7 +337,7 @@ MKIMAGE := $(srctree)/scripts/mkuboot.sh
 
 # SRCARCH just happens to match slightly more than ARCH (on sparc), so reduces
 # the number of overrides in arch makefiles
-UIMAGE_ARCH ?= $(SRCARCH)
+UIMAGE_ARCH ?= $(subst 64,,$(SRCARCH))
 UIMAGE_COMPRESSION ?= $(if $(2),$(2),none)
 UIMAGE_OPTS-y ?=
 UIMAGE_TYPE ?= kernel
@@ -335,6 +354,16 @@ quiet_cmd_uimage = UIMAGE  $(UIMAGE_OUT)
 			-a $(UIMAGE_LOADADDR) -e $(UIMAGE_ENTRYADDR) \
 			-n $(UIMAGE_NAME) -d $(UIMAGE_IN) $(UIMAGE_OUT)
 
+ifeq ($(CONFIG_MSTAR_K6),y)
+#The compress for AARCH64 chip.
+UIMAGE_COMPRESSION1 := "gzip"
+
+      cmd_uimage = $(CONFIG_SHELL) $(MKIMAGE) -A $(UIMAGE_ARCH) -O linux \
+			-C $(UIMAGE_COMPRESSION1) $(UIMAGE_OPTS-y) \
+			-T $(UIMAGE_TYPE) \
+			-a $(UIMAGE_LOADADDR) -e $(UIMAGE_ENTRYADDR) \
+			-n $(UIMAGE_NAME) -d $(UIMAGE_IN).cp.gz $(UIMAGE_OUT)
+endif
 # XZ
 # ---------------------------------------------------------------------------
 # Use xzkern to compress the kernel image and xzmisc to compress other things.

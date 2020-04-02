@@ -30,27 +30,31 @@
 #include <linux/memblock.h>
 #include <linux/sort.h>
 #include <linux/of_fdt.h>
+#include <linux/dma-contiguous.h>
 
-#include <asm/prom.h>
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/sizes.h>
 #include <asm/tlb.h>
 
+#include <asm/mach/arch.h>
+
 #include "mm.h"
 
-static unsigned long phys_initrd_start __initdata = 0;
-static unsigned long phys_initrd_size __initdata = 0;
+unsigned long phys_initrd_start __initdata = 0;
+unsigned long phys_initrd_size __initdata = 0;
 
+extern unsigned long lx_mem_addr;
+extern unsigned long lx_mem_size;
+
+/* FIXME */
+#ifndef CONFIG_MACH_EXUMA
 phys_addr_t memstart_addr __read_mostly = 0;
+#else
+phys_addr_t memstart_addr __read_mostly = 0x80000000;
+#endif
 
-void __init early_init_dt_setup_initrd_arch(unsigned long start,
-					    unsigned long end)
-{
-	phys_initrd_start = start;
-	phys_initrd_size = end - start;
-}
-
+#ifdef CONFIG_BLK_DEV_INITRD
 static int __init early_initrd(char *p)
 {
 	unsigned long start, size;
@@ -60,12 +64,13 @@ static int __init early_initrd(char *p)
 	if (*endp == ',') {
 		size = memparse(endp + 1, NULL);
 
-		phys_initrd_start = start;
-		phys_initrd_size = size;
+		initrd_start = (unsigned long)__va(start);
+		initrd_end = (unsigned long)__va(start + size);
 	}
 	return 0;
 }
 early_param("initrd", early_initrd);
+#endif
 
 #define MAX_DMA32_PFN ((4UL * 1024 * 1024 * 1024) >> PAGE_SHIFT)
 
@@ -109,9 +114,11 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max)
 }
 
 #ifdef CONFIG_HAVE_ARCH_PFN_VALID
+#define PFN_MASK ((1UL << (64 - PAGE_SHIFT)) - 1)
+
 int pfn_valid(unsigned long pfn)
 {
-	return memblock_is_memory(pfn << PAGE_SHIFT);
+	return (pfn & PFN_MASK) == pfn && memblock_is_memory(pfn << PAGE_SHIFT);
 }
 EXPORT_SYMBOL(pfn_valid);
 #endif
@@ -131,6 +138,14 @@ static void arm64_memory_present(void)
 }
 #endif
 
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+extern phys_addr_t arm_lowmem_limit;
+void reserve_page_trace_mem(phys_addr_t beg,phys_addr_t end);
+#endif
+
+#ifdef CONFIG_MSTAR_IPAPOOL
+extern void ipa_contiguous_reserve(void);
+#endif
 void __init arm64_memblock_init(void)
 {
 	u64 *reserve_map, base, size;
@@ -138,13 +153,8 @@ void __init arm64_memblock_init(void)
 	/* Register the kernel text, kernel data and initrd with memblock */
 	memblock_reserve(__pa(_text), _end - _text);
 #ifdef CONFIG_BLK_DEV_INITRD
-	if (phys_initrd_size) {
-		memblock_reserve(phys_initrd_start, phys_initrd_size);
-
-		/* Now convert initrd to virtual addresses */
-		initrd_start = __phys_to_virt(phys_initrd_start);
-		initrd_end = initrd_start + phys_initrd_size;
-	}
+	if (initrd_start)
+		memblock_reserve(__virt_to_phys(initrd_start), initrd_end - initrd_start);
 #endif
 
 	/*
@@ -172,7 +182,30 @@ void __init arm64_memblock_init(void)
 			break;
 		memblock_reserve(base, size);
 	}
+#if 0
+	/* reserve any platform specific memblock areas */
+	if (machine_desc->reserve)
+		machine_desc->reserve();
+#endif
 
+#ifdef CONFIG_MP_DEBUG_TOOL_MEMORY_USAGE_TRACE
+    reserve_page_trace_mem(PHYS_OFFSET, arm_lowmem_limit);
+#endif
+
+#ifndef CONFIG_MP_CMA_PATCH_CMA_DEFAULT_BUFFER_LIMITTED_TO_LX0
+	/* reserve memory for DMA contigouos allocations */
+	// this is original case, we only find default cma_buffer @ whole lowmem(usually @ the backend of lowmem)
+	printk("\033[35mFunction = %s, Line = %d, find cma_default buffer at whole lowmem\033[m\n", __PRETTY_FUNCTION__, __LINE__);
+	dma_contiguous_reserve(arm_dma_limit);
+#else
+	// this is to limit cma default buffer at LX_MEM(LX0)
+	printk("\033[35mFunction = %s, Line = %d, find cma_default buffer at only LX0\033[m\n", __PRETTY_FUNCTION__, __LINE__);
+	dma_contiguous_reserve(min((lx_mem_addr+lx_mem_size), (unsigned long)arm_dma_limit));
+#endif
+
+#ifdef CONFIG_MSTAR_IPAPOOL        
+        ipa_contiguous_reserve();
+#endif
 	memblock_allow_resize();
 	memblock_dump_all();
 }
@@ -283,7 +316,9 @@ void __init mem_init(void)
 	unsigned long reserved_pages, free_pages;
 	struct memblock_region *reg;
 
+#ifdef CONFIG_SWIOTLB
 	arm64_swiotlb_init();
+#endif
 
 	max_mapnr   = pfn_to_page(max_pfn + PHYS_PFN_OFFSET) - mem_map;
 

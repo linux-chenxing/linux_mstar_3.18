@@ -120,4 +120,24 @@ static inline void compaction_unregister_node(struct node *node)
 }
 #endif /* CONFIG_COMPACTION && CONFIG_SYSFS && CONFIG_NUMA */
 
+#ifdef CONFIG_MP_ION_PATCH_MSTAR
+
+struct cmaisolate_control
+{
+	int target_count;
+	unsigned long start_pfn;
+	unsigned long end_pfn;
+	unsigned long base_pfn;
+	unsigned long cma_count;
+	struct list_head *freelist;
+	unsigned long *last_end_pfn;
+	unsigned long *bitmap;
+};
+
+struct compact_control;
+//alanyu
+extern int isolate_descrete_freepages(struct compact_control *cc,
+								struct cmaisolate_control *cmac);
+#endif
+
 #endif /* _LINUX_COMPACTION_H */

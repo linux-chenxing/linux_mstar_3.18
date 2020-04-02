@@ -1,0 +1,7 @@
+
+config IPANIC
+	tristate "ipanic"
+	default n 
+	help
+		dump all kernel and userspace info to external storage device when kernel panic
+

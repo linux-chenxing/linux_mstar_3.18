@@ -207,9 +207,6 @@ config HAVE_DMA_ATTRS
 config HAVE_DMA_CONTIGUOUS
 	bool
 
-config USE_GENERIC_SMP_HELPERS
-	bool
-
 config GENERIC_SMP_IDLE_THREAD
        bool
 
@@ -331,6 +328,7 @@ config HAVE_ARCH_SECCOMP_FILTER
 	  - secure_computing is called from a ptrace_event()-safe context
 	  - secure_computing return value is checked and a return value of -1
 	    results in the system call being skipped immediately.
+	  - seccomp syscall wired up
 
 config SECCOMP_FILTER
 	def_bool y
@@ -390,6 +388,90 @@ config HAVE_UNDERSCORE_SYMBOL_PREFIX
 	  Some architectures generate an _ in front of C symbols; things like
 	  module loading and assembly files need to know about this.
 
+# for CTS test CtsPermissionTestCases
+#     it needs to access /proc/sys/vm/mmap_rnd_bits
+config HAVE_ARCH_MMAP_RND_BITS
+	def_bool y
+	prompt "IF_HAVE_ARCH_MMAP_RND_BITS"
+	help
+	  An arch should select this symbol if it supports setting a variable
+	  number of bits for use in establishing the base address for mmap
+	  allocations, has MMU enabled and provides values for both:
+	  - ARCH_MMAP_RND_BITS_MIN
+	  - ARCH_MMAP_RND_BITS_MAX
+
+config ARCH_MMAP_RND_BITS_MIN
+	depends on HAVE_ARCH_MMAP_RND_BITS
+	int "vaule for mmap_rnd_bits_min"
+	default 8
+
+config ARCH_MMAP_RND_BITS_MAX
+	depends on HAVE_ARCH_MMAP_RND_BITS
+	int "vaule for mmap_rnd_bits_max"
+	default 16
+
+config ARCH_MMAP_RND_BITS_DEFAULT
+	depends on HAVE_ARCH_MMAP_RND_BITS
+	int
+
+config ARCH_MMAP_RND_BITS
+	int "Number of bits to use for ASLR of mmap base address" if EXPERT
+	range ARCH_MMAP_RND_BITS_MIN ARCH_MMAP_RND_BITS_MAX
+	default ARCH_MMAP_RND_BITS_DEFAULT if ARCH_MMAP_RND_BITS_DEFAULT
+	default ARCH_MMAP_RND_BITS_MIN
+	depends on HAVE_ARCH_MMAP_RND_BITS
+	help
+	  This value can be used to select the number of bits to use to
+	  determine the random offset to the base address of vma regions
+	  resulting from mmap allocations. This value will be bounded
+	  by the architecture's minimum and maximum supported values.
+
+	  This value can be changed after boot using the
+	  /proc/sys/vm/mmap_rnd_bits tunable
+
+# for CTS test CtsPermissionTestCases
+#     it needs to access /proc/sys/vm/mmap_rnd_compat_bits
+config HAVE_ARCH_MMAP_RND_COMPAT_BITS
+	def_bool y
+	prompt "IF_HAVE_ARCH_MMAP_RND_COMPAT_BITS"
+	help
+	  An arch should select this symbol if it supports running applications
+	  in compatibility mode, supports setting a variable number of bits for
+	  use in establishing the base address for mmap allocations, has MMU
+	  enabled and provides values for both:
+	  - ARCH_MMAP_RND_COMPAT_BITS_MIN
+	  - ARCH_MMAP_RND_COMPAT_BITS_MAX
+
+config ARCH_MMAP_RND_COMPAT_BITS_MIN
+	depends on HAVE_ARCH_MMAP_RND_COMPAT_BITS
+	int "vaule for mmap_rnd_compat_bits_min"
+	default 8
+
+config ARCH_MMAP_RND_COMPAT_BITS_MAX
+	depends on HAVE_ARCH_MMAP_RND_COMPAT_BITS
+	int "value for mmap_rnd_compat_bits_max"
+	default 16
+
+config ARCH_MMAP_RND_COMPAT_BITS_DEFAULT
+	depends on HAVE_ARCH_MMAP_RND_COMPAT_BITS
+	int
+
+config ARCH_MMAP_RND_COMPAT_BITS
+	int "Number of bits to use for ASLR of mmap base address for compatible applications" if EXPERT
+	range ARCH_MMAP_RND_COMPAT_BITS_MIN ARCH_MMAP_RND_COMPAT_BITS_MAX
+	default ARCH_MMAP_RND_COMPAT_BITS_DEFAULT if ARCH_MMAP_RND_COMPAT_BITS_DEFAULT
+	default ARCH_MMAP_RND_COMPAT_BITS_MIN
+	depends on HAVE_ARCH_MMAP_RND_COMPAT_BITS
+	help
+	  This value can be used to select the number of bits to use to
+	  determine the random offset to the base address of vma regions
+	  resulting from mmap allocations for compatible applications This
+	  value will be bounded by the architecture's minimum and maximum
+	  supported values.
+
+	  This value can be changed after boot using the
+	  /proc/sys/vm/mmap_rnd_compat_bits tunable
+
 #
 # ABI hall of shame
 #
@@ -437,3 +519,26 @@ config COMPAT_OLD_SIGACTION
 	bool
 
 source "kernel/gcov/Kconfig"
+
+menu "Bus support"
+
+config ARM_AMBA
+	bool
+	
+config PCI
+	bool "PCI support" if MIGHT_HAVE_PCI
+	help
+	  Find out whether you have a PCI motherboard. PCI is the name of a
+	  bus system, i.e. the way the CPU talks to the other stuff inside
+	  your box. Other bus systems are ISA, EISA, MicroChannel (MCA) or
+	  VESA. If you have PCI, say Y, otherwise N.
+  
+config PCI_SYSCALL
+       def_bool PCI
+
+
+source "drivers/pci/Kconfig"
+
+source "drivers/pci/pcie/Kconfig"
+
+endmenu

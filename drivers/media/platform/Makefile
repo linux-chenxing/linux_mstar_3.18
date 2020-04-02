@@ -2,6 +2,8 @@
 # Makefile for the video capture/playback device drivers.
 #
 
+GCOV_PROFILE := y
+
 omap2cam-objs	:=	omap24xxcam.o omap24xxcam-dma.o
 
 obj-$(CONFIG_VIDEO_VINO) += indycam.o
@@ -50,4 +52,7 @@ obj-y	+= davinci/
 
 obj-$(CONFIG_ARCH_OMAP)	+= omap/
 
+obj-$(CONFIG_ARCH_TEGRA) += tegra/
+
 ccflags-y += -I$(srctree)/drivers/media/i2c
+ccflags-y += -I$(srctree)/drivers/video/tegra/host

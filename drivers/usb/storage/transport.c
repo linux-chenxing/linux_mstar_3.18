@@ -63,6 +63,7 @@
 #include <linux/blkdev.h>
 #include "../../scsi/sd.h"
 
+#include <mstar/mpatch_macro.h>
 
 /***********************************************************************
  * Data transfer routines
@@ -172,8 +173,38 @@ static int usb_stor_msg_common(struct us_data *us, int timeout)
 	}
  
 	/* wait for the completion of the URB */
+#if defined(CONFIG_SUSPEND) && (MP_USB_STR_PATCH==1)
+	{
+		unsigned long expire;
+		unsigned long total_time = 0;
+
+		expire = timeout ? msecs_to_jiffies(timeout) : MAX_SCHEDULE_TIMEOUT;
+
+		while (1)
+		{
+			timeleft = wait_for_completion_interruptible_timeout(&urb_done, msecs_to_jiffies(0.1*HZ));
+
+			if (timeleft <= 0)
+			{
+				total_time += msecs_to_jiffies(0.1*HZ);
+
+				if(is_suspending())
+				{
+					set_bit(US_FLIDX_DISCONNECTING, &us->dflags);
+					break;
+				}
+
+				if ( (timeleft < 0) || (total_time >= expire) )
+					break;
+			}
+			else
+				break;
+		}
+	}
+#else
 	timeleft = wait_for_completion_interruptible_timeout(
 			&urb_done, timeout ? : MAX_SCHEDULE_TIMEOUT);
+#endif
  
 	clear_bit(US_FLIDX_URB_ACTIVE, &us->dflags);
 
@@ -609,6 +640,12 @@ void usb_stor_invoke_transport(struct scsi_cmnd *srb, struct us_data *us)
 	if (test_bit(US_FLIDX_TIMED_OUT, &us->dflags)) {
 		usb_stor_dbg(us, "-- command was aborted\n");
 		srb->result = DID_ABORT << 16;
+#if (MP_USB_MSTAR==1)
+		if (srb->cmnd[0] == INQUIRY)	//for HD+bad cable, Colin, 090216
+			//us->pusb_dev->isFirstInquiryTimeout = 1;
+			// 20131003, removing HD+cable patch
+			printk("[USB] First Inquiry command timeout!!!\n");
+#endif
 		goto Handle_Errors;
 	}
 
@@ -1251,6 +1288,9 @@ static int usb_stor_reset_common(struct us_data *us,
 {
 	int result;
 	int result2;
+#if defined(CONFIG_SUSPEND) && (MP_USB_STR_PATCH==1)
+	int i;
+#endif
 
 	if (test_bit(US_FLIDX_DISCONNECTING, &us->dflags)) {
 		usb_stor_dbg(us, "No reset during disconnect\n");
@@ -1265,11 +1305,29 @@ static int usb_stor_reset_common(struct us_data *us,
 		return result;
 	}
 
+#if defined(CONFIG_SUSPEND) && (MP_USB_STR_PATCH==1)
+	/* Give the device some time to recover from the reset,
+	 * but don't delay disconnect processing. */
+	for(i=1;i<=60;i++)
+	{
+		long timeleft = wait_event_interruptible_timeout(us->delay_wait,
+			test_bit(US_FLIDX_DISCONNECTING, &us->dflags),
+			0.1*HZ);
+		if(timeleft==0)
+		{
+			if(is_suspending())
+				return -ETIMEDOUT;
+		}
+		else 
+			break;
+	}
+#else
 	/* Give the device some time to recover from the reset,
 	 * but don't delay disconnect processing. */
 	wait_event_interruptible_timeout(us->delay_wait,
 			test_bit(US_FLIDX_DISCONNECTING, &us->dflags),
 			HZ*6);
+#endif
 	if (test_bit(US_FLIDX_DISCONNECTING, &us->dflags)) {
 		usb_stor_dbg(us, "Reset interrupted by disconnect\n");
 		return -EIO;
