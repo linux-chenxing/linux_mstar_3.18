@@ -119,7 +119,7 @@ error:
 int cryptodev_cipher_init(struct cipher_data *out, const char *alg_name,
 				uint8_t *keyp, size_t keylen, int stream, int aead)
 {
-	int ret;
+	int ret = 0;
     AESDMA_DBG("%s %d\n",__FUNCTION__,__LINE__);
 	if (aead == 0) {
 		struct ablkcipher_alg *alg;
@@ -215,7 +215,7 @@ ssize_t cryptodev_cipher_encrypt(struct cipher_data *cdata,
 		const struct scatterlist *src, struct scatterlist *dst,
 		size_t len)
 {
-	int ret;
+	int ret = 0;
 	reinit_completion(&cdata->async.result->completion);
 
     if (cdata->aead == 0) {
@@ -234,7 +234,7 @@ ssize_t cryptodev_cipher_decrypt(struct cipher_data *cdata,
 		const struct scatterlist *src, struct scatterlist *dst,
 		size_t len)
 {
-	int ret;
+	int ret = 0;
     AESDMA_DBG("%s %d\n",__FUNCTION__,__LINE__);
 	reinit_completion(&cdata->async.result->completion);
 	if (cdata->aead == 0) {
@@ -252,7 +252,7 @@ ssize_t cryptodev_cipher_decrypt(struct cipher_data *cdata,
 int cryptodev_hash_init(struct hash_data *hdata, const char *alg_name,
 			int hmac_mode, void *mackey, size_t mackeylen)
 {
-	int ret;
+	int ret = 0;
 	hdata->async.s = crypto_alloc_ahash(alg_name, 0, 0);
 	if (unlikely(IS_ERR(hdata->async.s))) {
 		return -EINVAL;
@@ -318,7 +318,7 @@ void cryptodev_hash_deinit(struct hash_data *hdata)
 
 int cryptodev_hash_reset(struct hash_data *hdata)
 {
-	int ret;
+	int ret = 0;
 	ret = crypto_ahash_init(hdata->async.request);
 	if (unlikely(ret)) {
 		return ret;
@@ -331,7 +331,7 @@ int cryptodev_hash_reset(struct hash_data *hdata)
 ssize_t cryptodev_hash_update(struct hash_data *hdata,
 				struct scatterlist *sg, size_t len)
 {
-	int ret;
+	int ret = 0;
 
 	reinit_completion(&hdata->async.result->completion);
 	ahash_request_set_crypt(hdata->async.request, sg, NULL, len);
@@ -343,7 +343,7 @@ ssize_t cryptodev_hash_update(struct hash_data *hdata,
 
 int cryptodev_hash_final(struct hash_data *hdata, void *output)
 {
-	int ret;
+	int ret = 0;
 	reinit_completion(&hdata->async.result->completion);
 	ahash_request_set_crypt(hdata->async.request, NULL, output, 0);
 	ret = crypto_ahash_final(hdata->async.request);

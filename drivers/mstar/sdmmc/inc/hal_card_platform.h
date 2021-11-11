@@ -95,13 +95,14 @@ void Hal_CARD_PowerOff(PADEmType ePAD, U16_T u16DelayMs);
 
 // Card Detect and GPIO Setting for Card Platform
 //----------------------------------------------------------------------------------------------------------
-U32_T Hal_CARD_GetGPIONum(GPIOEmType eGPIO);
-BOOL_T Hal_CARD_GetGPIOState(GPIOEmType eGPIO);
-void Hal_CARD_SetGPIOState(GPIOEmType eGPIO, BOOL_T bOutputState);
-void Hal_CARD_InitGPIO(GPIOEmType eGPIO, BOOL_T bEnable);
+void Hal_CARD_InitGPIO(GPIOEmType eGPIO, PADEmType ePAD, BOOL_T bEnable);
+BOOL_T Hal_CARD_GetGPIOState(GPIOEmType eGPIO, PADEmType ePAD);
+void Hal_CARD_SetGPIOState(GPIOEmType eGPIO, PADEmType ePAD, BOOL_T bOutputState);
+U32_T Hal_CARD_GetGPIONum(GPIOEmType eGPIO, PADEmType ePAD);
 
-void Hal_CARD_SetGPIOIntAttr(GPIOEmType eGPIO, GPIOOptEmType eGPIOOPT);
-BOOL_T Hal_CARD_GPIOIntFilter(GPIOEmType eGPIO);
+
+void Hal_CARD_SetGPIOIntAttr(GPIOEmType eGPIO, PADEmType ePAD, GPIOOptEmType eGPIOOPT);
+BOOL_T Hal_CARD_GPIOIntFilter(GPIOEmType eGPIO, PADEmType ePAD);
 
 // MIU Setting for Card Platform
 //----------------------------------------------------------------------------------------------------------

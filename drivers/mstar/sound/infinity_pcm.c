@@ -31,11 +31,6 @@
 #include <asm/dma.h>
 #include <asm/io.h>
 #include <ms_platform.h>
-//#include <mach/hardware.h>
-//#include <mach/dma.h>
-//#include <mach/audio.h>
-//#include <cedric/irqs.h>
-//#include <infinity/irqs.h>
 #include "ms_msys.h"
 
 #include "infinity_codec.h"
@@ -73,30 +68,28 @@ struct infinity_pcm_runtime_data
   size_t                remain_count;
 };
 
-static const struct snd_pcm_hardware infinity_pcm_playback_hardware =
+static struct snd_pcm_hardware infinity_pcm_playback_hardware =
 {
   .info				= SNDRV_PCM_INFO_INTERLEAVED,
-  .formats			= SNDRV_PCM_FMTBIT_S16_LE |
-  SNDRV_PCM_FMTBIT_S24_LE |
-  SNDRV_PCM_FMTBIT_S32_LE,
-  .rates				= SNDRV_PCM_RATE_8000_48000,
+  .formats			= SNDRV_PCM_FMTBIT_S16_LE,
+  .rates			= SNDRV_PCM_RATE_8000_48000,
   .rate_min			= 8000,
   .rate_max			= 48000,
   .channels_min		= 1,
   .channels_max		= 2,
   .buffer_bytes_max	= 96 * 1024,
-  .period_bytes_min	= 8 * 1024,
+  .period_bytes_min	= 2 * 1024,
   .period_bytes_max	= 24 * 1024,
   .periods_min		= 4,
   .periods_max		= 8,
-  .fifo_size			= 32,
+  .fifo_size		= 32,
 };
 
-static const struct snd_pcm_hardware infinity_pcm_capture_hardware =
+static struct snd_pcm_hardware infinity_pcm_capture_hardware =
 {
   .info				= SNDRV_PCM_INFO_INTERLEAVED,
   .formats			= SNDRV_PCM_FMTBIT_S16_LE,
-  .rates				= SNDRV_PCM_RATE_8000_48000,
+  .rates			= SNDRV_PCM_RATE_8000_48000,
   .rate_min			= 8000,
   .rate_max			= 48000,
   .channels_min		= 1,
@@ -105,8 +98,8 @@ static const struct snd_pcm_hardware infinity_pcm_capture_hardware =
   .period_bytes_min	= 1 * 1024,
   .period_bytes_max	= 10 * 1024,
   .periods_min		= 4,
-  .periods_max		= 12,
-  .fifo_size			= 32,
+  .periods_max		= 16,
+  .fifo_size		= 32,
 };
 
 
@@ -117,9 +110,9 @@ unsigned int INFINITY_IRQ_ID = 0; //INT_IRQ_AU_SYSTEM;
 
 unsigned long long g_nPlayStartTime = 0;
 unsigned long long g_nCapStartTime = 0;
-//int bPlayFirst = 0;
-//int bCapFirst = 0;
-//int nTstCount = 0;
+EXPORT_SYMBOL_GPL(g_nPlayStartTime);
+EXPORT_SYMBOL_GPL(g_nCapStartTime);
+
 //------------------------------------------------------------------------------
 //  Function
 //------------------------------------------------------------------------------
@@ -132,7 +125,6 @@ static irqreturn_t  infinity_pcm_dma_irq(int irq, void *dev_id)
   struct infinity_pcm_dma_data *dma_data = prtd->dma_data;
 
   unsigned long flags,fgs;
-  //unsigned int size = 0;
   unsigned int state = 0;
   //unsigned long time;
   //snd_pcm_uframes_t offset;
@@ -144,30 +136,26 @@ static irqreturn_t  infinity_pcm_dma_irq(int irq, void *dev_id)
     {
       //time = jiffies_to_msecs(jiffies);
 
-      if (InfinityDmaIsEmpty(dma_data->channel))
+      if (InfinityDmaIsEmpty((BachDmaChannel_e)dma_data->channel))
       {
         prtd->state = DMA_EMPTY;
 
         spin_unlock_irqrestore(&prtd->lock, flags);
 
-		//snd_pcm_stream_lock_irq(substream);
 		snd_pcm_stream_lock_irqsave(substream, fgs);
 		if (snd_pcm_running(substream))
 			snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
         snd_pcm_stream_unlock_irqrestore(substream, fgs);
-		//snd_pcm_stream_unlock_irq(substream);
 
-        //snd_pcm_period_elapsed(substream);
         AUD_PRINTF(PLAYBACK_IRQ_LEVEL, "EMPTY: chanId = %d, T = %d\n",  dma_data->channel, (unsigned int)jiffies_to_msecs(jiffies));
         spin_lock_irqsave(&prtd->lock, flags);
 
       }
-      else if ((prtd->state != DMA_UNDERRUN) && InfinityDmaIsUnderrun(dma_data->channel))
+      else if ((prtd->state != DMA_UNDERRUN) && InfinityDmaIsUnderrun((BachDmaChannel_e)dma_data->channel))
       {
-        //size = BachDmaGetLevelCnt(dma_data->channel);
 
         //BachDmaMaskInt(dma_data->channel, BACH_DMA_INT_OVERRUN, FALSE);
-        InfinityDmaMaskInt(dma_data->channel, BACH_DMA_INT_UNDERRUN, TRUE);
+        InfinityDmaMaskInt((BachDmaChannel_e)dma_data->channel, BACH_DMA_INT_UNDERRUN, TRUE);
 
         prtd->state = DMA_UNDERRUN;
 
@@ -183,12 +171,11 @@ static irqreturn_t  infinity_pcm_dma_irq(int irq, void *dev_id)
   {
     state = prtd->state;
 
-    if ((prtd->state != DMA_UNDERRUN) && InfinityDmaIsUnderrun(dma_data->channel))
+    if ((prtd->state != DMA_UNDERRUN) && InfinityDmaIsUnderrun((BachDmaChannel_e)dma_data->channel))
     {
 
-      InfinityDmaMaskInt(dma_data->channel, BACH_DMA_INT_UNDERRUN, TRUE);
-      InfinityDmaMaskInt(dma_data->channel, BACH_DMA_INT_OVERRUN, FALSE);
-      //BachDmaMaskInt(dma_data->channel, BACH_DMA_INT_FULL, FALSE);
+      InfinityDmaMaskInt((BachDmaChannel_e)dma_data->channel, BACH_DMA_INT_UNDERRUN, TRUE);
+      InfinityDmaMaskInt((BachDmaChannel_e)dma_data->channel, BACH_DMA_INT_OVERRUN, FALSE);
 
       prtd->state = DMA_UNDERRUN;
       spin_unlock_irqrestore(&prtd->lock, flags);
@@ -198,39 +185,35 @@ static irqreturn_t  infinity_pcm_dma_irq(int irq, void *dev_id)
     }
     else if (prtd->state != DMA_FULL)
     {
-      if (InfinityDmaIsFull(dma_data->channel))
+      if (InfinityDmaIsFull((BachDmaChannel_e)dma_data->channel))
       {
-      	//BachDmaMaskInt(dma_data->channel, BACH_DMA_INT_FULL, TRUE);
-      	InfinityDmaMaskInt(dma_data->channel, BACH_DMA_INT_OVERRUN, TRUE);
-        InfinityDmaMaskInt(dma_data->channel, BACH_DMA_INT_UNDERRUN, FALSE);
+        InfinityDmaMaskInt((BachDmaChannel_e)dma_data->channel, BACH_DMA_INT_OVERRUN, TRUE);
+        InfinityDmaMaskInt((BachDmaChannel_e)dma_data->channel, BACH_DMA_INT_UNDERRUN, FALSE);
 
         prtd->state = DMA_FULL;
 
         spin_unlock_irqrestore(&prtd->lock, flags);
-		//snd_pcm_stream_lock_irq(substream);
+
 		snd_pcm_stream_lock_irqsave(substream, fgs);
 	    if (snd_pcm_running(substream))
 		    snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
         snd_pcm_stream_unlock_irqrestore(substream, fgs);
-		//snd_pcm_stream_unlock_irq(substream);
-        //snd_pcm_period_elapsed(substream);
+
         AUD_PRINTF(CAPTURE_IRQ_LEVEL, "FULL: chanId = %d, previous state = %d\n", dma_data->channel, state);
         spin_lock_irqsave(&prtd->lock, flags);
       }
-      else if ((prtd->state != DMA_OVERRUN) && InfinityDmaIsOverrun(dma_data->channel))
+      else if ((prtd->state != DMA_OVERRUN) && InfinityDmaIsOverrun((BachDmaChannel_e)dma_data->channel))
       {
-        InfinityDmaMaskInt(dma_data->channel, BACH_DMA_INT_OVERRUN, TRUE);
-        InfinityDmaMaskInt(dma_data->channel, BACH_DMA_INT_UNDERRUN, FALSE);
+        InfinityDmaMaskInt((BachDmaChannel_e)dma_data->channel, BACH_DMA_INT_OVERRUN, TRUE);
+        InfinityDmaMaskInt((BachDmaChannel_e)dma_data->channel, BACH_DMA_INT_UNDERRUN, FALSE);
 
         prtd->state = DMA_OVERRUN;
-
-        //size = BachDmaGetLevelCnt(dma_data->channel);
 
         spin_unlock_irqrestore(&prtd->lock, flags);
         snd_pcm_period_elapsed(substream);
 
         AUD_PRINTF(PCM_DEBUG_LEVEL, "OVER: chanId = %d, previous state = %d, remainder = 0x%x\n",
-                   dma_data->channel, state, (unsigned int)bytes_to_frames(runtime, InfinityDmaGetLevelCnt(dma_data->channel)));
+                   dma_data->channel, state, (unsigned int)bytes_to_frames(runtime, InfinityDmaGetLevelCnt((BachDmaChannel_e)dma_data->channel)));
         spin_lock_irqsave(&prtd->lock, flags);
       }
     }
@@ -308,6 +291,86 @@ static int infinity_pcm_close(struct snd_pcm_substream *substream)
   return 0;
 }
 
+extern int infinity_audio_clk_enable(void)
+{
+#ifdef CONFIG_OF
+  int num_parents, i;
+  struct clk **snd_clks;
+
+  if(!fClk){
+    fClk = TRUE;
+    AUD_PRINTF(PCM_LEVEL, "enable clk!!!!\n");
+    num_parents = of_clk_get_parent_count(infinity_dma_device->dev.of_node);
+    if(num_parents>0){
+      snd_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
+      if(!snd_clks)
+      {
+        AUD_PRINTF(ERROR_LEVEL, "[%s] Fail to kzalloc!\n", __FUNCTION__ );
+        return 0;
+      }
+      for(i = 0; i < num_parents; i++){
+        snd_clks[i] = of_clk_get(infinity_dma_device->dev.of_node, i);
+        if (IS_ERR(snd_clks[i])){
+          AUD_PRINTF(ERROR_LEVEL, "[%s] Fail to get clk!\n", __FUNCTION__ );
+          kfree(snd_clks);
+          return -EINVAL;
+        }else{
+          clk_prepare_enable(snd_clks[i]);
+        }
+      }
+      kfree(snd_clks);
+    }
+  }
+#endif
+  return 0;
+}
+
+extern int infinity_audio_clk_disable(struct snd_soc_codec *codec, int mode)
+{
+#ifdef CONFIG_OF
+  int num_parents, i;
+  struct clk **snd_clks;
+  u16 nValue;
+
+  if(!(InfinityDmaIsWork(BACH_DMA_READER1)||InfinityDmaIsWork(BACH_DMA_WRITER1)
+    || isDmaWork[SNDRV_PCM_STREAM_PLAYBACK] || isDmaWork[SNDRV_PCM_STREAM_CAPTURE])
+    && fClk){
+    if(mode==0)
+    {
+        nValue = snd_soc_read(codec,AUD_ATOP_PWR);
+        if(nValue & 0x2)
+            return 0;
+    }
+    fClk = FALSE;
+    AUD_PRINTF(PCM_LEVEL, "disable clk!!!!\n");
+    num_parents = of_clk_get_parent_count(infinity_dma_device->dev.of_node);
+    if(num_parents>0){
+      snd_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
+      if(!snd_clks)
+      {
+        AUD_PRINTF(ERROR_LEVEL, "[%s] Fail to kzalloc!\n", __FUNCTION__ );
+        return 0;
+      }
+      for(i = 0; i < num_parents; i++){
+        snd_clks[i] = of_clk_get(infinity_dma_device->dev.of_node, i);
+        if (IS_ERR(snd_clks[i])){
+          AUD_PRINTF(ERROR_LEVEL, "[%s] Fail to get clk!\n", __FUNCTION__ );
+          kfree(snd_clks);
+          return -EINVAL;
+        }else{
+          clk_disable_unprepare(snd_clks[i]);
+        }
+      }
+      kfree(snd_clks);
+    }
+  }
+#endif
+  return 0;
+}
+
+EXPORT_SYMBOL_GPL(infinity_audio_clk_disable);
+
+
 /* this may get called several times by oss emulation */
 static int infinity_pcm_hw_params(struct snd_pcm_substream *substream,
                               struct snd_pcm_hw_params *params)
@@ -318,10 +381,7 @@ static int infinity_pcm_hw_params(struct snd_pcm_substream *substream,
   struct infinity_pcm_runtime_data *prtd = runtime->private_data;
   struct infinity_pcm_dma_data *dma_data;
   int err = 0;
-#ifdef CONFIG_OF
-  int num_parents, i;
-  struct clk **snd_clks;
-#endif
+
 
   AUD_PRINTF(PCM_LEVEL, "%s: stream = %s\n", __FUNCTION__,
              (substream->stream == SNDRV_PCM_STREAM_PLAYBACK ? "PLAYBACK" : "CAPTURE"));
@@ -337,27 +397,10 @@ static int infinity_pcm_hw_params(struct snd_pcm_substream *substream,
   AUD_PRINTF(PCM_LEVEL, "params_access = %d, params_format = %d, params_subformat = %d\n",
              params_access(params), params_format(params), params_subformat(params));
 
-#ifdef CONFIG_OF
-  if(!fClk){
-    fClk = TRUE;
-    AUD_PRINTF(PCM_LEVEL, "enable clk!!!!\n");
-    num_parents = of_clk_get_parent_count(infinity_dma_device->dev.of_node);
-    if(num_parents>0){
-      snd_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
-      for(i = 0; i < num_parents; i++){
-        snd_clks[i] = of_clk_get(infinity_dma_device->dev.of_node, i);
-        if (IS_ERR(snd_clks[i])){
-          AUD_PRINTF(ERROR_LEVEL, "[%s] Fail to get clk!\n", __FUNCTION__ );
-          kfree(snd_clks);
-          return -EINVAL;
-        }else{
-          clk_prepare_enable(snd_clks[i]);
-        }
-      }
-      kfree(snd_clks);
-    }
-  }
-#endif
+  err = infinity_audio_clk_enable();
+  if(err)
+    return err;
+
   dma_data = snd_soc_dai_get_dma_data(rtd->codec_dai, substream);
 
   if (!dma_data)
@@ -375,7 +418,7 @@ static int infinity_pcm_hw_params(struct snd_pcm_substream *substream,
   }
 #endif
 
-  if(!InfinityDmaSetRate(dma_data->channel, InfinityRateFromU32(params_rate(params))))
+  if(!InfinityDmaSetRate((BachDmaChannel_e)dma_data->channel, InfinityRateFromU32(params_rate(params))))
   {
     AUD_PRINTF(ERROR_LEVEL, "%s: dma = %d, rate = %d not supported\n",
                             __FUNCTION__, dma_data->channel, params_rate(params));
@@ -396,7 +439,7 @@ static int infinity_pcm_hw_params(struct snd_pcm_substream *substream,
   err = request_irq(INFINITY_IRQ_ID, //INT_MS_AUDIO_1,
                     infinity_pcm_dma_irq,
                     IRQF_SHARED,
-                    dma_data->name,
+                    (const char*)dma_data->name,
                     (void *)substream);
   if (!err)
   {
@@ -409,8 +452,6 @@ static int infinity_pcm_hw_params(struct snd_pcm_substream *substream,
     AUD_PRINTF(PCM_LEVEL, "dma buf vir addr = 0x%08x\n", (unsigned int)runtime->dma_area);
     AUD_PRINTF(PCM_LEVEL, "dma buf size     = 0x%08x\n", runtime->dma_bytes);
 
-
-    //InfinityDmaReset();
     // Re-set up the underrun and overrun
     if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
     {
@@ -454,10 +495,9 @@ static int infinity_pcm_hw_free(struct snd_pcm_substream *substream)
 {
   struct snd_pcm_runtime *runtime = substream->runtime;
   struct infinity_pcm_runtime_data *prtd = runtime->private_data;
-#ifdef CONFIG_OF
-  int num_parents, i;
-  struct clk **snd_clks;
-#endif
+  struct snd_soc_pcm_runtime *rtd = substream->private_data;
+  struct snd_soc_codec *codec = rtd->codec;
+  int err;
 
   AUD_PRINTF(PCM_LEVEL, "%s: stream = %s\n", __FUNCTION__,
              (substream->stream == SNDRV_PCM_STREAM_PLAYBACK ? "PLAYBACK" : "CAPTURE"));
@@ -468,29 +508,9 @@ static int infinity_pcm_hw_free(struct snd_pcm_substream *substream)
   free_irq(INFINITY_IRQ_ID, (void *)substream);
   isDmaWork[substream->stream] = FALSE;
 
-#ifdef CONFIG_OF
-  if(!(InfinityDmaIsWork(BACH_DMA_READER1)||InfinityDmaIsWork(BACH_DMA_WRITER1)
-    || isDmaWork[SNDRV_PCM_STREAM_PLAYBACK] || isDmaWork[SNDRV_PCM_STREAM_CAPTURE])
-    && fClk){
-    fClk = FALSE;
-    AUD_PRINTF(PCM_LEVEL, "disable clk!!!!\n");
-    num_parents = of_clk_get_parent_count(infinity_dma_device->dev.of_node);
-    if(num_parents>0){
-      snd_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
-      for(i = 0; i < num_parents; i++){
-        snd_clks[i] = of_clk_get(infinity_dma_device->dev.of_node, i);
-        if (IS_ERR(snd_clks[i])){
-          AUD_PRINTF(ERROR_LEVEL, "[%s] Fail to get clk!\n", __FUNCTION__ );
-          kfree(snd_clks);
-          return -EINVAL;
-        }else{
-          clk_disable_unprepare(snd_clks[i]);
-        }
-      }
-      kfree(snd_clks);
-    }
-  }
-#endif
+  err = infinity_audio_clk_disable(codec,0);
+  if(err)
+    return err;
   //omap_dma_unlink_lch(prtd->dma_ch, prtd->dma_ch);
   //omap_free_dma(prtd->dma_ch);
   prtd->dma_data = NULL;
@@ -505,20 +525,10 @@ static int infinity_pcm_prepare(struct snd_pcm_substream *substream)
   struct snd_pcm_runtime *runtime = substream->runtime;
   struct infinity_pcm_runtime_data *prtd = runtime->private_data;
   struct infinity_pcm_dma_data *dma_data = prtd->dma_data;
-  //unsigned long flags;
   int ret = 0;
-  //ssize_t runtime_period = frames_to_bytes(runtime, runtime->period_size);
-  //ssize_t runtime_buffer = frames_to_bytes(runtime, runtime->buffer_size);
   AUD_PRINTF(PCM_LEVEL, "%s: stream = %s, channel = %s\n", __FUNCTION__,
              (substream->stream == SNDRV_PCM_STREAM_PLAYBACK ? "PLAYBACK" : "CAPTURE"), dma_data->name);
- /* if(substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-  {
-      //AUD_PRINTF(ERROR_LEVEL, "Prepare Time = %llu\n", Chip_Get_US_Ticks());
-	  bPlayFirst = 1;
-  }
-  else
-	  bCapFirst = 1;
-*/
+
   return ret;
 }
 
@@ -529,6 +539,8 @@ static int infinity_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
   struct infinity_pcm_dma_data *dma_data = prtd->dma_data;
   unsigned long flags;
   int ret = 0;
+  struct timespec   tv;
+
 
   AUD_PRINTF(PCM_LEVEL, "%s: stream = %s, channel = %s, cmd = %d\n", __FUNCTION__,
              (substream->stream == SNDRV_PCM_STREAM_PLAYBACK ? "PLAYBACK" : "CAPTURE"), dma_data->name, cmd);
@@ -542,19 +554,24 @@ static int infinity_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
   case SNDRV_PCM_TRIGGER_START:
   case SNDRV_PCM_TRIGGER_RESUME:
   case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
-    InfinityDmaStartChannel(dma_data->channel);
+    InfinityDmaStartChannel((BachDmaChannel_e)dma_data->channel);
 
     if(cmd==SNDRV_PCM_TRIGGER_START)
     {
       if(substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
       {
         //AUD_PRINTF(ERROR_LEVEL, "Play Trig Time = %llu\n",Chip_Get_US_Ticks());
-        g_nPlayStartTime = Chip_Get_US_Ticks();
+        //g_nPlayStartTime = Chip_Get_US_Ticks();
+        do_posix_clock_monotonic_gettime(&tv);
+        g_nPlayStartTime = (unsigned long long)tv.tv_sec * 1000000LL + (unsigned long long) (tv.tv_nsec/1000LL);
+        //AUD_PRINTF(ERROR_LEVEL, "Play Trig Time = %llu, old %llu\n",g_nPlaySt
       }
       else
       {
-        //AUD_PRINTF(ERROR_LEVEL, "Cap Trig Time = %llu\n",Chip_Get_US_Ticks());
-        g_nCapStartTime = Chip_Get_US_Ticks();
+        //AUD_PRINTF(ERROR_LEVEL, "Cap Trig Time = %llu\n",Chip_Get_US_Ticks())
+        //g_nCapStartTime = Chip_Get_US_Ticks();
+        do_posix_clock_monotonic_gettime(&tv);
+        g_nCapStartTime = (unsigned long long)tv.tv_sec * 1000000LL + (unsigned long long) (tv.tv_nsec/1000LL);
       }
     }
     break;
@@ -566,13 +583,22 @@ static int infinity_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
     prtd->dma_level_count = 0;
     prtd->remain_count = 0;
     prtd->state = 0;
-    if(cmd==SNDRV_PCM_TRIGGER_STOP && substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+    if(cmd==SNDRV_PCM_TRIGGER_STOP)
+    {
+	  if(substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+	  {
       g_nPlayStartTime = 0;
+	  }
+	  else
+	  {
+	    g_nCapStartTime = 0;
+	  }
+    }
 
     if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-      InfinityDmaMaskInt(dma_data->channel, BACH_DMA_INT_OVERRUN, TRUE);
+      InfinityDmaMaskInt((BachDmaChannel_e)dma_data->channel, BACH_DMA_INT_OVERRUN, TRUE);
     else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
-      InfinityDmaMaskInt(dma_data->channel, BACH_DMA_INT_UNDERRUN, TRUE);
+      InfinityDmaMaskInt((BachDmaChannel_e)dma_data->channel, BACH_DMA_INT_UNDERRUN, TRUE);
     else
     {
       ret = -EINVAL;
@@ -582,7 +608,7 @@ static int infinity_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
    // if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
    //   InfinityDmaMaskInt(dma_data->channel, BACH_DMA_INT_EMPTY, TRUE);
 
-    InfinityDmaStopChannel(dma_data->channel);
+    InfinityDmaStopChannel((BachDmaChannel_e)dma_data->channel);
 
     break;
   default:
@@ -608,23 +634,21 @@ static snd_pcm_uframes_t infinity_pcm_pointer(struct snd_pcm_substream *substrea
 
   if (SNDRV_PCM_STREAM_PLAYBACK == substream->stream)
   {
-    //spin_lock(&prtd->lock);
     spin_lock_irqsave(&prtd->lock, flags);
 
-    last_dma_count_level = InfinityDmaGetLevelCnt(dma_data->channel);
+    last_dma_count_level = InfinityDmaGetLevelCnt((BachDmaChannel_e)dma_data->channel);
     //udelay(500);
     if (prtd->dma_level_count > runtime->dma_bytes * 2)
       prtd->dma_level_count -= runtime->dma_bytes;
     offset = bytes_to_frames(runtime, ((prtd->dma_level_count - last_dma_count_level - prtd->remain_count) % runtime->dma_bytes));
 
-    //spin_unlock(&prtd->lock);
     spin_unlock_irqrestore(&prtd->lock, flags);
   }
   else if (SNDRV_PCM_STREAM_CAPTURE == substream->stream)
   {
     spin_lock_irqsave(&prtd->lock, flags);
 
-    last_dma_count_level = InfinityDmaGetLevelCnt(dma_data->channel);
+    last_dma_count_level = InfinityDmaGetLevelCnt((BachDmaChannel_e)dma_data->channel);
     //udelay(5000);
 
 /*
@@ -652,11 +676,10 @@ static int infinity_pcm_copy(struct snd_pcm_substream *substream,
                          void __user *dst, snd_pcm_uframes_t count)
 {
   struct snd_pcm_runtime *runtime = substream->runtime;
-//	struct snd_soc_pcm_runtime *rtd = substream->private_data;
   struct infinity_pcm_runtime_data *prtd = runtime->private_data;
   struct infinity_pcm_dma_data *dma_data = prtd->dma_data;
   unsigned long flags;
-  char *hwbuf = runtime->dma_area + frames_to_bytes(runtime, pos);
+  unsigned char *hwbuf = runtime->dma_area + frames_to_bytes(runtime, pos);
 
   unsigned long nCnt, nLevelCnt;
 
@@ -668,27 +691,20 @@ static int infinity_pcm_copy(struct snd_pcm_substream *substream,
     if (copy_from_user(hwbuf, dst, frames_to_bytes(runtime, count)))
       return -EFAULT;
 
-    //spin_lock(&prtd->lock);
     spin_lock_irqsave(&prtd->lock, flags);
     Chip_Flush_MIU_Pipe();
-    nLevelCnt = InfinityDmaGetLevelCnt(dma_data->channel);
-    nCnt = InfinityDmaTrigLevelCnt(dma_data->channel, (frames_to_bytes(runtime, count) + prtd->remain_count));
+    nLevelCnt = InfinityDmaGetLevelCnt((BachDmaChannel_e)dma_data->channel);
+    nCnt = InfinityDmaTrigLevelCnt((BachDmaChannel_e)dma_data->channel, (frames_to_bytes(runtime, count) + prtd->remain_count));
     if (prtd->state == DMA_EMPTY)
     {
-      InfinityDmaClearInt(dma_data->channel);
+      InfinityDmaClearInt((BachDmaChannel_e)dma_data->channel);
       prtd->state = DMA_NORMAL;
     }
 
-    /*if(bPlayFirst)
-    {
-	  AUD_PRINTF(ERROR_LEVEL, "Play Time = %llu,offset %d,count %d\n",Chip_Get_US_Ticks(),frames_to_bytes(runtime, pos),frames_to_bytes(runtime, count));
-     // g_nPlayStartTime = Chip_Get_US_Ticks();
-      bPlayFirst = 0;
-    }*/
 
     if (((nLevelCnt + nCnt)  >= (runtime->dma_bytes - frames_to_bytes(runtime, runtime->period_size))) && snd_pcm_running(substream))
     {
-        InfinityDmaMaskInt(dma_data->channel, BACH_DMA_INT_UNDERRUN, FALSE);
+        InfinityDmaMaskInt((BachDmaChannel_e)dma_data->channel, BACH_DMA_INT_UNDERRUN, FALSE);
         prtd->state = DMA_NORMAL;
     }
 
@@ -705,7 +721,6 @@ static int infinity_pcm_copy(struct snd_pcm_substream *substream,
       DmaMaskInt(dma_data->channel, BACH_DMA_INT_EMPTY, FALSE);
     }
 #endif
-    //spin_unlock(&prtd->lock);
     spin_unlock_irqrestore(&prtd->lock, flags);
   }
   else if (SNDRV_PCM_STREAM_CAPTURE == substream->stream)
@@ -714,20 +729,13 @@ static int infinity_pcm_copy(struct snd_pcm_substream *substream,
       return -EFAULT;
 
     spin_lock_irqsave(&prtd->lock, flags);
-    nCnt = InfinityDmaTrigLevelCnt(dma_data->channel, frames_to_bytes(runtime, count) + prtd->remain_count);
+    nCnt = InfinityDmaTrigLevelCnt((BachDmaChannel_e)dma_data->channel, frames_to_bytes(runtime, count) + prtd->remain_count);
     if (prtd->state == DMA_FULL)
     {
-      InfinityDmaClearInt(dma_data->channel);
+      InfinityDmaClearInt((BachDmaChannel_e)dma_data->channel);
       prtd->state = DMA_NORMAL;
       AUD_PRINTF(PCM_LEVEL, "%s: FULL Clear\n", __FUNCTION__);
     }
-
-    /*if(bCapFirst)
-    {
-	  AUD_PRINTF(ERROR_LEVEL, "Cap Time = %llu\n",Chip_Get_US_Ticks());
-	  //g_nCapStartTime = Chip_Get_US_Ticks();
-	  bCapFirst = 0;
-    }*/
 
 /*
     if ((prtd->dma_level_count%runtime->dma_bytes) != frames_to_bytes(runtime, pos))
@@ -746,7 +754,7 @@ static int infinity_pcm_copy(struct snd_pcm_substream *substream,
   }
 
   AUD_PRINTF(PCM_DEBUG_LEVEL, "frame_pos = 0x%x, frame_count = 0x%x, framLevelCnt = 0x%x, T = %d\n",
-             (unsigned int)pos, (unsigned int)count, InfinityDmaGetLevelCnt(dma_data->channel)/4, jiffies_to_msecs(jiffies));
+             (unsigned int)pos, (unsigned int)count, InfinityDmaGetLevelCnt((BachDmaChannel_e)dma_data->channel)/4, jiffies_to_msecs(jiffies));
 
  // AUD_PRINTF(TRACE_LEVEL, "Out BACH_DMA1_CTRL_0 = 0x%x,  BACH_DMA1_CTRL_8 = 0x%x, level count = %d\n",
  //		InfinityReadReg(BACH_REG_BANK1, BACH_DMA1_CTRL_0), InfinityReadReg(BACH_REG_BANK1, BACH_DMA1_CTRL_8), InfinityDmaGetLevelCnt(prtd->dma_data->channel));
@@ -770,7 +778,7 @@ static S32 msb2501_pcm_mmap(struct snd_pcm_substream *substream, struct vm_area_
 
 static struct snd_pcm_ops infinity_pcm_ops =
 {
-  .open		    = infinity_pcm_open, //msb2501_pcm_open,
+  .open		    = infinity_pcm_open,
   .close		  = infinity_pcm_close,
   .ioctl		  = snd_pcm_lib_ioctl,
   .hw_params	= infinity_pcm_hw_params,
@@ -779,7 +787,6 @@ static struct snd_pcm_ops infinity_pcm_ops =
   .trigger	  = infinity_pcm_trigger,
   .pointer	  = infinity_pcm_pointer,
   .copy		    = infinity_pcm_copy,
-  //.mmap		    = msb2501_pcm_mmap,
 };
 
 static u64 infinity_pcm_dmamask = DMA_BIT_MASK(64);
@@ -836,10 +843,6 @@ static int infinity_pcm_preallocate_dma_buffer(struct snd_pcm *pcm,
   buf->dev.type = SNDRV_DMA_TYPE_DEV;
   buf->dev.dev = pcm->card->dev;
   buf->private_data = NULL;
- // buf->area = dma_alloc_coherent(pcm->card->dev, PAGE_ALIGN(size),
- //                                &buf->addr, GFP_KERNEL);
-
-
   buf->area = alloc_dmem(name, PAGE_ALIGN(size),&buf->addr);
 
   if (!buf->area)
@@ -881,11 +884,7 @@ static void infinity_pcm_free_dma_buffers(struct snd_pcm *pcm)
     {
       snprintf(name, 16, "pcmC%dD%dc", pcm->card->number, pcm->device);
     }
-    else
-      return;
 
-    //dma_free_coherent(pcm->card->dev, buf->bytes,
-    //
     free_dmem(name, buf->bytes, buf->area, buf->addr);
     buf->area = NULL;
   }
@@ -895,8 +894,6 @@ static int infinity_pcm_new(struct snd_soc_pcm_runtime *rtd)
 {
   struct snd_card *card = rtd->card->snd_card;
   struct snd_pcm *pcm = rtd->pcm;
-  //struct snd_pcm_substream *substream = NULL;
-  //struct snd_dma_buffer *buf = NULL;
   int ret = 0;
 
   AUD_PRINTF(PLATFORM_LEVEL, "%s: snd_pcm device id = %d\r\n", __FUNCTION__, pcm->device);
@@ -936,22 +933,6 @@ static struct device *audio_dev;
 static int infinity_pcm_probe(struct snd_soc_platform *platform)
 {
   AUD_PRINTF(PLATFORM_LEVEL, "%s: platform = %s\n", __FUNCTION__, dev_name(platform->dev));
-/*
-  audio_class = class_create(THIS_MODULE, audio_classname);
-  if (platform->card->snd_card && !IS_ERR(audio_class)) {
-    audio_dev = device_create(audio_class, NULL,
-					       MKDEV(CONFIG_SND_MAJOR, SNDRV_MINOR(platform->card->snd_card->number, SNDRV_DEVICE_TYPE_PCM_PLAYBACK)), NULL,
-					       "XXX%i", platform->card->snd_card->number);
-		if (IS_ERR(audio_dev))
-			AUD_PRINTF(ERROR_LEVEL, "XXXXXXXXXXXXXXXXXXX\r\n");
-
-    sysfs_create_link(&audio_dev->kobj, &audio_dev->kobj, "YYY");
-
-	}else
-	{
-      	AUD_PRINTF(ERROR_LEVEL, "YYYYYYYYYYY\r\n");
-  }
-*/
 
   InfinityDmaReset();
   AUD_PRINTF(PLATFORM_LEVEL, "Dma reset\n");
@@ -977,7 +958,7 @@ static int infinity_pcm_resume(struct snd_soc_dai *dai)
   struct snd_pcm_runtime *runtime;
   struct infinity_pcm_runtime_data *prtd;
   struct infinity_pcm_dma_data *dma_data;
-  struct snd_soc_pcm_runtime *rtd;
+  //struct snd_soc_pcm_runtime *rtd;
   //struct snd_soc_codec *codec;
 
   int stream, i = 0;
@@ -999,7 +980,7 @@ static int infinity_pcm_resume(struct snd_soc_dai *dai)
 
         runtime = substream->runtime;
         prtd = runtime->private_data;
-        rtd = substream->private_data;
+        //rtd = substream->private_data;
         //codec = rtd->codec;
 
         if (prtd->dma_data)
@@ -1010,12 +991,8 @@ static int infinity_pcm_resume(struct snd_soc_dai *dai)
            * reprogramming while looping the buffer
            */
 
-          InfinityDmaSetRate(dma_data->channel, InfinityRateFromU32(runtime->rate));
+          InfinityDmaSetRate((BachDmaChannel_e)dma_data->channel, InfinityRateFromU32(runtime->rate));
 
-
-          //SysInit();
-          //DmaReset();
-          //DmaReInit(dma_data->channel);
           InfinityDmaInitChannel(dma_data->channel,
                              (runtime->dma_addr - MIU0_OFFSET),
                              runtime->dma_bytes,
@@ -1076,6 +1053,9 @@ static struct snd_soc_platform_driver infinity_soc_platform =
 static int infinity_platform_probe(struct platform_device *pdev)
 {
   struct resource *res_irq;
+  u32 val;
+  s32 ret;
+
 
   AUD_PRINTF(TRACE_LEVEL, "%s\n", __FUNCTION__);
 
@@ -1083,7 +1063,6 @@ static int infinity_platform_probe(struct platform_device *pdev)
   if (res_irq)
   {
 		INFINITY_IRQ_ID = res_irq->start;
-		//port->irq = res_irq->start;
 		AUD_PRINTF(TRACE_LEVEL, "Platform get resource IORESOURCE_IRQ = 0x%x\n", INFINITY_IRQ_ID);
   }
   else
@@ -1094,6 +1073,20 @@ static int infinity_platform_probe(struct platform_device *pdev)
     if (!INFINITY_IRQ_ID)
 		  return -EINVAL;
 
+  }
+
+  ret = of_property_read_u32(pdev->dev.of_node, "playback-dma-buffer", &val);
+  if (ret == 0)
+  {
+    AUD_PRINTF(TRACE_LEVEL, "Get playback-dma-buffer = %d\n", val);
+    infinity_pcm_playback_hardware.buffer_bytes_max = val;
+  }
+
+  ret = of_property_read_u32(pdev->dev.of_node, "capture-dma-buffer", &val);
+  if (ret == 0)
+  {
+    AUD_PRINTF(TRACE_LEVEL, "Get capture-dma-buffer = %d\n", val);
+    infinity_pcm_capture_hardware.buffer_bytes_max = val;
   }
   //dev_set_name(&pdev->dev, "infinity-platform");
 
@@ -1138,7 +1131,7 @@ static int __init infinity_dma_init(void)
     return -ENOMEM;
   }
 
-  np = of_find_compatible_node(NULL, NULL, "mstar,infinity-audio");
+  np = of_find_compatible_node(NULL, NULL, "mstar,infinity3-audio");
   if(np)
   {
     infinity_dma_device->dev.of_node = of_node_get(np);
@@ -1173,7 +1166,7 @@ module_init(infinity_dma_init);
 module_exit(infinity_dma_exit);
 
 #endif
-
-MODULE_AUTHOR("Roger Lai, roger.lai@mstarsemi.com");
-MODULE_DESCRIPTION("iNfinity Bach PCM DMA module");
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Trevor Wu, trevor.wu@mstarsemi.com");
+MODULE_DESCRIPTION("iNfinity3 Bach PCM DMA module");
 

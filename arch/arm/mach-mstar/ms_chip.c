@@ -26,6 +26,7 @@
 #include "_ms_private.h"
 #include "ms_platform.h"
 #include "ms_version.h"
+#include "registers.h"
 
 #define UNUSED(var) (void)((var) = (var))
 
@@ -458,7 +459,7 @@ static int _default_get_storage_type(void)
 
 static int _default_get_package_type(void)
 {
-	return (int)MS_PACKAGE_UNKNOWN;
+	return 0;
 }
 
 
@@ -558,14 +559,14 @@ int Chip_Function_Set(int function_id, int param)
 	return chip_funcs.chip_function_set(function_id,param);
 }
 
-MS_STORAGE_TYPE Chip_Get_Storage_Type(void)
+int Chip_Get_Storage_Type(void)
 {
-	return (MS_STORAGE_TYPE)chip_funcs.chip_get_storage_type();
+	return (int)chip_funcs.chip_get_storage_type();
 }
 
-MS_PACKAGE_TYPE Chip_Get_Package_Type(void)
+int Chip_Get_Package_Type(void)
 {
-	return (MS_PACKAGE_TYPE)chip_funcs.chip_get_package_type();
+	return (int)chip_funcs.chip_get_package_type();
 }
 
 u64 Chip_Get_US_Ticks(void)

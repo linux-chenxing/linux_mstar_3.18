@@ -194,9 +194,13 @@ static int gic_set_type(struct irq_data *d, unsigned int type)
 	/* Interrupt configuration for SGIs can't be changed */
 	if (gicirq < 16)
 		return -EINVAL;
-
+#if !(defined(CONFIG_ARCH_INFINITY) || defined(CONFIG_ARCH_INFINITY3))
 	if (type != IRQ_TYPE_LEVEL_HIGH && type != IRQ_TYPE_EDGE_RISING)
 		return -EINVAL;
+#else
+    if (gicirq < 64 && type != IRQ_TYPE_LEVEL_HIGH)
+        return -EINVAL;
+#endif
 
 	raw_spin_lock(&irq_controller_lock);
 

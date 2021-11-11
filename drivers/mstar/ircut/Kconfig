@@ -1,6 +1,5 @@
 config MS_IRCUT
         tristate "ircut driver"
-	depends on ARCH_INFINITY
         help
           Say Y here to enable the driver for the ircut.
 

@@ -21,8 +21,9 @@
 
 
 #define MDRV_HVSP_CROP_NUM  2
-#define SCL_DELAY2FRAMEINDOUBLEBUFFERMode 0
 #define DNRBufferMode 1 // depend on DNR Buffer
+#define IPMPATH
+#define PriMaskNum 10
 //-------------------------------------------------------------------------------------------------
 //  Defines & Structure
 //-------------------------------------------------------------------------------------------------
@@ -54,11 +55,23 @@ typedef enum
 
 typedef enum
 {
-    E_MDRV_HVSP_DNR_R  = 1, // only read
-    E_MDRV_HVSP_DNR_W  = 2, // only write
-    E_MDRV_HVSP_DNR_RW = 3, // RW open
-    E_MDRV_HVSP_DNR_NUM,    // not open
-}EN_MDRV_HVSP_DNR_TYPE;
+    E_MDRV_HVSP_MCNR_YCM_R  = 0x1,    ///< IP only read
+    E_MDRV_HVSP_MCNR_YCM_W  = 0x2,    ///< IP only write
+    E_MDRV_HVSP_MCNR_YCM_RW = 0x3,    ///< IP R/W
+    E_MDRV_HVSP_MCNR_CIIR_R = 0x4,    ///< IP only read
+    E_MDRV_HVSP_MCNR_CIIR_W = 0x8,    ///< IP only write
+    E_MDRV_HVSP_MCNR_CIIR_RW = 0xC,    ///< IP R/W
+    E_MDRV_HVSP_MCNR_NON = 0x10,    ///< IP none open
+}EN_MDRV_HVSP_MCNR_TYPE;
+
+typedef enum
+{
+    E_MDRV_HVSP_IPMPATH_R  = 0x1,    ///< IP only read
+    E_MDRV_HVSP_IPMPATH_W  = 0x2,    ///< IP only write
+    E_MDRV_HVSP_IPMPATH_RW = 0x3,    ///< IP R/W
+    E_MDRV_HVSP_IPMPATH_NON = 0x10,    ///< IP none open
+}EN_MDRV_HVSP_IPMPATH_TYPE;
+
 
 typedef enum
 {
@@ -110,6 +123,11 @@ typedef enum
     EN_MDRV_HVSP_FBMG_SET_DNR_COMDE_ON    = 0x200,
     EN_MDRV_HVSP_FBMG_SET_DNR_COMDE_OFF   = 0x400,
     EN_MDRV_HVSP_FBMG_SET_DNR_COMDE_265OFF   = 0x800,
+    EN_MDRV_HVSP_FBMG_SET_PRVCROP_ON      = 0x1000,
+    EN_MDRV_HVSP_FBMG_SET_PRVCROP_OFF     = 0x2000,
+    EN_MDRV_HVSP_FBMG_SET_CIIR_ON      = 0x4000,
+    EN_MDRV_HVSP_FBMG_SET_CIIR_OFF     = 0x8000,
+    EN_MDRV_HVSP_FBMG_SET_LOCK          = 0x10000,
 }EN_MDRV_HVSP_FBMG_SET_TYPE;
 typedef struct
 {
@@ -142,8 +160,10 @@ typedef struct
 
 typedef struct
 {
-    EN_MDRV_HVSP_DNR_TYPE enRW;
-    unsigned long u32PhyAddr;
+    EN_MDRV_HVSP_MCNR_TYPE enRW;
+    unsigned long u32YCPhyAddr;
+    unsigned long u32MPhyAddr;
+    unsigned long u32CIIRPhyAddr;
     unsigned short u16Width;
     unsigned short u16Height;
     unsigned long  u32MemSize;
@@ -187,6 +207,12 @@ typedef struct
     EN_MDRV_HVSP_OSD_LOC_TYPE enOSD_loc;    ///< OSD locate
     ST_MDRV_HVSP_OSD_ONOFF_CONFIG stOsdOnOff;
 }ST_MDRV_HVSP_OSD_CONFIG;
+typedef struct
+{
+    unsigned char bMask; ///<Mask enable
+    unsigned char u8idx; ///<mask id
+    ST_MDRV_HVSP_WINDOW_CONFIG stMaskWin;      ///< Mask info
+}ST_MDRV_HVSP_PRIMASK_CONFIG;
 
 typedef struct
 {
@@ -221,9 +247,9 @@ typedef struct
 }ST_MDRV_HVSP_SCINFORM_CONFIG;
 typedef struct
 {
-    unsigned char   u8Cmd;      ///< register value
     unsigned long   u32Size;    ///< number
     unsigned long   u32Addr;    ///< bank&addr
+    unsigned char   u8Cmd;      ///< register value
 }ST_MDRV_HVSP_MISC_CONFIG;
 
 //-------------------------------------------------------------------------------------------------
@@ -235,8 +261,11 @@ typedef struct
 #define INTERFACE
 #endif
 INTERFACE unsigned char MDrv_HVSP_Init(EN_MDRV_HVSP_ID_TYPE enHVSP_ID, ST_MDRV_HVSP_INIT_CONFIG *pCfg);
+INTERFACE unsigned char MDrv_HVSP_Exit(unsigned char bCloseISR);
 INTERFACE void MDrv_HVSP_Release(EN_MDRV_HVSP_ID_TYPE enHVSP_ID);
-INTERFACE void MDrv_VIP_SetDNRConpressForDebug(unsigned char bEn);
+INTERFACE void MDrv_HVSP_SetPriMaskInstId(unsigned char u8Id);
+INTERFACE void MDrv_HVSP_Open(EN_MDRV_HVSP_ID_TYPE enHVSP_ID);
+INTERFACE void MDrv_VIP_SetMCNRConpressForDebug(unsigned char bEn);
 INTERFACE unsigned char MDrv_HVSP_SetOSDConfig(EN_MDRV_HVSP_ID_TYPE enHVSP_ID, ST_MDRV_HVSP_OSD_CONFIG*pCfg);
 INTERFACE unsigned char MDrv_HVSP_SetInputConfig(EN_MDRV_HVSP_ID_TYPE enHVSP_ID, ST_MDRV_HVSP_INPUT_CONFIG *pCfg);
 INTERFACE void MDrv_HVSP_SetPatTgenStatus(unsigned char bEn);
@@ -248,7 +277,6 @@ INTERFACE void MDrv_HVSP_SetMemoryAllocateReady(unsigned char bEn);
 INTERFACE unsigned char MDrv_HVSP_GetSCLInform(EN_MDRV_HVSP_ID_TYPE enHVSP_ID, ST_MDRV_HVSP_SCINFORM_CONFIG *pstCfg);
 INTERFACE void MDrv_HVSP_IDCLKRelease(ST_MDRV_HVSP_CLK_CONFIG* stclk);
 INTERFACE unsigned char MDrv_HVSP_SetMiscConfigForKernel(ST_MDRV_HVSP_MISC_CONFIG *pCfg);
-INTERFACE unsigned long MDrv_HVSP_HWMonitor(unsigned char u8flag);
 INTERFACE unsigned char MDrv_HVSP_InputVSyncMonitor(void);
 INTERFACE void MDrv_HVSP_SetPollWait
     (void *filp, void *pWaitQueueHead, void *pstPollQueue);
@@ -256,18 +284,25 @@ INTERFACE unsigned char MDrv_HVSP_Suspend(EN_MDRV_HVSP_ID_TYPE enHVSP_ID, ST_MDR
 INTERFACE unsigned char MDrv_HVSP_Resume(EN_MDRV_HVSP_ID_TYPE enHVSP_ID, ST_MDRV_HVSP_SUSPEND_RESUME_CONFIG *pCfg);
 INTERFACE ssize_t MDrv_HVSP_ClkFrameworkShow(char *buf,ST_MDRV_HVSP_CLK_CONFIG* stclk);
 INTERFACE ssize_t MDrv_HVSP_OsdShow(char *buf);
+INTERFACE ssize_t MDrv_HVSP_OdShow(char *buf);
 INTERFACE ssize_t MDrv_HVSP_FBMGShow(char *buf);
 INTERFACE void MDrv_HVSP_OsdStore(const char *buf,EN_MDRV_HVSP_ID_TYPE enHVSP_ID);
+INTERFACE ssize_t MDrv_HVSP_LockShow(char *buf);
+INTERFACE ssize_t MDrv_HVSP_IntsShow(char *buf);
 INTERFACE ssize_t MDrv_HVSP_ProcShow(char *buf);
+INTERFACE ssize_t MDrv_HVSP_SCIQShow(char *buf, EN_MDRV_HVSP_ID_TYPE enHVSP_ID);
+INTERFACE void MDrv_HVSP_SCIQStore(const char *buf,EN_MDRV_HVSP_ID_TYPE enHVSP_ID);
 INTERFACE ssize_t MDrv_HVSP_DbgmgFlagShow(char *buf);
 INTERFACE ssize_t MDrv_HVSP_monitorHWShow(char *buf,int VsyncCount ,int MonitorErrCount);
 INTERFACE void MDrv_HVSP_SetCLKForcemode(unsigned char bEn);
 INTERFACE void MDrv_HVSP_SetCLKOnOff(void* adjclk,unsigned char bEn);
 INTERFACE void MDrv_HVSP_SetCLKRate(void* adjclk,unsigned char u8Idx);
-INTERFACE wait_queue_head_t * MDrv_HVSP_GetWaitQueueHead(void);
-INTERFACE unsigned char MDrv_HVSP_GetCMDQDoneStatus(void);
+INTERFACE void * MDrv_HVSP_GetWaitQueueHead(void);
+INTERFACE unsigned char MDrv_HVSP_GetCMDQDoneStatus(EN_MDRV_HVSP_ID_TYPE enHVSP_ID);
 INTERFACE unsigned char MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_TYPE enSet);
-INTERFACE unsigned char Mdrv_HVSP_GetDNRBufferInformation(void);
+INTERFACE unsigned char Mdrv_HVSP_GetFrameBufferCountInformation(void);
+INTERFACE unsigned char MDrv_HVSP_SetPriMaskConfig(ST_MDRV_HVSP_PRIMASK_CONFIG *stCfg);
+INTERFACE unsigned char MDrv_HVSP_SetPriMaskTrigger(unsigned char bEn);
 
 #undef INTERFACE
 #endif

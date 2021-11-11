@@ -109,7 +109,6 @@
 #define cmdq_dma_finished           0xFFF7  // 3
 
 
-#define MS_CMDQ_NONFRAMECOUNT_PERCENT 8             // 1/8=12.5%
 #define MS_CMDQ_CMD_LEN       8                     // 8byte =64bit
 #define MS_CMDQ_MEM_BASE_UNIT 16                    // MIU 128bit
 #define MS_CMDQ_CMD_ALIGN     2                     // (cmd/membase)
@@ -121,6 +120,10 @@
 #define MS_CMDQ_WAIT_CMD      0x2000000000000000    // wait base head
 #define MS_CMDQ_POLL_EQ_CMD   0x3000000000000000    // polleq base head
 #define MS_CMDQ_POLL_NEQ_CMD  0xB000000000000000    // pollneq base head
+#define CMDQ_CRASH_15_0_BIT           0x0000   //0x43 bit:3 command[15:0]
+#define CMDQ_CRASH_31_16_BIT          0x0001   //0x43 bit:3 command[31:16]
+#define CMDQ_CRASH_55_32_BIT          0x0002   //0x43 bit:3 command[55:32]
+#define CMDQ_CRASH_63_56_BIT          0x0003   //0x43 bit:3 command[63:56]
 
 //--------------------------------------------------------------------------------------------------
 //--------------------------------------------------------------------------------------------------
@@ -145,6 +148,9 @@ void Hal_CMDQ_Start(EN_CMDQ_IP_TYPE enIPType,MS_BOOL bEn);
 MS_U32 Hal_CMDQ_ErrorCommand(EN_CMDQ_IP_TYPE enIPType,MS_U32 select_bit);
 void Hal_CMDQ_Setmiusel(EN_CMDQ_IP_TYPE enIPType, MS_U8 u8MIUSel);
 void Hal_CMDQ_InitRIUBase(MS_U32 u32PM_riu_base);
+MS_U16 Hal_CMDQ_GetFinalIrq(EN_CMDQ_IP_TYPE enIPType,MS_U16 u16Mask);
+void Hal_CMDQ_SetRegPassWaitPoll(EN_CMDQ_IP_TYPE enIPType,MS_BOOL bEn);
+MS_U16 Hal_CMDQ_GetRawIrq(EN_CMDQ_IP_TYPE enIPType,MS_U16 u16Mask);
 void Hal_CMDQ_Enable(EN_CMDQ_IP_TYPE enIPType,MS_BOOL bEn);
 MS_U32 Hal_CMDQ_GetMIUReadAddr(EN_CMDQ_IP_TYPE enIPType);
 void Hal_CMDQ_Set_Waittrig(EN_CMDQ_IP_TYPE enIPType,MS_U16 trig);
@@ -152,6 +158,9 @@ void Hal_CMDQ_SetSkipPollWhenWaitTimeout(EN_CMDQ_IP_TYPE enIPType,MS_BOOL ben);
 void Hal_CMDQ_SetTimeoutAmount(EN_CMDQ_IP_TYPE enIPType);
 void Hal_CMDQ_WriteRegDirect(MS_U32 u32Addr,MS_U16 u16Data);
 void Hal_CMDQ_WriteRegMaskDirect(MS_U32 u32Addr,MS_U16 u16Data,MS_U16 u16Mask);
+void Hal_CMDQ_WriteRegMaskBuffer(MS_U32 u32Addr,MS_U16 u16Data,MS_U16 u16Mask);
+MS_U16 Hal_CMDQ_Read2ByteReg(MS_U32 u32Addr);
+MS_U16 Hal_CMDQ_Read2ByteMaskDirect(MS_U32 u32Addr,MS_U16 u16Mask);
 MS_U16 Hal_CMDQ_Get_ISP_Cnt(void);
 void Hal_CMDQ_ResetSoftInterrupt(EN_CMDQ_IP_TYPE enIPType);
 void Hal_CMDQ_ClearIRQByFlag(EN_CMDQ_IP_TYPE enIPType,MS_U16 u16IRQ);

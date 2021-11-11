@@ -459,6 +459,11 @@ MS_BOOL MDrv_SERFLASH_SectorErase(MS_U32 u32StartAddr, MS_U32 u32EndAddr)
         if((u32EndAddr-u32I) <= DRV_SERFLASH_SECTOR_SIZE)
         {
             bRet = HAL_SERFLASH_SectorErase(u32EndAddr);
+            if(!bRet)
+            {
+                printk("[FSP] Sector Erase fail!!!!\r\n");
+            }
+
         }
         u32I+=DRV_SERFLASH_SECTOR_SIZE;
     }
@@ -827,6 +832,7 @@ void MDrv_SERFLASH_SetGPIO(MS_BOOL bSwitch)
 //-------------------------------------------------------------------------------------------------
 //  FSP
 //-------------------------------------------------------------------------------------------------
+/*
 MS_BOOL MDrv_FSP_Read(MS_U32 u32FlashAddr, MS_U32 u32FlashSize, MS_U8 *user_buffer)
 {
 	MS_U32 Index;
@@ -858,6 +864,7 @@ MS_BOOL MDrv_FSP_Write(MS_U32 u32FlashAddr, MS_U32 u32FlashSize, MS_U8 *user_buf
 		
 	return 1;
 }
+
 
 MS_BOOL MDrv_FSP_ReadStatusRegister(MS_U8 *pu8StatusReg)
 {
@@ -911,6 +918,7 @@ MS_BOOL MDrv_FSP_AddressErase(MS_U32 u32StartAddr, MS_U32 u32EraseSize, E_FSP_ER
     }
 	return 1;
 }
+*/
 
 MS_BOOL  MDrv_SERFLASH_QPI_ENABLE(MS_BOOL bEnable)
 {

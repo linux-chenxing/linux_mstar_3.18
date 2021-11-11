@@ -112,6 +112,7 @@
 #include "halpnl.h"
 #include "Infinity_pnl_lpll_tbl.h"
 #include "MsDbg.h"
+#include "mdrv_scl_dbg.h"
 //-------------------------------------------------------------------------------------------------
 //  Driver Compiler Options
 //-------------------------------------------------------------------------------------------------
@@ -125,8 +126,9 @@
 #define DCLK_20MHZ         20000000
 #define DCLK_40MHZ         40000000
 #define DCLK_80MHZ         80000000
-#define Is_Package_BGA()  (Chip_Get_Package_Type()==MS_PACKAGE_BGA)
-#define Is_Package_QFP()  (Chip_Get_Package_Type()==MS_PACKAGE_QFP)
+#define Is_full_pin_TTL()  (Chip_Get_Package_Type()==MS_I3_PACKAGE_BGA_128MB||\
+    Chip_Get_Package_Type()==MS_I3_PACKAGE_BGA_256MB||Chip_Get_Package_Type()==MS_I3_PACKAGE_DDR3_1866_128MB\
+    ||Chip_Get_Package_Type()== MS_I3_PACKAGE_DDR3_1866_256MB)
 #define Is_Dclk_Less5M(Dclk)      ((Dclk) <= DCLK_5MHZ)
 #define Is_Dclk_5MTo10M(Dclk)       ((Dclk > DCLK_5MHZ) && (Dclk <= DCLK_10MHZ))
 #define Is_Dclk_10MTo20M(Dclk)      ((Dclk > DCLK_10MHZ) && (Dclk <= DCLK_20MHZ))
@@ -136,7 +138,7 @@
 //  Variable
 
 MS_U32 PNL_RIU_BASE = 0;
-
+unsigned int gu32JTAGmode;
 
 //-------------------------------------------------------------------------------------------------
 //  Functions
@@ -145,22 +147,30 @@ void Hal_PNL_Set_Riu_Base(MS_U32 u32Riubase)
 {
     PNL_RIU_BASE = u32Riubase;
 }
-
-void Hal_PNL_Set_Chiptop(void)
+void Hal_PNL_Set_Chiptop(MS_BOOL bEn)
 {
-    MS_U16 u16chip_top;
-    u16chip_top=R2BYTE(REG_CHIPTOP_0F_L);
-    if(Is_Package_BGA())
+    if(bEn)
     {
-        W2BYTEMSK(REG_CHIPTOP_0F_L,(u16chip_top|0x0040),0x0040);
-        //W2BYTE(0x101eA0,0x0000);
+        W2BYTEMSK(REG_CHIPTOP_0F_L,0x0040,0x0040);
+        SCL_DBGERR("[PNL] ttlmode = ON\n");
     }
-    else if(Is_Package_QFP())
+    else
     {
-        W2BYTEMSK(REG_CHIPTOP_0F_L,(u16chip_top|0x0000),0x0040);
-        printf("[PNL]QFP!!!  OPEN PNL ERROR ");
+        W2BYTEMSK(REG_CHIPTOP_0F_L,0x0000,0x0040);
+        SCL_DBGERR("[PNL] ttlmode = OFF\n");
+    }
+    if(gu32JTAGmode)
+    {
+        W2BYTEMSK(REG_CHIPTOP_0F_L,0x0002,0x0002);
+        SCL_DBGERR("[PNL] JTAGmode = ON\n");
+    }
+    else
+    {
+        W2BYTEMSK(REG_CHIPTOP_0F_L,0x0000,0x0002);
+        SCL_DBGERR("[PNL] JTAGmode = OFF\n");
     }
 }
+
 
 void Hal_PNL_Set_Init_Y2R(void)
 {
@@ -323,10 +333,8 @@ void Hal_PNL_Set_Lpll_Set(MS_U32 u32LpllSet)
 
 void Hal_PNL_Set_OpenLpll_CLK(MS_U8 bLpllClk)
 {
-    MS_U16 u16byte;
     W2BYTEMSK(REG_SCL_CLK_66_L, bLpllClk ? 0x000C : 0x1, 0x000F);
-    u16byte=R2BYTE(REG_CHIPTOP_0F_L);
-    W2BYTEMSK(REG_CHIPTOP_0F_L, bLpllClk ? (0x0041|u16byte) : u16byte, 0x0041);
+    Hal_PNL_Set_Chiptop(bLpllClk);
 }
 // CSC Y2R
 void Hal_PNL_Set_CSC_Y2R_En(MS_BOOL bEn)
@@ -337,7 +345,7 @@ void Hal_PNL_Set_CSC_Y2R_En(MS_BOOL bEn)
 void Hal_PNL_Set_CSC_Y2R_Offset(MS_U8 u8Y, MS_U8 u8Cb, MS_U8 u8Cr)
 {
     W2BYTEMSK(REG_SCL2_19_L, ((MS_U16)u8Y << 8), 0xFF00);
-    W2BYTEMSK(REG_SCL2_1A_L, (((MS_U16)u8Cb << 8)|((MS_U16)u8Cr)), 0xFFFF);
+    W2BYTE(REG_SCL2_1A_L, (((MS_U16)u8Cb << 8)|((MS_U16)u8Cr)));
 }
 
 void Hal_PNL_Set_CSC_Y2R_Coef(MS_U16 *pu16Coef)

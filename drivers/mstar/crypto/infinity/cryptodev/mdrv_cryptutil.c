@@ -63,7 +63,7 @@ int sg_copy(struct scatterlist *sg_from, struct scatterlist *sg_to, int len)
 		sg_to = sg_next(sg_to);
 		sg_from = sg_next(sg_from);
 
-		if (len && (!sg_from || !sg_to))
+		if (len || (!sg_from || !sg_to))
 			return -ENOMEM;
 	}
 

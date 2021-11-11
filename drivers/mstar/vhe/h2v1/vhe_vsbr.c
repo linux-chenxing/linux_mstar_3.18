@@ -244,7 +244,7 @@ void* vsbr_allocate(void)
     vhe_rctl* rqcx;
 
     if (!(rqct = MEM_ALLC(sizeof(vhe_vsbr))))
-        return NULL;
+        return rqct;
 
     MEM_COPY(rqct->name, "vsbr", 5);
     rqct->release = _vsbr_ops_free;

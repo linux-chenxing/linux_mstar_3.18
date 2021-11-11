@@ -31,6 +31,7 @@
 #define D_PROJECT__C3     1    //Cedric Project
 #define D_PROJECT__C4     2    //Chicago Project
 #define D_PROJECT__iNF    3    //iNfinity Project
+#define D_PROJECT__iNF3   4    //iNfinity3 Project
 
 // OS Type Option
 //-----------------------------------------------------------------------------------------------------------
@@ -285,6 +286,11 @@ typedef enum
 #elif defined(CONFIG_ARCH_INFINITY)
 //###########################################################################################################
 #define D_PROJECT           D_PROJECT__iNF
+#define D_FCIE_M_VER        D_FCIE_M_VER__05
+//###########################################################################################################
+#elif defined(CONFIG_ARCH_INFINITY3)
+//###########################################################################################################
+#define D_PROJECT           D_PROJECT__iNF3
 #define D_FCIE_M_VER        D_FCIE_M_VER__05
 //###########################################################################################################
 #endif

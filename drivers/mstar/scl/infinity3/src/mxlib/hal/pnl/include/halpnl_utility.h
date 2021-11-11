@@ -17,6 +17,7 @@
 //  Macro and Define
 //-------------------------------------------------------------------------------------------------
 extern MS_U32 PNL_RIU_BASE;     // This should be inited before XC library starting.
+extern unsigned int gu32JTAGmode;
 
 
 // Address bus of RIU is 16 bits.

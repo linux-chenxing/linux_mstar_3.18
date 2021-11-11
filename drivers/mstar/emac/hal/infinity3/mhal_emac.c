@@ -41,6 +41,8 @@
 #include <linux/clk-provider.h>
 #include "mhal_emac.h"
 #include "mdrv_types.h"
+#include "ms_platform.h"
+#include "infinity3/registers.h"
 
 extern unsigned char phyaddr;
 
@@ -102,21 +104,38 @@ void MHal_EMAC_WritReg8( u32 bank, u32 reg, u8 val )
 
     *( ( volatile u8* ) address ) = val;
 }
+
+/* Read/WriteReg32 access two continuous 16bit-width register for EMAC0.
+EMAC0 bank is 32bit register, that must write low 16bit-width address then high 16bit-width address. */
 u32 MHal_EMAC_ReadReg32( u32 xoffset )
 {
-    u32 address = REG_ADDR_BASE + xoffset*2;
-
-    u32 xoffsetValueL = *( ( volatile u32* ) address ) & 0x0000FFFF;
-    u32 xoffsetValueH = *( ( volatile u32* ) ( address + 4) ) << 0x10;
-    return( xoffsetValueH | xoffsetValueL );
+    if(xoffset>=REG_EMAC_JULIAN_0100)
+    {
+        u32 address = EMAC_RIU_REG_BASE + REG_BANK_EMAC0*0x200 + xoffset*2;
+        u32 xoffsetValueL = *( ( volatile u32* ) address ) & 0x0000FFFF;
+        u32 xoffsetValueH = *( ( volatile u32* ) ( address + 4) ) << 0x10;
+        return( xoffsetValueH | xoffsetValueL );
+    }
+    else
+    {
+        u32 address = EMAC_RIU_REG_BASE + REG_BANK_X32_EMAC0*0x200 + xoffset*2;
+        return *( ( volatile u32* ) address );
+    }
 }
 
 void MHal_EMAC_WritReg32( u32 xoffset, u32 xval )
 {
-    u32 address = REG_ADDR_BASE + xoffset*2;
-
-    *( ( volatile u32 * ) address ) = ( u32 ) ( xval & 0x0000FFFF );
-    *( ( volatile u32 * ) ( address + 4 ) ) = ( u32 ) ( xval >> 0x10 );
+    if(xoffset>=REG_EMAC_JULIAN_0100)
+    {
+        u32 address = EMAC_RIU_REG_BASE + REG_BANK_EMAC0*0x200 + xoffset*2;
+        *( ( volatile u32 * ) address ) = ( u32 ) ( xval & 0x0000FFFF );
+        *( ( volatile u32 * ) ( address + 4 ) ) = ( u32 ) ( xval >> 0x10 );
+    }
+    else
+    {
+        u32 address = EMAC_RIU_REG_BASE + REG_BANK_X32_EMAC0*0x200 + xoffset*2;
+        *( ( volatile u32 * ) address ) = ( u32 ) ( xval );
+    }
 }
 
 u32 MHal_EMAC_ReadRam32( u32 uRamAddr, u32 xoffset)
@@ -562,7 +581,7 @@ void MHal_EMAC_Write_JULIAN_0108( u32 xval )
 void MHal_EMAC_Set_Tx_JULIAN_T(u32 xval)
 {
     u32 value;
-    value = MHal_EMAC_ReadReg32(0x134);
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0134);
     value &= 0xff0fffff;
     value |= xval << 20;
 
@@ -582,13 +601,13 @@ void MHal_EMAC_Set_TEST(u32 xval)
 
 u32 MHal_EMAC_Get_Tx_FIFO_Threshold(void)
 {
-    return (MHal_EMAC_ReadReg32(0x134) & 0x00f00000) >> 20;
+    return (MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0134) & 0x00f00000) >> 20;
 }
 
 void MHal_EMAC_Set_Rx_FIFO_Enlarge(u32 xval)
 {
     u32 value;
-    value = MHal_EMAC_ReadReg32(0x134);
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0134);
     value &= 0xfcffffff;
     value |= xval << 24;
 
@@ -597,14 +616,14 @@ void MHal_EMAC_Set_Rx_FIFO_Enlarge(u32 xval)
 
 u32 MHal_EMAC_Get_Rx_FIFO_Enlarge(void)
 {
-    return (MHal_EMAC_ReadReg32(0x134) & 0x03000000) >> 24;
+    return (MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0134) & 0x03000000) >> 24;
 }
 
 void MHal_EMAC_Set_Miu_Priority(u32 xval)
 {
     u32 value;
 
-    value = MHal_EMAC_ReadReg32(0x100);
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0100);
     value &= 0xfff7ffff;
     value |= xval << 19;
 
@@ -613,88 +632,88 @@ void MHal_EMAC_Set_Miu_Priority(u32 xval)
 
 u32 MHal_EMAC_Get_Miu_Priority(void)
 {
-    return (MHal_EMAC_ReadReg32(0x100) & 0x00080000) >> 19;
+    return (MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0100) & 0x00080000) >> 19;
 }
 
 void MHal_EMAC_Set_Tx_Hang_Fix_ECO(u32 xval)
 {
     u32 value;
-    value = MHal_EMAC_ReadReg32(0x134);
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0134);
     value &= 0xfffbffff;
     value |= xval << 18;
 
-    MHal_EMAC_WritReg32(0x134, value);
+    MHal_EMAC_WritReg32(REG_EMAC_JULIAN_0134, value);
 }
 
 void MHal_EMAC_Set_MIU_Out_Of_Range_Fix(u32 xval)
 {
     u32 value;
-    value = MHal_EMAC_ReadReg32(0x134);
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0134);
     value &= 0xefffffff;
     value |= xval << 28;
 
-    MHal_EMAC_WritReg32(0x134, value);
+    MHal_EMAC_WritReg32(REG_EMAC_JULIAN_0134, value);
 }
 
 void MHal_EMAC_Set_Rx_Tx_Burst16_Mode(u32 xval)
 {
     u32 value;
-    value = MHal_EMAC_ReadReg32(0x134);
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0134);
     value &= 0xdfffffff;
     value |= xval << 29;
 
-    MHal_EMAC_WritReg32(0x134, value);
+    MHal_EMAC_WritReg32(REG_EMAC_JULIAN_0134, value);
 }
 
 void MHal_EMAC_Set_Tx_Rx_Req_Priority_Switch(u32 xval)
 {
     u32 value;
-    value = MHal_EMAC_ReadReg32(0x134);
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0134);
     value &= 0xfff7ffff;
     value |= xval << 19;
 
-    MHal_EMAC_WritReg32(0x134, value);
+    MHal_EMAC_WritReg32(REG_EMAC_JULIAN_0134, value);
 }
 
 void MHal_EMAC_Set_Rx_Byte_Align_Offset(u32 xval)
 {
     u32 value;
-    value = MHal_EMAC_ReadReg32(0x134);
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0134);
     value &= 0xf3ffffff;
     value |= xval << 26;
 
-    MHal_EMAC_WritReg32(0x134, value);
+    MHal_EMAC_WritReg32(REG_EMAC_JULIAN_0134, value);
 }
 
 void MHal_EMAC_Write_Protect(u32 start_addr, u32 length)
 {
     u32 value;
 
-    value = MHal_EMAC_ReadReg32(0x11c);
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_011C);
     value &= 0x0000ffff;
     value |= ((start_addr+length) >> 4) << 16;
-    MHal_EMAC_WritReg32(0x11c, value);
+    MHal_EMAC_WritReg32(REG_EMAC_JULIAN_011C, value);
 
-    value = MHal_EMAC_ReadReg32(0x120);
-    value &= 0x00000000;
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0120);
+    //value &= 0x00000000;
     value |= ((start_addr+length) >> 4) >> 16;
     value |= (start_addr >> 4) << 16;
-    MHal_EMAC_WritReg32(0x120, value);
+    MHal_EMAC_WritReg32(REG_EMAC_JULIAN_0120, value);
 
-    value = MHal_EMAC_ReadReg32(0x124);
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0124);
     value &= 0xffff0000;
     value |= (start_addr >> 4) >> 16;
-    MHal_EMAC_WritReg32(0x124, value);
+    MHal_EMAC_WritReg32(REG_EMAC_JULIAN_0124, value);
 }
 
 void MHal_EMAC_Set_Miu_Highway(u32 xval)
 {
     u32 value;
-    value = MHal_EMAC_ReadReg32(0x134);
+    value = MHal_EMAC_ReadReg32(REG_EMAC_JULIAN_0134);
     value &= 0xbfffffff;
     value |= xval << 30;
 
-    MHal_EMAC_WritReg32(0x134, value);
+    MHal_EMAC_WritReg32(REG_EMAC_JULIAN_0134, value);
 }
 
 void MHal_EMAC_HW_init(void)
@@ -910,8 +929,16 @@ u8 MHal_EMAC_CalcMACHash( u8 m0, u8 m1, u8 m2, u8 m3, u8 m4, u8 m5 )
 //-------------------------------------------------------------------------------------------------
 void MHal_EMAC_enable_phyirq( void )
 {
-#if 0
+#ifdef LAN_ESD_CARRIER_INTERRUPT
+        u8 uRegVal;
+        //printk( KERN_ERR "[EMAC] %s\n" , __FUNCTION__);
+        uRegVal = MHal_EMAC_ReadReg8(REG_BANK_ALBANY2, 0x75*2);
+        uRegVal |= BIT4;
+        MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x75*2, uRegVal);
 
+        uRegVal = MHal_EMAC_ReadReg8(REG_BANK_ALBANY0, 0x30*2);
+        uRegVal = (uRegVal&~0x00F0) | 0x00A0;
+        MHal_EMAC_WritReg8(REG_BANK_ALBANY0, 0x30*2, uRegVal);
 #endif
 }
 
@@ -1080,81 +1107,53 @@ void MHal_EMAC_timer_callback( unsigned long value )
 
 void MHal_EMAC_trim_phy( void )
 {
-    u8 uRegVal;
-    u8 uEfuVal0;
-    u8 uEfuVal1;
-    u8 uEfuVal2;
 
-    //efuse read
-    MHal_EMAC_WritReg8(REG_BANK_EFUSE, 0x4e, 0x25);
-    MHal_EMAC_WritReg8(REG_BANK_EFUSE, 0x4f, 0x00);
-    MHal_EMAC_WritReg8(REG_BANK_EFUSE, 0x4c, 0x01);
-
-    uRegVal = MHal_EMAC_ReadReg8(REG_BANK_EFUSE, 0x4c);
-
-    while((uRegVal & 0x00) != 0)
+    U16 val;
+    if( INREG16(BASE_REG_EFUSE_PA+0x0B*4) & BIT4 )
     {
-        uRegVal = MHal_EMAC_ReadReg8(REG_BANK_EFUSE, 0x4c);
+        SETREG16(BASE_REG_RIU_PA+0x3360*2, BIT2);
+        SETREG16(BASE_REG_RIU_PA+0x3368*2, BIT15);
+
+        val = (INREG16(BASE_REG_EFUSE_PA+0x0A*4)) & 0x001F; //read bit[4:0]
+        OUTREGMSK16((BASE_REG_RIU_PA+ 0x3368*2), (val<<5), 0x1F<<5); //overwrite bit[9:5]
+        printk("ETH 10T output swing trim=0x%x\n",val);
+
+        val = (INREG16(BASE_REG_EFUSE_PA+0x0A*4) >> 5) & 0x001F; //read bit[9:5]
+        OUTREGMSK16((BASE_REG_RIU_PA+ 0x3368*2), val, 0x001F); //overwrite bit[4:0]
+        printk("ETH 100T output swing trim=0x%x\n",val);
+
+        val = (INREG16(BASE_REG_EFUSE_PA+0x0A*4) >> 10) & 0x000F; //read bit[13:10]
+        OUTREGMSK16((BASE_REG_RIU_PA+ 0x3360*2), (val<<7), 0xF<<7); //overwrite bit[10:7] //different with I1
+        printk("ETH RX input impedance trim=0x%x\n",val);
+
+        val = INREG16(BASE_REG_EFUSE_PA+0x0B*4) & 0x000F; //read bit[3:0]
+        OUTREGMSK16((BASE_REG_RIU_PA+ 0x3368*2), (val<<10), 0xF<<10); //overwrite bit[13:10]
+        printk("ETH TX output impedance trim=0x%x\n",val);
     }
+    else
+    {
+        OUTREGMSK16((BASE_REG_RIU_PA+ 0x3368*2), (0x0<<5), 0x1F<<5); //overwrite bit[9:5]
+    }
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY0, 0x79, 0xd0);   // prevent packet drop by inverted waveform
 
-    uEfuVal0 = MHal_EMAC_ReadReg8(REG_BANK_EFUSE, 0x84);
-    uEfuVal1 = MHal_EMAC_ReadReg8(REG_BANK_EFUSE, 0x85);
-    uEfuVal2 = MHal_EMAC_ReadReg8(REG_BANK_EFUSE, 0x86);
-
-    //write efuse into phy trim register
-    uRegVal = MHal_EMAC_ReadReg8(REG_BANK_ALBANY2, 0x60);
-    uRegVal |= 0x04;
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x60, uRegVal);
-
-    uRegVal = MHal_EMAC_ReadReg8(REG_BANK_ALBANY2, 0x69);
-    uRegVal |= 0x80;
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x69, uRegVal);
-
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x68, uEfuVal0);
-
-    uRegVal = MHal_EMAC_ReadReg8(REG_BANK_ALBANY2, 0x69);
-    uRegVal &= 0xc0;
-    uRegVal |= (uEfuVal1 & 0x3f);
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x69, uRegVal);
-
-    uRegVal = MHal_EMAC_ReadReg8(REG_BANK_ALBANY2, 0x61);
-    uRegVal &= 0xf0;
-    uRegVal |= (uEfuVal1 >> 6);
-    uRegVal |= (uEfuVal2 & 0x03) << 2 ;
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x61, uRegVal);
 }
+
+void MHal_EMAC_phy_trunMax( void )
+{
+    OUTREGMSK16((BASE_REG_RIU_PA+ 0x3368*2), (0xF<<5), 0x1F<<5); //overwrite bit[9:5]
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY0, 0x79, 0xf0);   // prevent packet drop by inverted waveform
+}
+
 
 //-------------------------------------------------------------------------------------------------
 // EMAC clock on/off
 //-------------------------------------------------------------------------------------------------
-void MHal_EMAC_Power_On_Clk( struct device dev )
+void MHal_EMAC_Power_On_Clk( struct device *dev )
 {
     u8 uRegVal;
     int num_parents, i;
     struct clk **emac_clks;
-
-    num_parents = of_clk_get_parent_count(dev.of_node);
-    if(num_parents > 0)
-    {
-        emac_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
-
-        //enable all clk
-        for(i = 0; i < num_parents; i++)
-        {
-            emac_clks[i] = of_clk_get(dev.of_node, i);
-            if (IS_ERR(emac_clks[i]))
-            {
-                printk( "Fail to get EMAC clk!\n" );
-                kfree(emac_clks);
-                return;
-            }
-            else
-            {
-                clk_prepare_enable(emac_clks[i]);
-            }
-        }
-        kfree(emac_clks);
-    }
+    struct clk *clk_parent;
 
     //Triming PHY setting via efuse value
     //MHal_EMAC_trim_phy();
@@ -1180,13 +1179,49 @@ void MHal_EMAC_Power_On_Clk( struct device dev )
     wriu    0x113344    0x00        //Set CLK_EMAC_RX to CLK_EMAC_RX_in (25MHz) (Enabled)
     wriu    0x113346    0x00        //Set CLK_EMAC_TX to CLK_EMAC_TX_IN (25MHz) (Enabled)
 */
+#if CONFIG_OF
+    num_parents = of_clk_get_parent_count(dev->of_node);
+    if(num_parents > 0)
+    {
+        emac_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
+        if(emac_clks == NULL)
+        {
+            printk( "[EMAC]kzalloc failed!\n" );
+            return;
+        }
 
-    //MHal_EMAC_WritReg8(REG_BANK_CLKGEN0, 0x84, 0x00);
-    //MHal_EMAC_WritReg8(REG_BANK_SCGPCTRL, 0x44, 0x00);
-    //MHal_EMAC_WritReg8(REG_BANK_SCGPCTRL, 0x46, 0x00);
+        //enable all clk
+        for(i = 0; i < num_parents; i++)
+        {
+            emac_clks[i] = of_clk_get(dev->of_node, i);
+            if (IS_ERR(emac_clks[i]))
+            {
+                printk( "Fail to get EMAC clk!\n" );
+                kfree(emac_clks);
+                return;
+            }
+
+            /* Get parent clock */
+            clk_parent = clk_get_parent_by_index(emac_clks[i], 0);
+            if(IS_ERR(clk_parent))
+            {
+                kfree(emac_clks);
+                printk( "[EMAC]can't get parent clock\n" );
+                return;
+            }
+            /* Set clock parent */
+            clk_set_parent(emac_clks[i], clk_parent);
+            clk_prepare_enable(emac_clks[i]);
+        }
+        kfree(emac_clks);
+    }
+#else
+    MHal_EMAC_WritReg8(REG_BANK_CLKGEN0, 0x84, 0x00);
+    MHal_EMAC_WritReg8(REG_BANK_SCGPCTRL, 0x44, 0x00);
+    MHal_EMAC_WritReg8(REG_BANK_SCGPCTRL, 0x46, 0x00);
+#endif
 
     /* eth_link_sar*/
-
     //gain shift
     MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xb4, 0x02);
 
@@ -1204,21 +1239,16 @@ void MHal_EMAC_Power_On_Clk( struct device dev )
 
     MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xfc, 0x00);   // Power-on LDO
     MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xfd, 0x00);
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xb7, 0x17);   // Power-on ADC**
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xcb, 0x11);   // Power-on BGAP
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xcc, 0x20);   // Power-on ADCPL
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xcd, 0xd0);   // Power-on ADCPL
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xd4, 0x00);   // Power-on LPF_OP
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xb9, 0x40);   // Power-on LPF
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xbb, 0x05);   // Power-on REF
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x3a, 0x03);   // PD_TX_IDAC, PD_TX_LD = 0
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x3b, 0x00);
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0xa1, 0x80);   // Power-on SADC
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xcc, 0x40);   // Power-on ADCPL
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xbb, 0x04);   // Power-on REF
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x3a, 0x00);   // Power-on TX
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0xf1, 0x00);   // Power-on TX
 
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0x3b, 0x01);
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0xa1, 0xc0);   // PD_SADC, EN_SAR_LOGIC**
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x8a, 0x01);
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xc4, 0x44);
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x80, 0x30);
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x8a, 0x01);    // CLKO_ADC_SEL
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0x3b, 0x01);   // reg_adc_clk_select
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xc4, 0x44);  // TEST
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x80, 0x30);   // sadc timer
 
     //100 gat
     MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0xc5, 0x00);
@@ -1228,6 +1258,9 @@ void MHal_EMAC_Power_On_Clk( struct device dev )
 
     //en_100t_phase
     MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x39, 0x41);   // en_100t_phase;  [6] save2x_tx
+
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0xf2, 0xf5);  // LP mode, DAC OFF
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0xf3, 0x0d); // DAC off
 
     // Prevent packet drop by inverted waveform
     MHal_EMAC_WritReg8(REG_BANK_ALBANY0, 0x79, 0xd0);   // prevent packet drop by inverted waveform
@@ -1308,26 +1341,44 @@ void MHal_EMAC_Power_On_Clk( struct device dev )
     MHal_EMAC_WritReg8(REG_BANK_CHIPTOP, 0x1E, uRegVal);
 #endif
 
-
+#ifdef HARDWARE_DISCONNECT_DELAY
+    /*
+    wriu -w 0x003162    0x112b    // [14:12] slow_cnt_sel 001 42usx4 = 168us
+                                  // [9:0] dsp_cnt_sel
+    wriu -w 0x003160    0x06a4    // [11:9] slow_rst_sel 011 counter_hit 1334us x 6
+                                  // [7:4] 1010 enable
+                                  // [3:0] 0000 rst_cnt_sel  counter_hit
+    */
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY0, 0x62, 0x2b);
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY0, 0x63, 0x11);
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY0, 0x60, 0xa4);
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY0, 0x61, 0x06);
+#endif
 
 }
 
-void MHal_EMAC_Power_Off_Clk( struct device dev )
+void MHal_EMAC_Power_Off_Clk( struct device *dev )
 {
     int num_parents, i;
     struct clk **emac_clks;
 #ifdef CONFIG_ETHERNET_ALBANY
     u8 uRegVal;
 #endif
-    num_parents = of_clk_get_parent_count(dev.of_node);
+#if CONFIG_OF
+    num_parents = of_clk_get_parent_count(dev->of_node);
     if(num_parents > 0)
     {
         emac_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
+        if(emac_clks == NULL)
+        {
+            printk( "[EMAC]kzalloc failed!\n" );
+            return;
+        }
 
         //disable all clk
         for(i = 0; i < num_parents; i++)
         {
-            emac_clks[i] = of_clk_get(dev.of_node, i);
+            emac_clks[i] = of_clk_get(dev->of_node, i);
             if (IS_ERR(emac_clks[i]))
             {
                 printk( "Fail to get EMAC clk!\n" );
@@ -1341,30 +1392,45 @@ void MHal_EMAC_Power_Off_Clk( struct device dev )
         }
         kfree(emac_clks);
     }
+#else
+    MHal_EMAC_WritReg8(REG_BANK_CLKGEN0, 0x84, 0x01);
+    MHal_EMAC_WritReg8(REG_BANK_SCGPCTRL, 0x44, 0x01);
+    MHal_EMAC_WritReg8(REG_BANK_SCGPCTRL, 0x46, 0x01);
+#endif
+
+
 
 #ifdef CONFIG_ETHERNET_ALBANY
-    //Power Down EMAC phy
+/*
+    wriu      0x003204  0x31     // Reset analog
+
+    wait 100
+
+    wriu  -w  0x0032fc  0x0102   // Power-off LDO
+    wriu      0x0033a1  0xa0     // Power-off SADC
+    wriu      0x0032cc  0x50     // Power-off ADCPL
+    wriu      0x0032bb  0xc4     // Power-off REF
+    wriu      0x00333a  0xf3     // Power-off TX
+    wriu      0x0033f1  0x3c     // Power-off TX
+
+    wriu      0x0033f3  0x0f     // DAC off
+
+    wriu      0x003204  0x11     // Release reset analog
+*/
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0x04, 0x31);   // Reset analog
+    mdelay(100);
     MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xfc, 0x02);   // Power-on LDO
     MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xfd, 0x01);
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xb7, 0x17);   // Power-on ADC**
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xcb, 0x13);   // Power-on BGAP
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xcc, 0x30);   // Power-on ADCPL
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xcd, 0xd8);   // Power-on ADCPL
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xd4, 0x20);   // Power-on LPF_OP
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xb9, 0x41);   // Power-on LPF
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xbb, 0x84);   // Power-on REF
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x3a, 0xf3);   // PD_TX_IDAC, PD_TX_LD = 0
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x3b, 0x03);
 
-//    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0x3b, 0x01);
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0xa1, 0x20);   // PD_SADC, EN_SAR_LOGIC**
-//    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x8a, 0x01);
-//    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xc4, 0x44);
-//    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x80, 0x30);
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0xa1, 0xa0);   // Power-off SADC
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xcc, 0x50);   // Power-off ADCPL
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0xbb, 0xc4);   // Power-off REF
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x3a, 0xf3);   // Power-off TX
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0xf1, 0x3c);   // Power-off TX
 
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0xc5, 0x40);    //100 gat
-    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x30, 0x53);    //200 gat
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0xf3, 0x0f);   // DAC off
 
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY1, 0x04, 0x11);   // Release reset analog
 
     //turn off LED //16'0x0e_28[5:4]=01
     uRegVal = MHal_EMAC_ReadReg8(REG_BANK_PMSLEEP, 0x50);
@@ -1392,3 +1458,46 @@ u8 MHal_EMAC_Get_Reverse_LED(void)
 {
     return (MHal_EMAC_ReadReg8( REG_BANK_ALBANY0, 0xf7 )&BIT7)? 1:0;
 }
+
+#if defined(NEW_TX_QUEUE_128)
+void MHal_EMAC_Set_TXQUEUE_INT_Level(u8 low, u8 high)
+{
+     if(high >= low)
+     {
+         MHal_EMAC_WritReg32( REG_TXQUEUE_INT_LEVEL, low|(high<<8));
+     }
+}
+void MHal_EMAC_enable_new_TXQUEUE(void)
+{
+    u8 xval;
+    xval = MHal_EMAC_ReadReg8(REG_BANK_EMAC1, REG_ETH_EMAC1_h24+1);
+    xval = (xval&(~BIT7)) | BIT7;
+    MHal_EMAC_WritReg8(REG_BANK_EMAC1, REG_ETH_EMAC1_h24+1, xval);
+
+    MHal_EMAC_WritReg8(REG_BANK_EMAC1, REG_ETH_EMAC1_h2F, NEW_TX_QUEUE_SIZE);
+
+}
+u8 MHal_EMAC_get_TXQUEUE_Count(void)
+{
+    /*patch:*/
+    int i=0, ertry=0;
+    u8 read_val, xval;
+
+    xval = MHal_EMAC_ReadReg8(REG_BANK_EMAC1, REG_ETH_EMAC1_h24) & 0x7F;
+    do
+    {
+        read_val = MHal_EMAC_ReadReg8(REG_BANK_EMAC1, REG_ETH_EMAC1_h24) & 0x7F;
+        if(xval==read_val)
+        {
+            i++;
+        }else
+        {
+            i=0;
+            xval = read_val;
+            ertry++;
+        }
+    }while(i<2);
+
+    return xval;
+}
+#endif

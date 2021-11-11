@@ -452,15 +452,14 @@ static U32 _HAL_SPINAND_RIU_READ(U16 u16Addr, U32 u32DataSize, U8 *u8pData)
 
 static U32 _HAL_SPINAND_BDMA_READ(U16 u16Addr, U32 u32DataSize, U8 *u8pData)
 {
-    U32 u32Addr1;
-    U16 u16data;
+
+    U16 u16data = 0;
     U32 u32Timer = 0;
     U32 u32Ret = ERR_SPINAND_TIMEOUT;
 
     //Set source and destination path
     BDMA_WRITE(0x00, 0x0000);
 
-    u32Addr1 = (U32)u8pData;
 
 //	    u32Addr1 = dma_map_single(spi_nand_dev, (void*)u8pData, u32DataSize, DMA_FROM_DEVICE);
 
@@ -471,7 +470,7 @@ static U32 _HAL_SPINAND_BDMA_READ(U16 u16Addr, U32 u32DataSize, U8 *u8pData)
 
     // Set start address
     BDMA_WRITE(0x04, (u16Addr & 0x0000FFFF));
-    BDMA_WRITE(0x05, (u16Addr>>16));
+    BDMA_WRITE(0x05, (0x0));
 
     // Set end address
     BDMA_WRITE(0x06, (Chip_Phys_to_MIU(ALLOC_DMEM.bdma_phy_addr) & 0x0000FFFF));
@@ -483,6 +482,7 @@ static U32 _HAL_SPINAND_BDMA_READ(U16 u16Addr, U32 u32DataSize, U8 *u8pData)
 
     // Trigger
     BDMA_WRITE(0x00, 1);
+
     do
     {
         //check done
@@ -505,13 +505,12 @@ static U32 _HAL_SPINAND_BDMA_READ(U16 u16Addr, U32 u32DataSize, U8 *u8pData)
     Chip_Flush_Memory();
 //	    _ms_bdma_mem_free(u32DataSize);
 
-
     return u32Ret;
 }
 
 static void HAL_SPINAND_PreHandle(SPINAND_MODE eMode)
 {
-    U8 u8Status;
+    U8 u8Status = 0;
     //if (_gtSpinandInfo.au8_ID[0] == 0xC8)
     {
         switch (eMode)
@@ -537,11 +536,11 @@ static void HAL_SPINAND_PreHandle(SPINAND_MODE eMode)
 U32 HAL_SPINAND_Init(void)
 {
     //set pad mux for spinand
-    printk("MDrv_SPINAND_Init: Set pad mux\n");
+//	    printk("MDrv_SPINAND_Init: Set pad mux\n");
     CHIP_WRITE(0x50, 0x000);//disable all pad in
-    QSPI_WRITE(0x7A, 0x00);//CS
-    PM_WRITE(0x35, 0x00);
-    printk("MDrv_SPINAND_Init: Set pad mux end");
+    QSPI_WRITE(0x7A, 0x01);//CS
+    PM_WRITE(0x35, 0x0C);
+//	    printk("MDrv_SPINAND_Init: Set pad mux end");
 
     // reset spinand
     // FSP init config
@@ -607,7 +606,7 @@ U32 HAL_SPINAND_RFC(U32 u32Addr, U8 *pu8Data)
 {
     U8  u8Addr = 0;
     U8  u8WbufIndex = 0;
-    S8  s8Index;
+    S8  s8Index = 0;
 
     //DEBUG_SPINAND(E_SPINAND_DBGLV_DEBUG, printk("HAL_SPINAND_RFC : u32Addr = %lx \r\n",u32Addr));
     //FSP init config
@@ -661,14 +660,14 @@ U32 HAL_SPINAND_RFC(U32 u32Addr, U8 *pu8Data)
 
 U32 HAL_SPINAND_PROGRAM_LOAD_DATA(U16 u16ColumnAddr, U16 u16DataSize, U8 *pu8Data, U8 *pu8_SpareBuf)
 {
-    U32 u32Ret = ERR_SPINAND_TIMEOUT;
+    U32 u32Ret = 0;
     U8  u8Addr = 0, u8DataIndex =0;
     U16 u16RealLength = 0;
     U8  u8WbufIndex = 0;
-    S8  s8Index;
+    S8  s8Index = 0;
     U32 u32WrteBuf = REG_FSP_WRITE_BUFF;
-    U16 u16DataIndex;
-    U8 *pu8Wdata;
+    U16 u16DataIndex = 0;
+    U8 *pu8Wdata = NULL;
 
     pu8Wdata = pu8Data;
     //DEBUG_SPINAND(E_SPINAND_DBGLV_DEBUG, printk("u16ColumnAddr %x u16DataSize %x Data %x \r\n", u16ColumnAddr, u16DataSize, *pu8Data));
@@ -808,10 +807,10 @@ U32 HAL_SPINAND_READ_STATUS(U8 *pu8Status, U8 u8Addr)
 U32 HAL_SPINAND_BLOCKERASE(U32 u32_PageIdx)
 {
     U8  u8WbufIndex = 0;
-    S8  s8Index;
-    U8  u8Addr;
-    U32 u32Ret;
-    U8  u8Status;
+    S8  s8Index = 0;
+    U8  u8Addr = 0;
+    U32 u32Ret = 0;
+    U8  u8Status = 0;
 
     u32Ret = _HAL_SPINAND_WRITE_ENABLE();
     if (u32Ret != ERR_SPINAND_SUCCESS)
@@ -876,12 +875,12 @@ U32 HAL_SPINAND_BLOCKERASE(U32 u32_PageIdx)
 
 U32 HAL_SPINAND_Write(U32 u32_PageIdx, U8 *u8Data, U8 *pu8_SpareBuf)
 {
-    U32 u32Ret;
+    U32 u32Ret = 0;
     U8  u8Addr = 0;
     U8  u8WbufIndex = 0;
-    S8  s8Index;
-    U16 u16DataSize;
-    U8  u8Status;
+    S8  s8Index = 0;
+    U16 u16DataSize = 0;
+    U8  u8Status = 0;
     U16 u16ColumnAddr = 0;
 
     //calculate write data size
@@ -889,8 +888,11 @@ U32 HAL_SPINAND_Write(U32 u32_PageIdx, U8 *u8Data, U8 *pu8_SpareBuf)
 
     //DEBUG_SPINAND(E_SPINAND_DBGLV_DEBUG, printk("addr %lx u8Data %x u32PageIndex %lx\r\n", (U32)u8Data, *u8Data, u32_PageIdx));
     u32Ret = HAL_SPINAND_WriteProtect(FALSE);
+
+	if (u32Ret != ERR_SPINAND_SUCCESS)
+        return u32Ret;
 #ifdef    CONFIG_AUTO_DETECT_WRITE
-    HAL_SPINAND_SetMode(WRITE_MODE);
+    HAL_SPINAND_SetMode((SPINAND_MODE)WRITE_MODE);
 #else
    //HAL_SPINAND_SetMode(gNandReadMode);
         HAL_SPINAND_PreHandle(E_SPINAND_QUAD_MODE_IO);
@@ -900,6 +902,7 @@ U32 HAL_SPINAND_Write(U32 u32_PageIdx, U8 *u8Data, U8 *pu8_SpareBuf)
     if (PLANE && (((u32_PageIdx / BLOCK_PAGE_SIZE)&0x1) == 1))
         u16ColumnAddr = (1<<12); // plane select for MICRON
     u32Ret = HAL_SPINAND_PROGRAM_LOAD_DATA(u16ColumnAddr, u16DataSize, u8Data, pu8_SpareBuf);
+
     if (u32Ret != ERR_SPINAND_SUCCESS)
         return u32Ret;
 
@@ -947,10 +950,15 @@ U32 HAL_SPINAND_Write(U32 u32_PageIdx, U8 *u8Data, U8 *pu8_SpareBuf)
     //Clear FSP done flag
     FSP_WRITE_BYTE(REG_FSP_CLEAR_DONE, CLEAR_DONE_FSP);
     u32Ret = _HAL_FSP_CHECK_SPINAND_DONE(&u8Status);
-    if (u32Ret == ERR_SPINAND_SUCCESS)
-        if (u8Status & P_FAIL)
-            u32Ret = ERR_SPINAND_W_FAIL;
 
+    if (u32Ret == ERR_SPINAND_SUCCESS)
+    {
+    		if (u8Status & P_FAIL)
+            {
+				u32Ret = ERR_SPINAND_W_FAIL;
+				return u32Ret;
+			}
+	}
     u32Ret = HAL_SPINAND_WriteProtect(TRUE);
 
     return u32Ret;
@@ -960,16 +968,15 @@ U32 HAL_SPINAND_Write(U32 u32_PageIdx, U8 *u8Data, U8 *pu8_SpareBuf)
 U32 HAL_SPINAND_Read (U32 u32Addr, U32 u32DataSize, U8 *pu8Data)
 {
     U16 u16Addr = u32Addr & 0xFFFF;
-    U32 ret;
-//	    printk("BOOL _gbRIURead =FALSE;\n");
-    if (FALSE)
+    U32 ret = 0;
+
+    if (TRUE)
     {
         ret = _HAL_SPINAND_RIU_READ(u16Addr, u32DataSize, pu8Data);
     }
     else
     {
         // config SPI waveform for BDMA
-//	        printk("@@@@@Mask PLANE\n");
         if (0)
         {
             QSPI_WRITE(REG_SPI_FUNC_SET, (REG_SPI_ADDR2_EN|REG_SPI_DUMMY_EN|REG_SPI_WRAP_EN));
@@ -978,29 +985,20 @@ U32 HAL_SPINAND_Read (U32 u32Addr, U32 u32DataSize, U8 *pu8Data)
         {
             QSPI_WRITE(REG_SPI_FUNC_SET, (REG_SPI_ADDR2_EN|REG_SPI_DUMMY_EN));
         }
-//	        printk("HAL_SPINAND_Read 1\n");
         //Set dummy cycle
         //QSPI_WRITE(REG_SPI_CKG_SPI, REG_SPI_USER_DUMMY_EN|REG_SPI_DUMMY_CYC_SINGAL);
  #ifdef    CONFIG_AUTO_DETECT
         HAL_SPINAND_SetMode(READ_MODE);
  #else
         HAL_SPINAND_SetMode(gNandReadMode);
-//	        printk("HAL_SPINAND_Read 2\n");
  #endif
-//	        printk("HAL_SPINAND_Read 3\n");
         _HAL_SPINAND_BDMA_INIT(u32DataSize);
         ret = _HAL_SPINAND_BDMA_READ(u16Addr, u32DataSize, pu8Data);
-//	        printk("\n");
-//	        printk("_HAL_SPINAND_BDMA_READ END\n");
-//	        asm("b .");
         HAL_SPINAND_SetMode(E_SPINAND_SINGLE_MODE);
-//	        printk("HAL_SPINAND_SetMode END\ n");
+
         if (ret != ERR_SPINAND_SUCCESS)
         {
-            U16 u16DataWidth;
-//	            u16Addr = CLK_READ(0x2F);
-//	            u16DataWidth = BDMA_READ(0x12);
-            printk(KERN_ERR"R Wait BDMA Done Time Out CLK %x Width %x !!!!\r\n", u16Addr, u16DataWidth);
+            printk(KERN_ERR"R Wait BDMA Done Time Out CLK!!!!\r\n");
 
         }
     }
@@ -1149,8 +1147,8 @@ BOOL HAL_SPINAND_SetCKG(U8 u8CkgSpi)
 {
     BOOL Ret = FALSE;
     U8 u8nonPmIdx = 0, u8PmIdx = 0;
-    U8 u8Idx;
-    U8 u8Size;
+    U8 u8Idx = 0;
+    U8 u8Size = 0;
     u8Size = sizeof(_hal_ckg_spi_nonpm)/ sizeof(hal_clk_ckg_t);
     //DEBUG_SPINAND(E_SPINAND_DBGLV_INFO, printk("%s()\n", __FUNCTION__));
     for (u8Idx = 0; u8Idx < u8Size; u8Idx++)
@@ -1203,7 +1201,7 @@ BOOL HAL_SPINAND_SetCKG(U8 u8CkgSpi)
 
 void HAL_SPINAND_CSCONFIG(void)
 {
-    U16 u16Data;
+    U16 u16Data = 0;
     u16Data = CHIP_READ(REG_CHIPTOP_DUMMY3);
     u16Data |= CHIP_CS_PAD1;
     CHIP_WRITE(REG_CHIPTOP_DUMMY3, u16Data);

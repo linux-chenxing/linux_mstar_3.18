@@ -90,7 +90,11 @@ mmfe_ioctl(
     {
     case IOCTL_RQCT_VERSION:
         v = RQCTIF_VERSION_ID;
+        if (access_ok(ACCESS_WRITE,uptr,sizeof(unsigned int)))
+            err = __put_user(v,(unsigned int*)uptr);
+        break;
     case IOCTL_MMFE_VERSION:
+        v = MMFEIF_VERSION_ID;
         if (access_ok(ACCESS_WRITE,uptr,sizeof(unsigned int)))
             err = __put_user(v,(unsigned int*)uptr);
         break;
@@ -214,7 +218,7 @@ static ssize_t mmfe_tmr_store(struct device* dev, struct device_attribute* attr,
         return -EINVAL;
     mdev->i_thresh = thresh;
     for (i = 0; i < MMFE_STREAM_NR; i++)
-        mdev->i_counts[i][0] = mdev->i_counts[i][1] = mdev->i_counts[i][2] = mdev->i_counts[i][3] = 0;
+        mdev->i_counts[i][0] = mdev->i_counts[i][1] = mdev->i_counts[i][2] = mdev->i_counts[i][3] = mdev->i_counts[i][4] = 0;
     return n;
 }
 
@@ -225,7 +229,7 @@ static ssize_t mmfe_tmr_print(struct device* dev, struct device_attribute* attr,
     mmfe_dev* mdev = container_of(dev,mmfe_dev,m_dev);
     int i;
     for (i = 0; i < MMFE_STREAM_NR; i++)
-        str += scnprintf(str,end-str,"inst-%d:%8d/%5d/%5d/%8d\n",i,mdev->i_counts[i][0],mdev->i_counts[i][1],mdev->i_counts[i][2],mdev->i_counts[i][3]);
+        str += scnprintf(str,end-str,"inst-%d:%8d/%5d/%5d/ %8d / %8d \n",i,mdev->i_counts[i][0],mdev->i_counts[i][1],mdev->i_counts[i][2],mdev->i_counts[i][3],mdev->i_counts[i][4]);
     str += scnprintf(str,end-str,"thresh:%8d\n",mdev->i_thresh);
     return (str - buff);
 }
@@ -451,8 +455,8 @@ static irqreturn_t mmfe_isr(int irq, void* priv)
 {
     mmfe_dev* mdev = (mmfe_dev*)priv;
 
-    if (!mmfedev_isr_fnx(mdev))
-        return IRQ_HANDLED;
+    mmfedev_isr_fnx(mdev);
+
     return IRQ_HANDLED;
 }
 

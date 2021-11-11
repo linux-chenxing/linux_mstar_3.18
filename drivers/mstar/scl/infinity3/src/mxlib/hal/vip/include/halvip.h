@@ -105,15 +105,30 @@ typedef enum
     EN_VIP_SRAM_SEC_1 =272,
     EN_VIP_SRAM_SEC_2 =272,
     EN_VIP_SRAM_SEC_3 =256,
+    EN_VIP_SRAM_SEC_TYPE ,
 }EN_VIP_SRAM_SEC_NUM;
 
 typedef enum
 {
     EN_VIP_SRAM_DUMP_ICC,
     EN_VIP_SRAM_DUMP_IHC,
-    EN_VIP_SRAM_DUMP_HVSP,
-    EN_VIP_SRAM_DUMP_HVSP_1,
-    EN_VIP_SRAM_DUMP_HVSP_2,
+    EN_VIP_SRAM_DUMP_HVSP_V,
+    EN_VIP_SRAM_DUMP_HVSP_V_1,
+    EN_VIP_SRAM_DUMP_HVSP_V_2,
+    EN_VIP_SRAM_DUMP_WDR,
+    EN_VIP_SRAM_DUMP_GAMMA_Y,
+    EN_VIP_SRAM_DUMP_GAMMA_U,
+    EN_VIP_SRAM_DUMP_GAMMA_V,
+    EN_VIP_SRAM_DUMP_GM10to12_R,
+    EN_VIP_SRAM_DUMP_GM10to12_G,
+    EN_VIP_SRAM_DUMP_GM10to12_B,
+    EN_VIP_SRAM_DUMP_GM12to10_R,
+    EN_VIP_SRAM_DUMP_GM12to10_G,
+    EN_VIP_SRAM_DUMP_GM12to10_B,
+    EN_VIP_SRAM_DUMP_HVSP_H,
+    EN_VIP_SRAM_DUMP_HVSP_H_1,
+    EN_VIP_SRAM_DUMP_HVSP_H_2,
+    EN_VIP_SRAM_DUMP_NUM,
 }EN_VIP_SRAM_DUMP_TYPE;
 typedef enum
 {
@@ -137,8 +152,17 @@ INTERFACE void Hal_VIP_SetLDCHWrwDiff(MS_U16 u8Val);
 INTERFACE void Hal_VIP_SetLDCSW_Mode(MS_U8 bEn);
 INTERFACE void Hal_VIP_SetLDCBank_Mode(EN_DRV_VIP_LDCLCBANKMODE_TYPE enType);
 INTERFACE void Hal_VIP_SetLDCSW_Idx(MS_U8 idx);
-INTERFACE void Hal_VIP_SetLDC422_444_allMd(MS_U8 u8md);
+INTERFACE void Hal_VIP_SetLDC422_444_Md(MS_U8 u8md);
+INTERFACE void Hal_VIP_SetLDC444_422_Md(MS_U8 u8md);
+INTERFACE void Hal_VIP_AIPDB(MS_U8 u8En);
+INTERFACE void Hal_VIP_MCNRInit(void);
+INTERFACE MS_BOOL Hal_VIP_GetSRAMDumpGammaYUV(EN_VIP_SRAM_DUMP_TYPE endump,void *u32Sram,MS_U32 u32reg);
+INTERFACE MS_BOOL Hal_VIP_GetSRAMDumpGammaRGB(EN_VIP_SRAM_DUMP_TYPE endump,void *u32Sram,MS_U32 u32reg);
+INTERFACE MS_BOOL Hal_VIP_GetSRAMDumpGammaRGBCallback(EN_VIP_SRAM_DUMP_TYPE endump,void *u32Sram,MS_U32 u32reg);
+INTERFACE MS_BOOL Hal_VIP_GetSRAMDumpGammaYUVCallback(EN_VIP_SRAM_DUMP_TYPE endump,void *u32Sram ,MS_U32 u32reg);
+INTERFACE void Hal_VIP_LDCECO(void);
 INTERFACE void Hal_VIP_Set_Riu_Base(MS_U32 u32riubase);
+INTERFACE void Hal_VIP_Exit(void);
 INTERFACE void Hal_VIP_DLCHistVarOnOff(MS_U16 u16var);
 INTERFACE void Hal_VIP_SetDLCstatMIU(MS_U8 u8value,MS_U32 u32addr1,MS_U32 u32addr2);
 INTERFACE void Hal_VIP_SetDLCshift(MS_U8 u8value);
@@ -159,7 +183,10 @@ INTERFACE MS_U32 Hal_VIP_DLCGetPW(void);
 INTERFACE MS_U8 Hal_VIP_DLCGetMinP(void);
 INTERFACE MS_U8 Hal_VIP_DLCGetMaxP(void);
 INTERFACE void Hal_VIP_SetDLCActWin(MS_BOOL bEn,MS_U16 u16Vst,MS_U16 u16Hst,MS_U16 u16Vnd,MS_U16 u16Hnd);
-INTERFACE void Hal_VIP_SetDNRIPMRead(MS_BOOL bEn);
+INTERFACE void Hal_VIP_SeMCNRIPMRead(MS_BOOL bEn);
+INTERFACE void Hal_VIP_SetIPMConpress(MS_BOOL bEn);
+INTERFACE void Hal_VIP_SeCIIRRead(MS_BOOL bEn);
+INTERFACE void Hal_VIP_SeCIIRWrite(MS_BOOL bEn);
 
 INTERFACE void Hal_VIP_SetAutodownloadAddr(MS_U32 u32baseadr,MS_U16 u16iniaddr,MS_U8 u8cli);
 INTERFACE void Hal_VIP_SetAutodownloadReq(MS_U16 u16depth,MS_U16 u16reqlen,MS_U8 u8cli);
@@ -167,14 +194,14 @@ INTERFACE void Hal_VIP_SetAutodownload(MS_U8 bCLientEn,MS_U8 btrigContinue,MS_U8
 INTERFACE void Hal_VIP_SetAutodownloadTimer(MS_U8 bCLientEn);
 INTERFACE void Hal_VIP_GetNLMSRAM(MS_U16 u16entry);
 INTERFACE void Hal_VIP_SetNLMSRAMbyCPU(MS_U16 u16entry,MS_U32 u32tvalue);
-INTERFACE void Hal_VIP_SRAM_Dump(EN_VIP_SRAM_DUMP_TYPE endump,MS_BOOL u8Sram);
+INTERFACE MS_U8 Hal_VIP_SRAM_Dump(EN_VIP_SRAM_DUMP_TYPE endump,void* u32Sram);
 INTERFACE void Hal_VIP_VtrackEnable(MS_U8 u8FrameRate, EN_VIP_VTRACK_ENABLE_TYPE bEnable);
 INTERFACE void Hal_VIP_VtrackSetUserDefindedSetting(MS_BOOL bUserDefinded, MS_U8 *pu8Setting);
 INTERFACE void Hal_VIP_VtrackSetKey(MS_BOOL bUserDefinded, MS_U8 *pu8Setting);
 INTERFACE void Hal_VIP_VtrackSetPayloadData(MS_U16 u16Timecode, MS_U8 u8OperatorID);
 INTERFACE MS_BOOL Hal_VIP_GetVIPBypass(void);
-INTERFACE MS_BOOL Hal_VIP_GetDNRBypass(void);
-INTERFACE MS_BOOL Hal_VIP_GetSNRBypass(void);
+INTERFACE void Hal_VIP_InitY2R(void);
+INTERFACE MS_BOOL Hal_VIP_GetMCNRBypass(void);
 INTERFACE MS_BOOL Hal_VIP_GetLDCBypass(void);
 INTERFACE MS_BOOL Hal_VIP_GetNLMBypass(void);
     #undef INTERFACE

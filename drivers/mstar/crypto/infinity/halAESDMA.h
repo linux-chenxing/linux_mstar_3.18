@@ -167,6 +167,8 @@ void HAL_AESDMA_SetChainModeCBC(void);
 void HAL_AESDMA_Reset(void);
 void HAL_AESDMA_Start(U8 u8AESDMAStart);
 U16 HAL_AESDMA_GetStatus(void);
+void HAL_AESDMA_INTMASK(void);
+void HAL_AESDMA_INTDISABLE(void);
 
 void HAL_RSA_ClearInt(void);
 void HAL_RSA_Reset(void);
@@ -177,6 +179,8 @@ void HAL_RSA_LoadSignInverse(U32 *ptr_Sign, U8 u8Signlentgh);
 void HAL_RSA_LoadKeyE(U32 *ptr_E, U8 u8Elentgh);
 void HAL_RSA_LoadKeyN(U32 *ptr_N, U8 u8Nlentgh);
 void HAL_RSA_LoadKeyNInverse(U32 *ptr_N, U8 u8Nlentgh);
+void HAL_RSA_LoadKeyEInverse(U32 *ptr_A, U8 u8Alentgh);
+
 void HAL_RSA_SetKeyLength(U16 u16keylen);
 void HAL_RSA_SetKeyType(U8 u8hwkey, U8 u8pubkey);
 void HAL_RSA_ExponetialStart(void);

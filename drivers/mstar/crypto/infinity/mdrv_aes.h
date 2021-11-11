@@ -34,6 +34,7 @@ struct infinity_aes_op
 		struct crypto_cipher *cip;
 	} fallback;
     u16 engine;
+
 };
 
 
@@ -45,7 +46,7 @@ struct aesdma_alloc_dmem
     const char* DMEM_AES_ENG_SHABUF;
     u8 *aesdma_vir_addr;
     u8 *aesdma_vir_SHABuf_addr;
-}ALLOC_DMEM = {0, 0, "AESDMA_ENG", "AESDMA_SHA", 0, 0};
+}ALLOC_DMEM = {0, 0, "AESDMA_ENG", "AESDMA_ENG1", 0, 0};
 
 struct platform_device *psg_mdrv_aesdma;
 

@@ -1235,6 +1235,7 @@ typedef struct
 typedef struct
 {
     unsigned long bresetflag;                   ///< flag
+    unsigned long bAIPreflag;                   ///< flag
     ST_IOCTL_VIP_ACK_CONFIG stack;              ///< ack
     ST_IOCTL_VIP_IBC_CONFIG stibc;              ///< ibc
     ST_IOCTL_VIP_IHCICC_CONFIG stihcicc;        ///< iccihc
@@ -1254,6 +1255,7 @@ typedef struct
     ST_IOCTL_VIP_DNR_CONFIG stdnr;              ///< dnr
     ST_IOCTL_VIP_SNR_CONFIG stsnr;              ///< snr
     ST_IOCTL_VIP_CONFIG stvip;                  ///< vipmix
+    ST_IOCTL_VIP_AIP_CONFIG staip[EN_VIP_IOCTL_AIP_NUM]; ///<AIP
 } __attribute__ ((__packed__)) ST_IOCTL_VIP_SUSPEND_CONFIG;
 /**
 * Used to setup the susupend of vip device

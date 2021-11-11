@@ -9,19 +9,19 @@ if (ARCH_INFINITY) || (ARCH_CEDRIC) || (ARCH_INFINITY3)
 source "drivers/mstar/isp/Kconfig"
 endif
 
-if (ARCH_CEDRIC) || (ARCH_INFINITY)
+if (ARCH_CEDRIC) || (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/unfd/Kconfig"
 endif
 
-if (ARCH_CEDRIC) || (ARCH_CHICAGO)
+if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY3)
 source "drivers/mstar/emmc/Kconfig"
 endif
 
-if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY)
+if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/sdmmc/Kconfig"
 endif
 
-if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY)
+if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/sound/Kconfig"
 endif
 
@@ -46,6 +46,14 @@ if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/fb/Kconfig"
 endif
 
+if (ARCH_INFINITY3)
+source "drivers/mstar/fb1/Kconfig"
+endif
+
+if (ARCH_INFINITY3)
+source "drivers/mstar/fb2/Kconfig"
+endif
+
 if (ARCH_INFINITY)|| (ARCH_INFINITY3)
 source "drivers/mstar/scl/Kconfig"
 endif
@@ -55,27 +63,27 @@ source "drivers/mstar/emac/Kconfig"
 endif
 
 
-if (ARCH_CEDRIC) || (ARCH_INFINITY)
+if (ARCH_CEDRIC) || (ARCH_INFINITY)|| (ARCH_INFINITY3)
 source "drivers/mstar/ir/Kconfig"
 endif
 
-if (ARCH_CEDRIC) || (ARCH_INFINITY)
+if (ARCH_CEDRIC) || (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/i2c/Kconfig"
 endif
 
-if (ARCH_CEDRIC) || (ARCH_INFINITY)
+if (ARCH_CEDRIC) || (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/gpio/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY)|| (ARCH_INFINITY3)
 source "drivers/mstar/watchdog/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY)|| (ARCH_INFINITY3)
 source "drivers/mstar/sar/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY)|| (ARCH_INFINITY3)
 source "drivers/mstar/ircut/Kconfig"
 endif
 
@@ -87,11 +95,11 @@ if (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/mfev5/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/rtc/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/jpe/Kconfig"
 endif
 
@@ -99,31 +107,39 @@ if (ARCH_CEDRIC) || (ARCH_CHICAGO) || (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/flash_isp/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY)|| (ARCH_INFINITY3)
 source "drivers/mstar/xpm/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY)|| (ARCH_INFINITY3)
 source "drivers/mstar/crypto/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/cpufreq/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY)|| (ARCH_INFINITY3)
 source "drivers/mstar/pwm/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY)|| (ARCH_INFINITY3)
 source "drivers/mstar/spinand/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY)|| (ARCH_INFINITY3)
 source "drivers/mstar/spi/Kconfig"
 endif
 
-if (ARCH_INFINITY)
+if (ARCH_INFINITY) || (ARCH_INFINITY3)
 source "drivers/mstar/pm/Kconfig"
+endif
+
+if (ARCH_INFINITY3)
+source "drivers/mstar/ive/Kconfig"
+endif
+
+if (ARCH_INFINITY3)
+source "drivers/mstar/notify/Kconfig"
 endif
 

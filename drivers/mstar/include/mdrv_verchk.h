@@ -21,8 +21,7 @@
 #define CHK_VERCHK_HEADER(pvar)                                \
 ({															   \
     unsigned int *p = (unsigned int *)pvar;                    \
-    unsigned char  bH;                                         \
-    bH = ((*p & VERCHK_HADER_MASK) == VERCHK_HEADER) ? 1 : 0;  \
+    ((*p & VERCHK_HADER_MASK) == VERCHK_HEADER) ? 1 : 0;  \
 })
 
 
@@ -43,8 +42,7 @@
 #define CHK_VERCHK_MAJORVERSION_LESS(pvar, v)                       \
     ({                                                             \
         unsigned int *p = (unsigned int *)pvar;                    \
-        unsigned char bV;                                          \
-        bV = ((*p & VERCHK_MAJORVERSION_MASK) < (v& VERCHK_MAJORVERSION_MASK)) ? 1 : 0;             \
+        ((*p & VERCHK_MAJORVERSION_MASK) < (v& VERCHK_MAJORVERSION_MASK)) ? 1 : 0;             \
     })
 
 #define CHK_VERCHK_VERSION_GREATER(pvar, v)                    \
@@ -73,8 +71,7 @@
 #define CHK_VERCHK_SIZE(pvar,s)                                \
 ({                                                             \
     unsigned int *p = (unsigned int *)pvar;                    \
-    unsigned char bS;                                          \
-    bS = (*p == s ) ? 1 : 0;                                   \
+    (*p == s ) ? 1 : 0;                                   \
 })
 
 

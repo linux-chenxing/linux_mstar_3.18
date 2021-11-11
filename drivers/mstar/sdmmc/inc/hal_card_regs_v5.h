@@ -107,6 +107,12 @@
 
 
 //============================================
+//BOOT_MOD:offset 0x0E
+//============================================
+#define R_BOOT_MODE             BIT02_T
+
+
+//============================================
 //DDR_MOD: offset 0x0F
 //============================================
 #define R_PAD_IN_BYPASS         BIT00_T
@@ -187,6 +193,14 @@
 #define R_RBUF_EMPTY_IEN        BIT01_T
 #define R_F_WBUF_FULL_INT       BIT08_T
 #define R_F_RBUF_EMPTY_INT      BIT09_T
+
+
+//============================================
+//BOOT_MODE:offset 0x37
+//============================================
+#define R_NAND_BOOT_EN          BIT00_T
+#define R_BOOTSRAM_ACCESS_SEL   BIT01_T
+#define R_IMI_SEL               BIT02_T
 
 
 //============================================

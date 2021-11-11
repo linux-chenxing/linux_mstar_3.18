@@ -3925,7 +3925,7 @@ int nand_scan_ident(struct mtd_info *mtd, int maxchips,
 	/* Set the default functions */
 	nand_set_defaults(chip, chip->options & NAND_BUSWIDTH_16);
 
-#if defined(CONFIG_MS_NAND) || defined(CONFIG_MS_NAND_MODULE) || defined(CONFIG_MS_SPINAND)//ENABLE_MODULE_NAND_FLASH == 1
+#if defined(CONFIG_MS_NAND) || defined(CONFIG_MS_NAND_MODULE) || defined(CONFIG_MS_SPINAND)|| defined(CONFIG_MS_SPINAND_MODULE)//ENABLE_MODULE_NAND_FLASH == 1
 	if(chip->mtd_param_init != NULL)
 	{
 		int err;

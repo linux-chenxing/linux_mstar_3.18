@@ -41,37 +41,51 @@
 //-------------------------------------------------------------------------------------------------
 #define SOFTWARE_DESCRIPTOR
 #define RX_CHECKSUM
-#define INT_JULIAN_D
 #define CHIP_FLUSH_READ
-#define TX_QUEUE_4
-//#define ISR_BOTTOM_HALF  //for RX
-//#define TX_SOFTWARE_QUEUE //for TX
-#define TX_SKB_PTR
-//#define TX_SW_QUEUE
+//#define LAN_ESD_CARRIER_INTERRUPT
+//#define SOFTWARE_TX_FLOW_CONTROL
+//#define HARDWARE_DISCONNECT_DELAY
+
+/*** RX Configuration ***/
+#define INT_JULIAN_D
+//#define ISR_BOTTOM_HALF
 #define MSTAR_EMAC_NAPI
 #define RX_ZERO_COPY
 
+/*** TX Configuration ***/
+#define TX_QUEUE_4
+//#define TX_SOFTWARE_QUEUE
+#define TX_SKB_PTR
+//#define TX_SW_QUEUE
+//#define NEW_TX_QUEUE_128 //I3E new
+//#define NEW_TX_QUEUE_INTERRUPT_THRESHOLD //I3E new
+
+
+#if defined (TX_QUEUE_4)
+#if defined(NEW_TX_QUEUE_128)
+#define NEW_TX_QUEUE_SIZE   (127)   //max is 0xffffff
+#define TX_RING_SIZE        (NEW_TX_QUEUE_SIZE+4)
+#else
+#define TX_RING_SIZE        (4)  //effected size = TX_RING_SIZE - 1
+#endif
+#else
+#define TX_RING_SIZE        (2)  //effected size = TX_RING_SIZE - 1
+#endif
+
 #ifdef TX_SW_QUEUE
-#define TX_SW_QUEUE_SIZE						(1024)  //effected size = TX_RING_SIZE - 1
+#define TX_SW_QUEUE_SIZE					(256)  //effected size = TX_RING_SIZE - 1
 #define TX_DESC_CLEARED						0
 #define TX_DESC_WROTE						1
 #define TX_DESC_READ						2
-#define TX_FIFO_SIZE                        4 //HW FIFO size
+#define TX_FIFO_SIZE                        TX_RING_SIZE //HW FIFO size
 #endif
 
-#ifdef TX_QUEUE_4
-#define TX_RING_SIZE						(4)  //effected size = TX_RING_SIZE - 1
-#define EMAC_TX_COUNT       (14) //offset of TX counter in TSR
+#ifdef NEW_TX_QUEUE_INTERRUPT_THRESHOLD
+#define EMAC_INT_MASK       (0x07000dff)
 #else
-#define TX_RING_SIZE						(2)  //effected size = TX_RING_SIZE - 1
+#define EMAC_INT_MASK       (0x00000dff)
 #endif
 
-
-#ifdef TX_QUEUE_4
-#define EMAC_INT_MASK       (0xdff)
-#else
-#define EMAC_INT_MASK       (0xdff)
-#endif
 
 // Compiler Switches
 #define REG_BIT_MAP
@@ -90,6 +104,9 @@
 #define REG_BANK_EMAC1                      0x1511 //0x1021
 #define REG_BACK_EMAC2                      0x1512 //0x1022
 #define REG_BANK_EMAC3                      0x1513 //0x1023
+#define REG_BANK_X32_EMAC0                  0x1A1E
+#define REG_BANK_X32_EMAC2                  0x1A1F
+#define REG_BANK_X32_EMAC3                  0x1A20
 #define REG_BANK_ALBANY0                    0x0031
 #define REG_BANK_ALBANY1                    0x0032
 #define REG_BANK_ALBANY2                    0x0033
@@ -100,6 +117,7 @@
 #define CHECKSUM_ENABLE                     0x0FE
 #define RX_CHECKSUM_ENABLE                  0x000E
 #define CONFIG_EMAC_MOA                     1   // System Type
+#define EMAC_SPEED_10                       10
 #define EMAC_SPEED_100                      100
 
 #define EMAC_ALLFF                          0xFFFFFFFF
@@ -114,7 +132,7 @@
 
 // Base address here:
 #define MIU0_BUS_BASE                       0x20000000
-#define REG_ADDR_BASE                       (EMAC_RIU_REG_BASE+REG_BANK_EMAC0*0x200)//0xFD204000      // The register address base. Depends on system define.
+#define REG_EMAC0_ADDR_BASE                 (EMAC_RIU_REG_BASE+REG_BANK_EMAC0*0x200)//0xFD204000      // The register address base. Depends on system define.
 #define RBQP_LENG                           0x0100 // 0x40//                // ==?descriptors
 #define MAX_RX_DESCR                        RBQP_LENG//32   /* max number of receive buffers */
 #define SOFTWARE_DESC_LEN                   0x600
@@ -221,6 +239,9 @@
 #define EMAC_INT_LINK     ( 0x1 <<  9) // (EMAC)
 #define EMAC_INT_ROVR     ( 0x1 << 10) // (EMAC)
 #define EMAC_INT_HRESP    ( 0x1 << 11) // (EMAC)
+#define EMAC_INT_TXQUEUE_THRESHOLD  ( 0x1 << 24) // (EMAC)(I3E)
+#define EMAC_INT_TXQUEUE_EMPTY      ( 0x1 << 25) // (EMAC)(I3E)
+#define EMAC_INT_TXQUEUE_DROP       ( 0x1 << 26) // (EMAC)(I3E)
 // -------- EMAC_IER : (EMAC Offset: 0x28) Interrupt Enable Register --------
 // -------- EMAC_IDR : (EMAC Offset: 0x2c) Interrupt Disable Register --------
 // -------- EMAC_IMR : (EMAC Offset: 0x30) Interrupt Mask Register --------
@@ -259,7 +280,7 @@
 #define EMAC_DESC_IP_CSUM               (0x1 << 20)
 #define EMAC_DESC_TCP_UDP_CSUM          (0x1 << 21)
 // Constant: ----------------------------------------------------------------
-// Register MAP:
+// Register MAP EMAC0:
 #define REG_ETH_CTL                     0x00000000         // Network control register
 #define REG_ETH_CFG                     0x00000004         // Network configuration register
 #define REG_ETH_SR                      0x00000008         // Network status register
@@ -305,15 +326,29 @@
 #define REG_ETH_SA4L                    0x000000B0         // Specific address 4 first 4 bytes
 #define REG_ETH_SA4H                    0x000000B4         // Specific address 4 last  2 bytes
 #define REG_TAG_TYPE                    0x000000B8         // tag type of the frame
-#define REG_CAMA0_l                     0x00000200         // 16 LSB of CAM address  0
-#define REG_CAMA0_h                     0x00000204         // 32 MSB of CAM address  0
-#define REG_CAMA62_l                    0x000003F0         // 16 LSB of CAM address 62
-#define REG_CAMA62_h                    0x000003F4         // 32 MSB of CAM address 62
+#define REG_TXQUEUE_INT_LEVEL           0x000000D0         // thresholad for TX queue (I3E)
 
 #define REG_EMAC_JULIAN_0100            0x00000100
 #define REG_EMAC_JULIAN_0104            0x00000104
 #define REG_EMAC_JULIAN_0108            0x00000108
+#define REG_EMAC_JULIAN_011C            0x0000011C
+#define REG_EMAC_JULIAN_0120            0x00000120
+#define REG_EMAC_JULIAN_0124            0x00000124
+#define REG_EMAC_JULIAN_0134            0x00000134
 #define REG_EMAC_JULIAN_0138            0x00000138
+
+//#define REG_CAMA0_l                     0x00000200         // 16 LSB of CAM address  0
+//#define REG_CAMA0_h                     0x00000204         // 32 MSB of CAM address  0
+//#define REG_CAMA62_l                    0x000003F0         // 16 LSB of CAM address 62
+//#define REG_CAMA62_h                    0x000003F4         // 32 MSB of CAM address 62
+
+
+// Register MAP EMAC1:
+#define REG_ETH_EMAC1_h24               0x00000048         //new_tx_queue setting
+#define REG_ETH_EMAC1_h2F               0x0000005E         //new_tx_queue size and interrupt status
+
+
+/* ........................................................................ */
 
 u32 MHal_EMAC_ReadReg32( u32 xoffset );
 u32 MHal_EMAC_ReadRam32( u32 uRamAddr, u32 xoffset);
@@ -393,8 +428,8 @@ void MHal_EMAC_Set_Tx_Rx_Req_Priority_Switch(u32 xval);
 void MHal_EMAC_Set_Rx_Byte_Align_Offset(u32 xval);
 void MHal_EMAC_Write_Protect(u32 start_addr, u32 length);
 void MHal_EMAC_HW_init(void);
-void MHal_EMAC_Power_On_Clk(struct device);
-void MHal_EMAC_Power_Off_Clk(struct device);
+void MHal_EMAC_Power_On_Clk(struct device*);
+void MHal_EMAC_Power_Off_Clk(struct device*);
 void MHal_EMAC_timer_callback(unsigned long value);
 void MHal_EMAC_WritRam32(u32 uRamAddr, u32 xoffset,u32 xval);
 void MHal_EMAC_enable_mdi(void);
@@ -410,6 +445,10 @@ void MHal_EMAC_Write_SA3_MAC_Address(u8 m0,u8 m1,u8 m2,u8 m3,u8 m4,u8 m5);
 void MHal_EMAC_Write_SA4_MAC_Address(u8 m0,u8 m1,u8 m2,u8 m3,u8 m4,u8 m5);
 void MHal_EMAC_Set_Reverse_LED(u32 xval);
 u8 MHal_EMAC_Get_Reverse_LED(void);
+
+void MHal_EMAC_Set_TXQUEUE_INT_Level(u8 low, u8 high);
+void MHal_EMAC_enable_new_TXQUEUE(void);
+u8 MHal_EMAC_get_TXQUEUE_Count(void);
 
 #endif
 // -----------------------------------------------------------------------------

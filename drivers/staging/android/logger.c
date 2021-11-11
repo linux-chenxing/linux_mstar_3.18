@@ -426,7 +426,7 @@ static ssize_t logger_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	count = min_t(size_t, iocb->ki_nbytes, LOGGER_ENTRY_MAX_PAYLOAD);
 
 	now = current_kernel_time();
-
+	memset(&header, 0, sizeof(header));/*Make coverity happy*/
 	header.pid = current->tgid;
 	header.tid = current->pid;
 	header.sec = now.tv_sec;

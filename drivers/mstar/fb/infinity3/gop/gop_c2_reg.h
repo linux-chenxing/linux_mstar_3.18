@@ -237,6 +237,10 @@
 #define GOP_BANK_DOUBLE_WR_MSK  0x0400
 #define GOP_BANK_SEL_MSK        0x000F
 
+#define GOP_BANK_GOP0_WR_ACK_MSK 0x1000
+#define GOP_BANK_GOP1_WR_ACK_MSK 0x2000
+#define GOP_BANK_GOP2_WR_ACK_MSK 0x4000
+
 // GOP0 Bank 1
 // REG_GOP_00
 #define GOP0_GWin0_Enable       0x0001

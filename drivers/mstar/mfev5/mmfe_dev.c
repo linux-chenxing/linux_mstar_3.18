@@ -168,13 +168,20 @@ mmfedev_pushjob(
     mhve_ios* mios = mdev->p_asicip;
     mhve_job* mjob = mops->mhve_job(mops);
     int otmr, itmr, id = mctx->i_index;
+    int err = 0;
+    long tick;
 
     otmr = gettime();
     down(&mdev->m_sem);
     itmr = gettime();
     mdev->i_state = MMFE_DEV_STATE_BUSY;
     mios->enc_fire(mios, mjob);
-    wait_event(mdev->m_wqh,mdev->i_state==MMFE_DEV_STATE_IDLE);
+    if (0 == (tick = wait_event_timeout(mdev->m_wqh, mdev->i_state==MMFE_DEV_STATE_IDLE, 60)))
+    {
+        mjob->i_code = MHVEJOB_TIME_OUT;
+        printk(KERN_ERR"mfe-wait event to(%ld)\n", tick);
+        err = -1;
+    }
     itmr = gettime() - itmr;
     up(&mdev->m_sem);
     otmr = gettime() - otmr;
@@ -187,8 +194,17 @@ mmfedev_pushjob(
         mdev->i_counts[id][2] = itmr;
     if (mjob->i_tick > mdev->i_counts[id][3])
         mdev->i_counts[id][3] = mjob->i_tick;
-
-    return 0;
+#if MMFE_TIMER_SIZE>0
+    id = mctx->i_numbr&((MMFE_TIMER_SIZE/8)-1);
+    if(id==0){mctx->i_numbr = 0;}
+    mdev->i_counts[mctx->i_index][4] -= mctx->p_timer[id].tm_cycles/(MMFE_TIMER_SIZE/8);
+    mctx->p_timer[id].tm_dur[0] = (unsigned char)otmr;
+    mctx->p_timer[id].tm_dur[1] = (unsigned char)itmr;
+    mctx->p_timer[id].tm_cycles = (int)mjob->i_tick;
+    mctx->i_numbr++;
+    mdev->i_counts[mctx->i_index][4] += mctx->p_timer[id].tm_cycles/(MMFE_TIMER_SIZE/8);
+#endif
+    return err;
 }
 
 int
@@ -196,10 +212,13 @@ mmfedev_isr_fnx(
     mmfe_dev*   mdev)
 {
     mhve_ios* mios = mdev->p_asicip;
-    if (!mios->isr_func(mios, 0))
-    {
-        mdev->i_state = MMFE_DEV_STATE_IDLE;
-        wake_up(&mdev->m_wqh);
-    }
+    //if (!mios->isr_func(mios, 0))
+    //{
+    //    mdev->i_state = MMFE_DEV_STATE_IDLE;
+    //    wake_up(&mdev->m_wqh);
+    //}
+    mios->isr_func(mios, 0);
+    mdev->i_state = MMFE_DEV_STATE_IDLE;
+    wake_up(&mdev->m_wqh);
     return 0;
 }

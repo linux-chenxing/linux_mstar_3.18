@@ -105,6 +105,8 @@
 #define INT_MS_OTG (2048 + 64 + 5)//INT_IRQ_OTG
 #elif defined(CONFIG_ARCH_INFINITY)
 #define INT_MS_OTG (96)//INT_IRQ_OTG
+#elif defined(CONFIG_ARCH_INFINITY3)
+#define INT_MS_OTG (96)//INT_IRQ_OTG
 #endif
 /* the module parameter */
 #define DRIVER_DESC "MSB250x USB Device Controller Gadget"

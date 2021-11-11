@@ -57,6 +57,8 @@
 #include "mdrv_scl_dbg.h"
 #include "mdrv_pnl.h"
 #include "mdrv_verchk.h"
+#include "MsTypes.h"
+#include "halpnl_utility.h"
 
 #define MDRV_MS_PNL_DEVICE_COUNT    1
 #define MDRV_MS_PNL_NAME            "mpnl"
@@ -91,7 +93,7 @@ typedef struct
     int refCnt;
     struct cdev cdev;
     struct file_operations fops;
-	struct device *devicenode;
+    struct device *devicenode;
 }ST_DEV_PNL;
 
 static ST_DEV_PNL _dev_ms_pnl =
@@ -125,16 +127,16 @@ static const struct of_device_id ms_pnl_of_match_table[] =
 
 static struct platform_driver st_ms_pnl_driver =
 {
-	.probe 		= mdrv_ms_pnl_probe,
-	.remove 	= mdrv_ms_pnl_remove,
+    .probe      = mdrv_ms_pnl_probe,
+    .remove     = mdrv_ms_pnl_remove,
     .suspend    = mdrv_ms_pnl_suspend,
     .resume     = mdrv_ms_pnl_resume,
-	.driver =
-	{
-		.name	= MDRV_NAME_PNL,
+    .driver =
+    {
+        .name   = MDRV_NAME_PNL,
         .owner  = THIS_MODULE,
         .of_match_table = of_match_ptr(ms_pnl_of_match_table),
-	},
+    },
 };
 #if (!CONFIG_OF)
 static u64 ms_pnl_dma_mask = 0xffffffffUL;
@@ -184,7 +186,7 @@ int _mdrv_ms_pnl_io_set_timing_config(struct file *filp, unsigned long arg)
             }
             else
             {
-                if(copy_from_user(&stCfg, &(((ST_IOCLT_PNL_TIMING_CONFIG __user *)arg)->u16Vsync_St), sizeof(ST_MDRV_PNL_TIMING_CONFIG)))
+                if(copy_from_user(&stCfg, &(((__user ST_IOCLT_PNL_TIMING_CONFIG  *)arg)->u16Vsync_St), sizeof(ST_MDRV_PNL_TIMING_CONFIG)))
                 {
                     return -EFAULT;
                 }
@@ -195,7 +197,7 @@ int _mdrv_ms_pnl_io_set_timing_config(struct file *filp, unsigned long arg)
     {
         VERCHK_ERR("[PNL] No Header !!! \n");
 
-        if(copy_from_user(&stCfg, (ST_MDRV_PNL_TIMING_CONFIG __user *)arg, sizeof(ST_MDRV_PNL_TIMING_CONFIG)))
+        if(copy_from_user(&stCfg, (__user ST_MDRV_PNL_TIMING_CONFIG  *)arg, sizeof(ST_MDRV_PNL_TIMING_CONFIG)))
         {
             return -EFAULT;
         }
@@ -210,6 +212,60 @@ int _mdrv_ms_pnl_io_set_timing_config(struct file *filp, unsigned long arg)
 
     return 0;
 }
+
+int _mdrv_ms_pnl_io_set_lpll_config(struct file *filp, unsigned long arg)
+{
+    ST_MDRV_PNL_TIMING_CONFIG stCfg;
+
+    if ( CHK_VERCHK_HEADER( &(((ST_IOCLT_PNL_TIMING_CONFIG __user *)arg)->VerChk_Version)) )
+    {
+        if( CHK_VERCHK_VERSION_LESS( &(((ST_IOCLT_PNL_TIMING_CONFIG __user *)arg)->VerChk_Version), IOCTL_PNL_VERSION) )
+        {
+
+            VERCHK_ERR("[PNL] Version(%04x) < %04x!!! \n",
+                ((ST_IOCLT_PNL_TIMING_CONFIG __user *)arg)->VerChk_Version & VERCHK_VERSION_MASK,
+                IOCTL_PNL_VERSION);
+
+            return -EINVAL;
+        }
+        else
+        {
+            if( CHK_VERCHK_SIZE( &(((ST_IOCLT_PNL_TIMING_CONFIG __user *)arg)->VerChk_Size), sizeof(ST_IOCLT_PNL_TIMING_CONFIG)) == 0 )
+            {
+                VERCHK_ERR("[PNL] Size(%04x) != %04x!!! \n",
+                    sizeof(ST_IOCLT_PNL_TIMING_CONFIG),
+                    (((ST_IOCLT_PNL_TIMING_CONFIG __user *)arg)->VerChk_Size));
+
+                return -EINVAL;
+            }
+            else
+            {
+                if(copy_from_user(&stCfg, &(((__user ST_IOCLT_PNL_TIMING_CONFIG  *)arg)->u16Vsync_St), sizeof(ST_MDRV_PNL_TIMING_CONFIG)))
+                {
+                    return -EFAULT;
+                }
+            }
+        }
+    }
+    else
+    {
+        VERCHK_ERR("[PNL] No Header !!! \n");
+
+        if(copy_from_user(&stCfg, (__user ST_MDRV_PNL_TIMING_CONFIG  *)arg, sizeof(ST_MDRV_PNL_TIMING_CONFIG)))
+        {
+            return -EFAULT;
+        }
+    }
+    SCL_DBG(SCL_DBG_LV_IOCTL()&EN_DBGMG_IOCTLEVEL_ELSE, "[PNL] Size(%04d) \n",(((ST_IOCLT_PNL_TIMING_CONFIG __user *)arg)->VerChk_Size) );
+
+    if(!MDrv_PNL_Set_LPLL_Config(&stCfg))
+    {
+        return -EFAULT;
+    }
+
+    return 0;
+}
+
 
 int _mdrv_ms_pnl_io_get_version(struct file *filp, unsigned long arg)
 {
@@ -304,14 +360,18 @@ long mdrv_ms_pnl_ioctl(struct file *filp, unsigned int u32Cmd, unsigned long u32
     {
         return -EFAULT;
     }
-	/* not allow query or command once driver suspend */
+    /* not allow query or command once driver suspend */
 
-    SCL_DBG(SCL_DBG_LV_IOCTL()&EN_DBGMG_IOCTLEVEL_ELSE, "[PNL] IOCTL_NUM:: == %s ==  \n", (CMD_PARSING(u32Cmd)));
+    SCL_DBG(SCL_DBG_LV_IOCTL()&EN_DBGMG_IOCTLEVEL_LCD, "[PNL] IOCTL_NUM:: == %s ==  \n", (CMD_PARSING(u32Cmd)));
 
     switch(u32Cmd)
     {
     case IOCTL_PNL_SET_TIMING_CONFIG:
         retval = _mdrv_ms_pnl_io_set_timing_config(filp, u32Arg);
+        break;
+
+    case IOCTL_PNL_SET_LPLL_CONFIG:
+        retval = _mdrv_ms_pnl_io_set_lpll_config(filp, u32Arg);
         break;
 
     case IOCTL_PNL_GET_VERSION_CONFIG:
@@ -379,6 +439,11 @@ static int mdrv_ms_pnl_probe(struct platform_device *pdev)
         _dev_ms_pnl.devicenode =device_create(m_pnl_class, NULL, dev,NULL, "mpnl");
     }
     stPnlInitCfg.u32RiuBase = 0x1F000000;
+    if(of_property_read_u32(pdev->dev.of_node, "jtag-mode", &gu32JTAGmode))
+    {
+        printk(KERN_WARNING "[PNL] Failed to read jtag-mode property, default on/n");
+        gu32JTAGmode = 1;  //if can't get, default off
+    }
     if(MDrv_PNL_Init(&stPnlInitCfg) == 0)
     {
         return -EFAULT;
@@ -390,6 +455,15 @@ static int mdrv_ms_pnl_probe(struct platform_device *pdev)
 static int mdrv_ms_pnl_remove(struct platform_device *pdev)
 {
     SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[PNL] %s\n",__FUNCTION__);
+    gbProbeAlready = (gbProbeAlready&(~EN_DBG_PNL_CONFIG));
+    if(gbProbeAlready == 0)
+    {
+        MDrv_PNL_Exit(1);
+    }
+    else
+    {
+        MDrv_PNL_Exit(0);
+    }
     cdev_del(&_dev_ms_pnl.cdev);
     device_destroy(m_pnl_class, MKDEV(_dev_ms_pnl.s32Major, _dev_ms_pnl.s32Minor));
     class_destroy(m_pnl_class);
@@ -450,7 +524,6 @@ int mdrv_ms_pnl_open(struct inode *inode, struct file *filp)
 
 int mdrv_ms_pnl_release(struct inode *inode, struct file *filp)
 {
-
     SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[PNL] %s\n",__FUNCTION__);
     _dev_ms_pnl.refCnt--;
     SCL_ASSERT(_dev_ms_pnl.refCnt>=0);

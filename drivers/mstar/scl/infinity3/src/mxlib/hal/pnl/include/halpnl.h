@@ -114,7 +114,7 @@
 #endif
 
 INTERFACE void   Hal_PNL_Set_Riu_Base(MS_U32 u32Riubase);
-INTERFACE void   Hal_PNL_Set_Chiptop(void);
+INTERFACE void   Hal_PNL_Set_Chiptop(MS_BOOL bEn);
 INTERFACE void   Hal_PNL_Set_Init_Y2R(void);
 INTERFACE void   Hal_PNL_Set_VSync_St(MS_U16 u16Val);
 INTERFACE void   Hal_PNL_Set_VSync_End(MS_U16 u16Val);

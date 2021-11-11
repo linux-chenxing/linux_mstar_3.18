@@ -103,6 +103,8 @@
 #define VIP_NLM_ENTRY_NUM 1104
 #define VIP_NLM_AUTODOWNLOAD_BASE_UNIT 16
 #define VIP_NLM_AUTODOWNLOAD_CLIENT 9
+#define DRV_VIP_MUTEX_LOCK()            MsOS_ObtainMutex(_VIP_Mutex,MSOS_WAIT_FOREVER)
+#define DRV_VIP_MUTEX_UNLOCK()          MsOS_ReleaseMutex(_VIP_Mutex)
 //
 typedef enum
 {
@@ -126,8 +128,8 @@ typedef enum
     EN_VIP_DRV_IHC_CONFIG           = 0x10,     ///< IHC
     EN_VIP_DRV_FCC_CONFIG           = 0x20,     ///< FCC
     EN_VIP_DRV_UVC_CONFIG           = 0x40,     ///< UVC
-    EN_VIP_DRV_DLC_CONFIG           = 0x80,     ///< DLC
-    EN_VIP_DRV_DLC_HISTOGRAM_CONFIG = 0x100,    ///< HIST
+    EN_VIP_DRV_DLC_HISTOGRAM_CONFIG = 0x80,    ///< HIST
+    EN_VIP_DRV_DLC_CONFIG           = 0x100,     ///< DLC
     EN_VIP_DRV_LCE_CONFIG           = 0x200,    ///< LCE
     EN_VIP_DRV_PEAKING_CONFIG       = 0x400,    ///< PK
     EN_VIP_DRV_NLM_CONFIG           = 0x800,    ///< NLM
@@ -135,15 +137,28 @@ typedef enum
     EN_VIP_DRV_LDC_DMAP_CONFIG      = 0x2000,   ///< LDCDMAP
     EN_VIP_DRV_LDC_SRAM_CONFIG      = 0x4000,   ///< LDC SRAM
     EN_VIP_DRV_LDC_CONFIG           = 0x8000,   ///< LDC
-    EN_VIP_DRV_DNR_CONFIG           = 0x10000,  ///< DNR
-    EN_VIP_DRV_SNR_CONFIG           = 0x20000,  ///< SNR
-    EN_VIP_DRV_CONFIG               = 0x40000,  ///< 19 bit to control 19 IOCTL
+    EN_VIP_DRV_CONFIG               = 0x10000,  ///< 19 bit to control 19 IOCTL
+    EN_VIP_DRV_MCNR_CONFIG          = 0x20000,  ///< MCNR
 }EN_VIP_DRV_CONFIG_TYPE;
 typedef enum
 {
     EN_DRV_VIP_LDCLCBANKMODE_64,
     EN_DRV_VIP_LDCLCBANKMODE_128,
 }EN_DRV_VIP_LDCLCBANKMODE_TYPE;
+typedef enum
+{
+    EN_VIP_DRV_AIP_SRAM_GAMMA_Y = 0, ///< gamma y
+    EN_VIP_DRV_AIP_SRAM_GAMMA_U, ///< gamma u
+    EN_VIP_DRV_AIP_SRAM_GAMMA_V, ///< gamma v
+    EN_VIP_DRV_AIP_SRAM_GM10to12_R, ///< gamma R
+    EN_VIP_DRV_AIP_SRAM_GM10to12_G, ///< gamma G
+    EN_VIP_DRV_AIP_SRAM_GM10to12_B, ///< gamma B
+    EN_VIP_DRV_AIP_SRAM_GM12to10_R, ///< gamma R
+    EN_VIP_DRV_AIP_SRAM_GM12to10_G, ///< gamma G
+    EN_VIP_DRV_AIP_SRAM_GM12to10_B, ///< gamma B
+    EN_VIP_DRV_AIP_SRAM_WDR, ///< wdr
+    EN_VIP_DRV_AIP_SRAM_NUM, ///< wdr
+}EN_VIP_DRV_AIP_SRAM_TYPE;
 
 //-------------------------------------------------------------------------------------------------
 //  Defines & Structure
@@ -158,13 +173,6 @@ typedef struct
 {
     MS_U32 u32RiuBase;
 }ST_VIP_INIT_CONFIG;
-typedef struct
-{
-    MS_U32 u32RiuBase;
-    MS_U32 u32CMDQ_Phy;
-    MS_U32 u32CMDQ_Size;
-    MS_U32 u32CMDQ_Vir;
-}ST_VIP_OPEN_CONFIG;
 
 typedef struct
 {
@@ -265,14 +273,22 @@ typedef struct
 #endif
 
 INTERFACE MS_BOOL Drv_VIP_SetLDCOnConfig(MS_BOOL bEn);
-INTERFACE ST_VIP_DLC_HISTOGRAM_REPORT Drv_VIP_GetDLCHistogramConfig(void);
+INTERFACE void Drv_VIP_GetDLCHistogramConfig(ST_VIP_DLC_HISTOGRAM_REPORT *stdlc);
 INTERFACE MS_BOOL Drv_VIP_Init(ST_VIP_INIT_CONFIG *pCfg);
-INTERFACE MS_BOOL Drv_VIP_SetDLCHistogramConfig(ST_VIP_DLC_HISTOGRAM_CONFIG stDLCCfg);
+INTERFACE void Drv_VIP_Exit(void);
+INTERFACE MS_BOOL Drv_VIP_SetDLCHistogramConfig(ST_VIP_DLC_HISTOGRAM_CONFIG *stDLCCfg);
 INTERFACE MS_U32 Drv_VIP_GetDLCHistogramReport(MS_U16 u16range);
-INTERFACE MS_BOOL Drv_VIP_SetLDCMdConfig(ST_VIP_LDC_MD_CONFIG stLDCCfg);
-INTERFACE MS_BOOL Drv_VIP_SetLDCDmapConfig(ST_VIP_LDC_DMAP_CONFIG stLDCCfg);
-INTERFACE MS_BOOL Drv_VIP_SetLDCSRAMConfig(ST_VIP_LDC_SRAM_CONFIG stLDCCfg);
-INTERFACE void    Drv_VIPLDCInit(void);
+INTERFACE MS_BOOL Drv_VIP_SetLDCMdConfig(ST_VIP_LDC_MD_CONFIG *stLDCCfg);
+INTERFACE MS_BOOL Drv_VIP_SetLDCDmapConfig(ST_VIP_LDC_DMAP_CONFIG *stLDCCfg);
+INTERFACE MS_BOOL Drv_VIP_SetLDCSRAMConfig(ST_VIP_LDC_SRAM_CONFIG *stLDCCfg);
+INTERFACE MS_BOOL Drv_VIP_CheckIPMResolution(void);
+INTERFACE void Drv_VIP_HWInit(void);
+INTERFACE MS_BOOL Drv_VIP_GetIsBlankingRegion(void);
+INTERFACE void Drv_VIP_Open(void);
+INTERFACE MS_BOOL Drv_VIP_GetEachDMAEn(void);
+INTERFACE void * Drv_VIP_GeSRAMGlobal(EN_VIP_DRV_AIP_SRAM_TYPE enAIPType);
+INTERFACE void * Drv_VIP_SetAIPSRAMConfig
+    (void * pvPQSetParameter, EN_VIP_DRV_AIP_SRAM_TYPE enAIPType);
 INTERFACE void Drv_VIP_DNR_Init(void);
 INTERFACE void Drv_VIP_SetLDCBank_Mode(EN_DRV_VIP_LDCLCBANKMODE_TYPE enType);
 INTERFACE void Drv_VIP_PK_Init(void);
@@ -282,15 +298,20 @@ INTERFACE void Drv_VIP_ICE_Init(void);
 INTERFACE void Drv_VIP_IHC_Init(void);
 INTERFACE void Drv_VIP_FCC_Init(void);
 INTERFACE void Drv_VIP_LCE_Init(void);
-INTERFACE unsigned char Drv_VIP_SetNLMSRAMConfig(ST_VIP_NLM_SRAM_CONFIG stCfg);
+INTERFACE unsigned char Drv_VIP_SetNLMSRAMConfig(ST_VIP_NLM_SRAM_CONFIG *stCfg);
 INTERFACE void Drv_VIP_SRAM_Dump(void);
-INTERFACE void Drv_VIP_SetDNRIPMRead(MS_BOOL bEn);
+INTERFACE MS_BOOL Drv_VIP_GetSRAMCheckPass(void);
+INTERFACE void Drv_VIP_SetMCNRIPMRead(MS_BOOL bEn);
+INTERFACE void Drv_VIP_SetIPMConpress(MS_BOOL bEn);
+INTERFACE void Drv_VIP_SetCIIRRead(MS_BOOL bEn);
+INTERFACE void Drv_VIP_SetCIIRWrite(MS_BOOL bEn);
 INTERFACE MS_BOOL Drv_VIP_VtrackSetPayloadData(MS_U16 u16Timecode, MS_U8 u8OperatorID);
 INTERFACE MS_BOOL Drv_VIP_VtrackSetKey(MS_BOOL bUserDefinded, MS_U8 *pu8Setting);
 INTERFACE MS_BOOL Drv_VIP_VtrackSetUserDefindedSetting(MS_BOOL bUserDefinded, MS_U8 *pu8Setting);
 INTERFACE MS_BOOL Drv_VIP_VtrackEnable( MS_U8 u8FrameRate, EN_VIP_DRVVTRACK_ENABLE_TYPE bEnable);
 INTERFACE MS_BOOL Drv_VIP_GetBypassStatus(EN_VIP_DRV_CONFIG_TYPE enIPType);
-INTERFACE wait_queue_head_t * Drv_VIP_GetWaitQueueHead(void);
+INTERFACE void Drv_VIP_CheckVIPSRAM(MS_U32 u32Type);
+INTERFACE void * Drv_VIP_GetWaitQueueHead(void);
 INTERFACE MS_BOOL Drv_VIP_GetCMDQHWDone(void);
 
 #undef INTERFACE

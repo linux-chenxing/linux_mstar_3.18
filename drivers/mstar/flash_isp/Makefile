@@ -1,21 +1,10 @@
-ifdef CONFIG_MS_FLASH_ISP_CEDRIC
-    CONFIG_MSTAR_CHIP_NAME := cedric
-endif
-ifdef CONFIG_MS_FLASH_ISP_CHICAGO
-    CONFIG_MSTAR_CHIP_NAME := chicago
-endif
-ifdef CONFIG_MS_FLASH_ISP_INFINITY
-    CONFIG_MSTAR_CHIP_NAME := infinity
-endif
-ifdef CONFIG_MS_FLASH_ISP_INFINITY3
-    CONFIG_MSTAR_CHIP_NAME := infinity3
-endif
-
+CONFIG_MSTAR_CHIP_NAME := $(subst ",,$(CONFIG_MSTAR_CHIP_NAME))
 
 # general options
 EXTRA_CFLAGS      +=  -Idrivers/mstar/flash_isp
 EXTRA_CFLAGS      +=  -Idrivers/mstar/flash_isp/include
 EXTRA_CFLAGS      +=  -Idrivers/mstar/flash_isp/$(CONFIG_MSTAR_CHIP_NAME)
+EXTRA_CFLAGS      +=  -Idrivers/mstar/include
 
 # specific options
 EXTRA_CFLAGS      +=  -DMSOS_TYPE_LINUX

@@ -94,18 +94,18 @@
 #define DRV_SCLDMA_C
 
 #ifdef MSOS_TYPE_LINUX_KERNEL
-#include <linux/wait.h>
-#include <linux/irqreturn.h>
-#include <asm/div64.h>
+//#include <linux/wait.h>
+//#include <linux/irqreturn.h>
+//#include <asm/div64.h>
 #endif
 
 //-------------------------------------------------------------------------------------------------
 //  Include Files
 //-------------------------------------------------------------------------------------------------
-#include <linux/kthread.h>
-#include <linux/delay.h>
-#include <linux/slab.h>
-#include <linux/vmalloc.h>          /* seems do not need this */
+//#include <linux/kthread.h>
+//#include <linux/delay.h>
+//#include <linux/slab.h>
+//#include <linux/vmalloc.h>          /* seems do not need this */
 #include "MsCommon.h"
 #include "MsTypes.h"
 #include "MsOS.h"
@@ -133,6 +133,7 @@
 #define SINGLE_SKIP 0xF
 #define FRM_POLLIN  0x1
 #define SNP_POLLIN  0x2
+#define FRM2_POLLIN  0x2
 #define SCL_IMIinitAddr 0x14000
 
 #define SINGLE_BUFF_ACTIVE_TIMIEOUT      100
@@ -154,12 +155,12 @@
         (gstScldmaBufferQueue[enClientType].pstWrite < gstScldmaBufferQueue[enClientType].pstRead)
 #define _GetInQueueCountIfLarge(enClientType)\
         gstScldmaBufferQueue[enClientType].u8InQueueCount =\
-    (gstScldmaBufferQueue[enClientType].pstWrite - gstScldmaBufferQueue[enClientType].pstRead)/SCLDMA_BUFFER_QUEUE_OFFSET;
+    (gstScldmaBufferQueue[enClientType].pstWrite - gstScldmaBufferQueue[enClientType].pstRead)/1;
 #define _GetInQueueCountIfSmall(enClientType)\
         gstScldmaBufferQueue[enClientType].u8InQueueCount =\
     ((gstScldmaBufferQueue[enClientType].pstWrite- gstScldmaBufferQueue[enClientType].pstHead)+\
     (gstScldmaBufferQueue[enClientType].pstTail- gstScldmaBufferQueue[enClientType].pstRead))\
-    /SCLDMA_BUFFER_QUEUE_OFFSET;
+    /1;
 #define _Is_IdxRingCircuit(enClientType,idx) (idx == (gstScldmaInfo.bMaxid[enClientType]-1))
 
 #define _Is_SC3Singlemode(enClientType) (_Is_SingleMode(enClientType) && \
@@ -175,14 +176,19 @@
 #define _Is_VsrcId(enSCLDMA_ID) ((enSCLDMA_ID ==E_SCLDMA_ID_1_W)||(enSCLDMA_ID ==E_SCLDMA_ID_2_W))
 #define _Is_VsrcDoubleBufferNotOpen() (gVsrcDBnotOpen)
 #define _Is_VsrcDoubleBufferOpen() (!gVsrcDBnotOpen)
+#define _ResetTrigCount(enClientType) (gu32TrigCount[enClientType]--)
 #define SCLDMA_SIZE_ALIGN(x, align)                 ((x+align) & ~(align-1))
 #define SCLDMA_CHECK_ALIGN(x, align)                (x & (align-1))
 
 #define DRV_SCLDMA_MUTEX_LOCK()            MsOS_ObtainMutex(_SCLDMA_Mutex,MSOS_WAIT_FOREVER)
 #define DRV_SCLDMA_MUTEX_UNLOCK()          MsOS_ReleaseMutex(_SCLDMA_Mutex)
+#if USE_RTK
+#define DRV_SCLDMA_MUTEX_LOCK_ISR()        MsOS_ObtainMutex(_SCLIRQ_SCLDMA_Mutex,MSOS_WAIT_FOREVER);
+#define DRV_SCLDMA_MUTEX_UNLOCK_ISR()      MsOS_ReleaseMutex(_SCLIRQ_SCLDMA_Mutex);
+#else
 #define DRV_SCLDMA_MUTEX_LOCK_ISR()        MsOS_ObtainMutex_IRQ(_SCLIRQ_SCLDMA_Mutex);
 #define DRV_SCLDMA_MUTEX_UNLOCK_ISR()      MsOS_ReleaseMutex_IRQ(_SCLIRQ_SCLDMA_Mutex);
-
+#endif
 
 #define PARSING_SCLDMA_ID(x)           (x==E_SCLDMA_ID_1_W   ? "SCLDMA_1_W" : \
                                         x==E_SCLDMA_ID_2_W   ? "SCLDMA_2_W" : \
@@ -202,6 +208,7 @@
                                                            "UNKNOWN")
 
 #define PARSING_SCLDMA_BUFMD(x)       (x==E_SCLDMA_BUF_MD_RING   ? "RING" : \
+                                       x==E_SCLDMA_BUF_MD_SWRING ? "SWRING" : \
                                        x==E_SCLDMA_BUF_MD_SINGLE ? "SINGLE" : \
                                                                    "UNKNOWN")
 
@@ -238,7 +245,7 @@
                                         x==E_SCLDMA_ISR_LOG_FRMEND ? "FRMEND" : \
                                                                "UNKNOWN")
 
-
+#define OMX_VSPL_POLLTIME 80*1000
 //-------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------
 //  Variable
@@ -275,10 +282,12 @@ MS_U32 gu32SC2FRMEvents;
 MS_U8 gu8ISPcount;
 
 /////////////////
-/// gu32FRMDoneTime
+/// gu64FRMDoneTime
 /// save frame done time.
 ////////////////
-MS_U32 gu32FRMDoneTime;
+MS_U64 gu64FRMDoneTime[E_SCLDMA_CLIENT_NUM][MAX_BUFFER_COUNT+1];
+MS_U32 gu32SendTime[E_SCLDMA_CLIENT_NUM];
+MS_U8 gbSendPoll[E_SCLDMA_CLIENT_NUM];
 
 /////////////////
 /// gu32TrigCount
@@ -286,6 +295,8 @@ MS_U32 gu32FRMDoneTime;
 ////////////////
 MS_U32 gu32TrigCount[E_SCLDMA_CLIENT_NUM];
 MS_BOOL gbForceClose[E_SCLDMA_CLIENT_NUM];
+MS_U8 gu8ResetCount[E_SCLDMA_CLIENT_NUM];
+MS_U8 gu8DMAErrCount[E_SCLDMA_CLIENT_NUM];
 ST_SCLDMA_INFO_TYPE  gstScldmaInfo;
 ST_SCLDMA_BUFFER_QUEUE_CONFIG gstScldmaBufferQueue[E_SCLDMA_CLIENT_NUM];
 
@@ -319,11 +330,15 @@ void _Drv_SCLDMA_SC1OnOffWithoutDoubleBuffer
         {
             DRV_SCLDMA_MUTEX_LOCK_ISR();
             _SetFlagType(enClientType,E_SCLDMA_FLAG_NEXT_ON);
+            _ReSetFlagType(enClientType,E_SCLDMA_FLAG_NEXT_OFF);
             DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         }
         else
         {
-            _Drv_SCLDMA_SC1OnOff(enRW, bEn);
+            DRV_SCLDMA_MUTEX_LOCK_ISR();
+            _SetFlagType(enClientType,E_SCLDMA_FLAG_NEXT_OFF);
+            _ReSetFlagType(enClientType,E_SCLDMA_FLAG_NEXT_ON);
+            DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         }
         SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&(Get_DBGMG_SCLDMAclient(enClientType,1)),
             "[DRMSCLDMA]%s %d wait for blanking\n",
@@ -349,11 +364,15 @@ void _Drv_SCLDMA_SC2OnOffWithoutDoubleBuffer
         {
             DRV_SCLDMA_MUTEX_LOCK_ISR();
             _SetFlagType(enClientType,E_SCLDMA_FLAG_NEXT_ON);
+            _ReSetFlagType(enClientType,E_SCLDMA_FLAG_NEXT_OFF);
             DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         }
         else
         {
-            _Drv_SCLDMA_SC2OnOff(enRW, bEn);
+            DRV_SCLDMA_MUTEX_LOCK_ISR();
+            _SetFlagType(enClientType,E_SCLDMA_FLAG_NEXT_OFF);
+            _ReSetFlagType(enClientType,E_SCLDMA_FLAG_NEXT_ON);
+            DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         }
         SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&(Get_DBGMG_SCLDMAclient(enClientType,1)),
             "[DRMSCLDMA]%s %d wait for blanking\n",
@@ -377,21 +396,29 @@ void _Drv_SCLDMA_SetVsyncTrigConfig(EN_SCLDMA_VS_ID_TYPE enIDType)
 void _Drv_SCLDMA_ResetGlobalParameter(void)
 {
     MS_U8 u8ClientIdx;
+    MS_U8 y;
+    DRV_SCLDMA_MUTEX_LOCK();
     for(u8ClientIdx=0; u8ClientIdx<E_SCLDMA_VS_ID_NUM; u8ClientIdx++)
     {
         gstScldmaInfo.stVsCfg[u8ClientIdx].enTrigMd = E_SCLDMA_VS_TRIG_MODE_HW_IN_VSYNC;
+        for(y =0;y<=MAX_BUFFER_COUNT;y++)
+        {
+            gu64FRMDoneTime[u8ClientIdx][y] = 0;
+        }
+        gu8ResetCount[u8ClientIdx] = 0;
+        gu8DMAErrCount[u8ClientIdx] = 0;
     }
     gVsrcDBnotOpen = 1;
     gu32FRMEvents = 0;
     gu32SC2FRMEvents = 0;
     gu8ISPcount = 0;
-    gu32FRMDoneTime = 0;
     gbScldmaSuspend = 0;
+    DRV_SCLDMA_MUTEX_UNLOCK();
 }
 void _Drv_SCLDMA_ResetGlobalParameterByClient(EN_SCLDMA_CLIENT_TYPE u8ClientIdx)
 {
     MS_U8 u8BufferIdx;
-    gstScldmaInfo.enBuffMode[u8ClientIdx] = E_SCLDMA_BUF_MD_NUM;
+    DRV_SCLDMA_MUTEX_LOCK_ISR();
     if(u8ClientIdx<E_SCLDMA_3_FRM_R)
     {
         gstScldmaInfo.bDMAidx[u8ClientIdx]    = (E_SCLDMA_ACTIVE_BUFFER_SCL|E_SCLDMA_ACTIVE_BUFFER_OMX_RINGFULL);
@@ -400,18 +427,8 @@ void _Drv_SCLDMA_ResetGlobalParameterByClient(EN_SCLDMA_CLIENT_TYPE u8ClientIdx)
     {
         gstScldmaInfo.bDMAidx[u8ClientIdx]    = (E_SCLDMA_ACTIVE_BUFFER_SCL|0x50);
     }
-
-    gstScldmaInfo.bDmaflag[u8ClientIdx]   = E_SCLDMA_FLAG_BLANKING;
-    gstScldmaInfo.bMaxid[u8ClientIdx]     = 0;
     gstScldmaInfo.bDMAOnOff[u8ClientIdx]  = 0;
-    gstScldmaInfo.enColor[u8ClientIdx]    = 0;
-    for(u8BufferIdx=0;u8BufferIdx<4;u8BufferIdx++)
-    {
-        gstScldmaInfo.u32Base_Y[u8ClientIdx][u8BufferIdx]     = 0;
-        gstScldmaInfo.u32Base_C[u8ClientIdx][u8BufferIdx]     = 0;
-        gstScldmaInfo.u32Base_V[u8ClientIdx][u8BufferIdx]     = 0;
-    }
-    gu32TrigCount[u8ClientIdx]             = 0;
+    gstScldmaInfo.bDmaflag[u8ClientIdx]   = E_SCLDMA_FLAG_BLANKING;
     if(_Is_SWRingModeBufferReady(u8ClientIdx))
     {
         if(gstScldmaBufferQueue[u8ClientIdx].pstHead)
@@ -420,8 +437,8 @@ void _Drv_SCLDMA_ResetGlobalParameterByClient(EN_SCLDMA_CLIENT_TYPE u8ClientIdx)
         }
         gstScldmaBufferQueue[u8ClientIdx].bFull = 0;
         gstScldmaBufferQueue[u8ClientIdx].bUsed = 0;
-        gstScldmaBufferQueue[u8ClientIdx].enID = 0;
-        gstScldmaBufferQueue[u8ClientIdx].enRWMode = 0;
+        gstScldmaBufferQueue[u8ClientIdx].enID = E_SCLDMA_ID_MAX;
+        gstScldmaBufferQueue[u8ClientIdx].enRWMode = E_SCLDMA_RW_NUM;
         gstScldmaBufferQueue[u8ClientIdx].pstHead = 0;
         gstScldmaBufferQueue[u8ClientIdx].pstRead = 0;
         gstScldmaBufferQueue[u8ClientIdx].pstTail = 0;
@@ -431,16 +448,29 @@ void _Drv_SCLDMA_ResetGlobalParameterByClient(EN_SCLDMA_CLIENT_TYPE u8ClientIdx)
         gstScldmaBufferQueue[u8ClientIdx].u8InQueueCount = 0;
         gstScldmaBufferQueue[u8ClientIdx].u8NextActiveId = 0;
     }
+    DRV_SCLDMA_MUTEX_UNLOCK_ISR();
+    DRV_SCLDMA_MUTEX_LOCK();
+    gstScldmaInfo.enBuffMode[u8ClientIdx] = E_SCLDMA_BUF_MD_NUM;
+    gstScldmaInfo.bMaxid[u8ClientIdx]     = 0;
+    gstScldmaInfo.enColor[u8ClientIdx]    = E_SCLDMA_COLOR_NUM;
+    for(u8BufferIdx=0;u8BufferIdx<4;u8BufferIdx++)
+    {
+        gstScldmaInfo.u32Base_Y[u8ClientIdx][u8BufferIdx]     = 0;
+        gstScldmaInfo.u32Base_C[u8ClientIdx][u8BufferIdx]     = 0;
+        gstScldmaInfo.u32Base_V[u8ClientIdx][u8BufferIdx]     = 0;
+    }
+    gu32TrigCount[u8ClientIdx]             = 0;
+    DRV_SCLDMA_MUTEX_UNLOCK();
 }
 
 static void _Drv_SCLDMA_InitVariable(void)
 {
-    MS_U8 u8ClientIdx;
+    EN_SCLDMA_CLIENT_TYPE u8ClientIdx;
     MsOS_Memset(&gstScldmaInfo, 0, sizeof(ST_SCLDMA_INFO_TYPE));
     MsOS_Memset(&gstScldmaBufferQueue, 0, sizeof(ST_SCLDMA_BUFFER_QUEUE_CONFIG)*E_SCLDMA_CLIENT_NUM);
     _Drv_SCLDMA_ResetGlobalParameter();
     gbDBStatus = DoubleBufferDefaultSet;
-    for(u8ClientIdx=0; u8ClientIdx<E_SCLDMA_CLIENT_NUM; u8ClientIdx++)
+    for(u8ClientIdx=E_SCLDMA_1_FRM_W; u8ClientIdx<E_SCLDMA_CLIENT_NUM; u8ClientIdx++)
     {
         _Drv_SCLDMA_ResetGlobalParameterByClient(u8ClientIdx);
         gbForceClose[u8ClientIdx]                 = 0;
@@ -500,7 +530,7 @@ static EN_SCLDMA_CLIENT_TYPE _Drv_SCLDMA_TransToClientType
 static void _Drv_SCLDMA_SetDoubleBufferOn
     (EN_SCLDMA_ID_TYPE enSCLDMA_ID, MS_U16 u16IrqNum, EN_SCLDMA_CLIENT_TYPE enClientType)
 {
-    MS_U32 u32Time;
+    MS_U32 u32Time = 0;
     MS_U64 u64Active = 0;
     if((enClientType == E_SCLDMA_1_IMI_W))
     {
@@ -514,7 +544,7 @@ static void _Drv_SCLDMA_SetDoubleBufferOn
             }
         }
 
-        u32Time = ((MS_U32)MsOS_GetSystemTime());
+        u32Time = ((MS_U32)MsOS_GetSystemTimeStamp());
         while(MsOS_Timer_DiffTimeFromNow(u32Time) < 100)
         {
             Drv_SCLIRQ_Get_Flag(u16IrqNum, &u64Active);
@@ -543,9 +573,11 @@ void _Drv_SCLDMA_HWInitProcess(void)
     _Drv_SCLDMA_SetVsyncRegenMode(E_SCLDMA_VS_ID_SC3, E_SCLDMA_VS_TRIG_MODE_HW_IN_VSYNC);
     _Drv_SCLDMA_SetVsyncRegenMode(E_SCLDMA_VS_ID_SC, E_SCLDMA_VS_TRIG_MODE_HW_IN_VSYNC);
     _Drv_SCLDMA_SetVsyncRegenMode(E_SCLDMA_VS_ID_AFF, E_SCLDMA_VS_TRIG_MODE_HW_IN_VSYNC);
-    _Drv_SCLDMA_SetVsyncRegenMode(E_SCLDMA_VS_ID_LDC, E_SCLDMA_VS_TRIG_MODE_HW_IN_VSYNC);
+    _Drv_SCLDMA_SetVsyncRegenMode(E_SCLDMA_VS_ID_LDC, E_SCLDMA_VS_TRIG_MODE_HW_DELAY);
     _Drv_SCLDMA_SetVsyncRegenMode(E_SCLDMA_VS_ID_DISP, E_SCLDMA_VS_TRIG_MODE_HW_IN_VSYNC);
     Hal_SCLDMA_SetRegenVSyncVariableWidthEn(FALSE);
+    Hal_SCLDAM_SetRegenVSyncStartPoint(E_SCLDMA_VS_ID_LDC,0x600);
+    Hal_SCLDAM_SetRegenVSyncWidth(E_SCLDMA_VS_ID_LDC,0x40);
 
     Hal_SCLDMA_SetSC1HandshakeForce(E_SCLDMA_FRM_W, FALSE);
     Hal_SCLDMA_SetSC1HandshakeForce(E_SCLDMA_SNP_W, FALSE);
@@ -566,6 +598,7 @@ void _Drv_SCLDMA_HWInitProcess(void)
     Drv_SCLIRQ_InterruptEnable(SCLIRQ_SC3_ENG_FRM_END);
     Drv_SCLIRQ_InterruptEnable(SCLIRQ_SC1_ENG_FRM_END);
     Drv_SCLIRQ_InterruptEnable(SCLIRQ_DISP_DMA_END);
+    Drv_SCLIRQ_InterruptEnable(SCLIRQ_VSYNC_IDCLK);
     //Drv_SCLIRQ_InterruptEnable(SCLIRQ_SC1_HVSP_FINISH);
     Drv_SCLIRQ_InterruptEnable(SCLIRQ_SC1_FRM_W_ACTIVE);
     Drv_SCLIRQ_InterruptEnable(SCLIRQ_SC1_FRM_W_ACTIVE_N);
@@ -599,15 +632,21 @@ void _Drv_SCLDMA_SetSuspendFlagByClient(EN_SCLDMA_CLIENT_TYPE enClientType)
         if(_Is_DMAClientOn(enClientType))
         {
             Drv_SCLDMA_SetISRHandlerDMAOff(enClientType,0);
+            DRV_SCLDMA_MUTEX_LOCK_ISR();
             _SetFlagType(enClientType,E_SCLDMA_FLAG_EVERDMAON);
+            DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         }
+        DRV_SCLDMA_MUTEX_LOCK_ISR();
         _ReSetFlagType(enClientType,E_SCLDMA_FLAG_ACTIVE);
         _SetFlagType(enClientType,E_SCLDMA_FLAG_DMAOFF);
+        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
     }
     else
     {
+        DRV_SCLDMA_MUTEX_LOCK_ISR();
         gstScldmaInfo.bDMAOnOff[enClientType] = FALSE;
         _SetANDGetFlagType(enClientType,E_SCLDMA_FLAG_FRMDONE,(~E_SCLDMA_FLAG_ACTIVE));
+        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
     }
 }
 
@@ -617,6 +656,7 @@ MS_BOOL Drv_SCLDMA_Suspend(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_SUSPEND_RESU
     MS_U8 u8Clientidx;
     MS_BOOL bRet = TRUE;
     MS_BOOL bAllClientOn = 0;
+    MsOS_Memset(&stSclIrqCfg,0,sizeof(ST_SCLIRQ_SUSPEND_RESUME_CONFIG));
     SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&EN_DBGMG_SCLDMALEVEL_ELSE, "[DRVSCLDMA]%s(%d), ID:%s(%d), bSuspend=%d\n",
         __FUNCTION__, __LINE__,PARSING_SCLDMA_ID(enSCLDMA_ID), enSCLDMA_ID,gbScldmaSuspend);
 
@@ -641,7 +681,9 @@ MS_BOOL Drv_SCLDMA_Suspend(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_SUSPEND_RESU
         break;
 
     case E_SCLDMA_ID_PNL_R:
+        DRV_SCLDMA_MUTEX_LOCK_ISR();
             gstScldmaInfo.bDMAOnOff[E_SCLDMA_4_FRM_R] = FALSE;
+        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         break;
 
     default:
@@ -651,7 +693,9 @@ MS_BOOL Drv_SCLDMA_Suspend(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_SUSPEND_RESU
 
     for(u8Clientidx=E_SCLDMA_1_FRM_W ;u8Clientidx<E_SCLDMA_CLIENT_NUM; u8Clientidx++)
     {
+        DRV_SCLDMA_MUTEX_LOCK_ISR();
         bAllClientOn |= gstScldmaInfo.bDMAOnOff[u8Clientidx];
+        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
     }
 
     if(gbScldmaSuspend == 0)
@@ -691,13 +735,15 @@ MS_BOOL Drv_SCLDMA_Resume(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_SUSPEND_RESUM
     MS_BOOL bRet = TRUE;
     SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&EN_DBGMG_SCLDMALEVEL_ELSE, "[DRVSCLDMA]%s(%d), ID:%s(%d), bSuspend=%d\n",
         __FUNCTION__, __LINE__, PARSING_SCLDMA_ID(enSCLDMA_ID), enSCLDMA_ID, gbScldmaSuspend);
-
+    MsOS_Memset(&stSclIrqCfg,0,sizeof(ST_SCLIRQ_SUSPEND_RESUME_CONFIG));
     if(gbScldmaSuspend == 1)
     {
         stSclIrqCfg.u32IRQNUM = pCfg->u32IRQNum;
         if(Drv_SCLIRQ_Resume(&stSclIrqCfg))
         {
+            DRV_SCLDMA_MUTEX_LOCK();
             gstScldmaInfo.u64mask = 0;
+            DRV_SCLDMA_MUTEX_UNLOCK();
             _Drv_SCLDMA_HWInitProcess();
             gbScldmaSuspend = 0;
             MsOS_SetEvent_IRQ(Drv_SCLIRQ_Get_IRQ_EventID(),  E_SCLIRQ_EVENT_RESUME);
@@ -718,14 +764,30 @@ MS_BOOL Drv_SCLDMA_Resume(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_SUSPEND_RESUM
 
     return bRet;
 }
-
+void Drv_SCLDMA_Exit(unsigned char bCloseISR)
+{
+    if(_SCLDMA_Mutex != -1)
+    {
+        MsOS_DeleteMutex(_SCLDMA_Mutex);
+        _SCLDMA_Mutex = -1;
+    }
+    if(_SCLIRQ_SCLDMA_Mutex != -1)
+    {
+        MsOS_DeleteSpinlock(_SCLIRQ_SCLDMA_Mutex);
+        _SCLDMA_Mutex = -1;
+    }
+    if(bCloseISR)
+    {
+        Drv_SCLIRQ_Exit();
+    }
+}
 MS_BOOL Drv_SCLDMA_Init(ST_SCLDMA_INIT_CONFIG *pInitCfg)
 {
     char word[]     = {"_SCLDMA_Mutex"};
     char word2[]    = {"_IRQDMA_Mutex"};
     //int i;
     ST_SCLIRQ_INIT_CONFIG stIRQInitCfg;
-
+    MsOS_Memset(&stIRQInitCfg,0,sizeof(ST_SCLIRQ_INIT_CONFIG));
     if(_SCLDMA_Mutex != -1)
     {
         SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&EN_DBGMG_SCLDMALEVEL_ELSE, "[DRVSCLDMA]%s already done\n",__FUNCTION__);
@@ -739,7 +801,11 @@ MS_BOOL Drv_SCLDMA_Init(ST_SCLDMA_INIT_CONFIG *pInitCfg)
     }
 
     _SCLDMA_Mutex           = MsOS_CreateMutex(E_MSOS_FIFO, word, MSOS_PROCESS_SHARED);
+    #if USE_RTK
+    _SCLIRQ_SCLDMA_Mutex    = MsOS_CreateMutex(E_MSOS_FIFO, word2, MSOS_PROCESS_SHARED);
+    #else
     _SCLIRQ_SCLDMA_Mutex    = MsOS_CreateSpinlock(E_MSOS_FIFO, word2, MSOS_PROCESS_SHARED);
+    #endif
     if (_SCLDMA_Mutex == -1)
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA]%s create mutex fail\n", __FUNCTION__));
@@ -772,7 +838,7 @@ MS_BOOL Drv_SCLDMA_Init(ST_SCLDMA_INIT_CONFIG *pInitCfg)
         gstScldmaInfo.s32IrqTaskid  = MsOS_CreateTask((TaskEntry)_Drv_SCLDMA_Irq_Event_Task,
                                                              (MS_U32)NULL,
                                                               TRUE,
-                                                              (char*)"DrvScldma_Event_Task");
+                                                              (const char*)"DrvScldma_Event_Task");
 
         if(gstScldmaInfo.s32IrqTaskid < 0)
         {
@@ -807,6 +873,7 @@ void Drv_SCLDMA_Sys_Init(MS_BOOL bEn)
     if(bEn)
     {
         ST_SCLDMA_RW_CONFIG stIMICfg;
+        MsOS_Memset(&stIMICfg,0,sizeof(ST_SCLDMA_RW_CONFIG));
         stIMICfg.enRWMode       = E_SCLDMA_IMI_W;
         stIMICfg.u16Height      = HD_Height;
         stIMICfg.u16Width       = HD_Width;
@@ -817,7 +884,7 @@ void Drv_SCLDMA_Sys_Init(MS_BOOL bEn)
         stIMICfg.u32Base_C[0]   = SCL_IMIinitAddr;
         stIMICfg.u32Base_V[0]   = SCL_IMIinitAddr;
         stIMICfg.enColor        = E_SCLDMA_COLOR_YUV420 ;
-        Drv_SCLDMA_SetDMAClientConfig(E_SCLDMA_ID_1_W,stIMICfg);
+        Drv_SCLDMA_SetDMAClientConfig(E_SCLDMA_ID_1_W,&stIMICfg);
     }
     else
     {
@@ -829,13 +896,11 @@ void Drv_SCLDMA_Sys_Init(MS_BOOL bEn)
 }
 void _Drv_SCLDMA_ResetGlobalSwitchByID(EN_SCLDMA_ID_TYPE enSCLDMA_ID)
 {
-    MS_U8 u8ClientIdx;
+    EN_SCLDMA_CLIENT_TYPE u8ClientIdx;
     switch(enSCLDMA_ID)
     {
     case E_SCLDMA_ID_1_W:
-        DRV_SCLDMA_MUTEX_LOCK_ISR();
-
-        for(u8ClientIdx=0; u8ClientIdx<E_SCLDMA_2_FRM_W; u8ClientIdx++)
+        for(u8ClientIdx=E_SCLDMA_1_FRM_W; u8ClientIdx<E_SCLDMA_2_FRM_W; u8ClientIdx++)
         {
             _Drv_SCLDMA_ResetGlobalParameterByClient(u8ClientIdx);
         #if SCLDMA_IRQ_EN
@@ -844,11 +909,9 @@ void _Drv_SCLDMA_ResetGlobalSwitchByID(EN_SCLDMA_ID_TYPE enSCLDMA_ID)
         }
         _Drv_SCLDMA_ResetGlobalParameter();
         MsOS_ClearEventIRQ(Drv_SCLIRQ_Get_IRQ_EventID(),(0xFFFF));
-        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         break;
 
     case E_SCLDMA_ID_2_W:
-        DRV_SCLDMA_MUTEX_LOCK_ISR();
         for(u8ClientIdx=E_SCLDMA_2_FRM_W; u8ClientIdx<E_SCLDMA_3_FRM_R; u8ClientIdx++)
         {
             _Drv_SCLDMA_ResetGlobalParameterByClient(u8ClientIdx);
@@ -856,12 +919,10 @@ void _Drv_SCLDMA_ResetGlobalSwitchByID(EN_SCLDMA_ID_TYPE enSCLDMA_ID)
                 genIrqMode[u8ClientIdx] = E_SCLDMA_IRQ_MODE_PENDING;
         #endif
         }
-        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         break;
 
     case E_SCLDMA_ID_3_W:
     case E_SCLDMA_ID_3_R:
-        DRV_SCLDMA_MUTEX_LOCK_ISR();
         for(u8ClientIdx=E_SCLDMA_3_FRM_R; u8ClientIdx<E_SCLDMA_4_FRM_R; u8ClientIdx++)
         {
             _Drv_SCLDMA_ResetGlobalParameterByClient(u8ClientIdx);
@@ -870,7 +931,6 @@ void _Drv_SCLDMA_ResetGlobalSwitchByID(EN_SCLDMA_ID_TYPE enSCLDMA_ID)
         #endif
             MsOS_ClearEventIRQ(Drv_SCLIRQ_Get_IRQ_SC3EventID(),(0xFFFF));
         }
-        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         break;
 
     case E_SCLDMA_ID_PNL_R:
@@ -882,7 +942,7 @@ void _Drv_SCLDMA_ResetGlobalSwitchByID(EN_SCLDMA_ID_TYPE enSCLDMA_ID)
 
     default:
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA]%s Release fail\n", __FUNCTION__));
-        break;
+        return;
     }
 }
 void _Drv_SCLDMA_SetClkOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID,ST_SCLDMA_CLK_CONFIG *stclk,MS_BOOL bEn)
@@ -890,37 +950,51 @@ void _Drv_SCLDMA_SetClkOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID,ST_SCLDMA_CLK_CONFIG 
     static MS_BOOL bFClk1 = 0;
     static MS_BOOL bFClk2 = 0;
     static MS_BOOL bODClk2 = 0;
-    if(enSCLDMA_ID<= E_SCLDMA_ID_2_W)
+    if(!gbclkforcemode)
     {
-        if(bFClk1 != bEn)
+        if(enSCLDMA_ID<= E_SCLDMA_ID_2_W)
         {
-            bFClk1 = bEn;
-            Hal_SCLDMA_CLKInit(bFClk1,stclk);
+            if(bFClk1 != bEn)
+            {
+                bFClk1 = bEn;
+                Hal_SCLDMA_CLKInit(bFClk1,stclk);
+            }
         }
-    }
-    else if(enSCLDMA_ID<= E_SCLDMA_ID_3_R)
-    {
-        if(bFClk2 != bEn)
+        else if(enSCLDMA_ID<= E_SCLDMA_ID_3_R)
         {
-            bFClk2 = bEn;
-            Hal_SCLDMA_SC3CLKInit(bFClk2,stclk);
+            if(bFClk2 != bEn)
+            {
+                bFClk2 = bEn;
+                Hal_SCLDMA_SC3CLKInit(bFClk2,stclk);
+            }
         }
-    }
-    else if(enSCLDMA_ID == E_SCLDMA_ID_PNL_R)
-    {
-        if(bODClk2 != bEn)
+        else if(enSCLDMA_ID == E_SCLDMA_ID_PNL_R)
         {
-            bODClk2 = bEn;
-            Hal_SCLDMA_ODCLKInit(bODClk2,stclk);
+            if(bODClk2 != bEn)
+            {
+                bODClk2 = bEn;
+                Hal_SCLDMA_ODCLKInit(bODClk2,stclk);
+            }
         }
     }
 }
 void Drv_SCLDMA_Release(EN_SCLDMA_ID_TYPE enSCLDMA_ID,ST_SCLDMA_CLK_CONFIG *stclk)
 {
+    EN_SCLDMA_CLIENT_TYPE enclient;
     SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&EN_DBGMG_SCLDMALEVEL_ELSE, "[DRVSCLDMA]%s \n",__FUNCTION__);
     Drv_SCLDMA_DoubleBufferOnOffById(FALSE,enSCLDMA_ID);
     _Drv_SCLDMA_ResetGlobalSwitchByID(enSCLDMA_ID);
     Drv_SCLIRQ_InitVariable();
+    for(enclient = E_SCLDMA_1_FRM_W;enclient<E_SCLDMA_3_IMI_R;enclient++)
+    {
+        if(_Is_SingleMode(enclient))
+        {
+            Drv_SCLDMA_SetISRHandlerDMAOff(enclient,0);
+            DRV_SCLDMA_MUTEX_LOCK_ISR();
+            gstScldmaInfo.bDMAOnOff[enclient] = 0;
+            DRV_SCLDMA_MUTEX_UNLOCK_ISR();
+        }
+    }
     _Drv_SCLDMA_SetClkOnOff(enSCLDMA_ID,stclk,0);
 }
 
@@ -932,7 +1006,7 @@ MS_U64 _Drv_SCLDMA_GetIRQMask(void)
     u64Flag |= SCLIRQ_MSK_SC1_SNPI_W_ACTIVE;
     u64Flag |= SCLIRQ_MSK_SC1_SNPI_W_ACTIVE_N;
     u64Flag |= SCLIRQ_MSK_SC3_ENG_FRM_END;
-    for(enclient = 0; enclient<E_SCLDMA_3_IMI_R; enclient++)
+    for(enclient = E_SCLDMA_1_FRM_W; enclient<E_SCLDMA_3_IMI_R; enclient++)
     {
         if(_Is_SingleMode(enclient))
         {
@@ -943,6 +1017,8 @@ MS_U64 _Drv_SCLDMA_GetIRQMask(void)
                 case E_SCLDMA_2_FRM_W:
                 case E_SCLDMA_2_FRM2_W:
                 case E_SCLDMA_3_FRM_W:
+                case E_SCLDMA_3_IMI_R:
+                case E_SCLDMA_CLIENT_NUM:
                     break;
                 case E_SCLDMA_1_IMI_W:
                     u64Flag |= (SCLIRQ_MSK_SC1_SNPI_W_ACTIVE|SCLIRQ_MSK_SC1_SNPI_W_ACTIVE_N);
@@ -956,41 +1032,48 @@ MS_U64 _Drv_SCLDMA_GetIRQMask(void)
                 case E_SCLDMA_4_FRM_R:
                     u64Flag |= (SCLIRQ_MSK_SC1_DBG_R_ACTIVE|SCLIRQ_MSK_SC1_DBG_R_ACTIVE_N);
                     break;
-                default:
-                    break;
             }
         }
     }
     return u64Flag;
 }
-void _Drv_SCLDMA_SetDMAInformationForGlobal(EN_SCLDMA_CLIENT_TYPE enClientType, ST_SCLDMA_RW_CONFIG stCfg)
+void _Drv_SCLDMA_SetDMAInformationForGlobal(EN_SCLDMA_CLIENT_TYPE enClientType, ST_SCLDMA_RW_CONFIG *stCfg)
 {
     MS_U8 u8BufferIdx;
-    gstScldmaInfo.enBuffMode[enClientType] = stCfg.enBuffMode;
-    gstScldmaInfo.bMaxid[enClientType] = stCfg.u8MaxIdx;
+    DRV_SCLDMA_MUTEX_LOCK();
+    gstScldmaInfo.enBuffMode[enClientType] = stCfg->enBuffMode;
+    gstScldmaInfo.bMaxid[enClientType] = stCfg->u8MaxIdx;
     gstScldmaInfo.u64mask              = _Drv_SCLDMA_GetIRQMask();
-    gstScldmaInfo.enColor[enClientType] = stCfg.enColor;
-    gstScldmaInfo.u16FrameWidth[enClientType] =  stCfg.u16Width;
-    gstScldmaInfo.u16FrameHeight[enClientType] = stCfg.u16Height;
-    for (u8BufferIdx = 0; u8BufferIdx <= stCfg.u8MaxIdx; u8BufferIdx++)
+    gstScldmaInfo.enColor[enClientType] = stCfg->enColor;
+    gstScldmaInfo.u16FrameWidth[enClientType] =  stCfg->u16Width;
+    gstScldmaInfo.u16FrameHeight[enClientType] = stCfg->u16Height;
+    for (u8BufferIdx = 0; u8BufferIdx <= stCfg->u8MaxIdx; u8BufferIdx++)
     {
-        gstScldmaInfo.u32Base_Y[enClientType][u8BufferIdx] = stCfg.u32Base_Y[u8BufferIdx];
-        gstScldmaInfo.u32Base_C[enClientType][u8BufferIdx] = stCfg.u32Base_C[u8BufferIdx];
-        gstScldmaInfo.u32Base_V[enClientType][u8BufferIdx] = stCfg.u32Base_V[u8BufferIdx];
+        gstScldmaInfo.u32Base_Y[enClientType][u8BufferIdx] = stCfg->u32Base_Y[u8BufferIdx];
+        gstScldmaInfo.u32Base_C[enClientType][u8BufferIdx] = stCfg->u32Base_C[u8BufferIdx];
+        gstScldmaInfo.u32Base_V[enClientType][u8BufferIdx] = stCfg->u32Base_V[u8BufferIdx];
     }
     Drv_SCLIRQ_Set_Mask(gstScldmaInfo.u64mask);
+    DRV_SCLDMA_MUTEX_UNLOCK();
+    DRV_SCLDMA_MUTEX_LOCK_ISR();
     if(_Is_SWRingMode(enClientType) && _Is_SWRingModeBufferNotReady(enClientType))
     {
-        gstScldmaBufferQueue[enClientType].pstHead = MsOS_VirMemalloc(SCLDMA_BUFFER_QUEUE_OFFSET*stCfg.u8MaxIdx);
+        gstScldmaBufferQueue[enClientType].pstHead = MsOS_VirMemalloc(SCLDMA_BUFFER_QUEUE_OFFSET*stCfg->u8MaxIdx);
+        if(!gstScldmaBufferQueue[enClientType].pstHead)
+        {
+            SCL_ERR("[DRVSCLDMA]%s(%d) Init gstScldmaBufferQueue Fail\n", __FUNCTION__, __LINE__);
+            return ;
+        }
         gstScldmaBufferQueue[enClientType].pstTail = gstScldmaBufferQueue[enClientType].pstHead
-            + SCLDMA_BUFFER_QUEUE_OFFSET* stCfg.u8MaxIdx;
+            + 1* stCfg->u8MaxIdx;
         gstScldmaBufferQueue[enClientType].pstWrite = gstScldmaBufferQueue[enClientType].pstHead;
         gstScldmaBufferQueue[enClientType].pstRead = gstScldmaBufferQueue[enClientType].pstHead;
         gstScldmaBufferQueue[enClientType].pstWriteAlready = gstScldmaBufferQueue[enClientType].pstHead;
         gstScldmaBufferQueue[enClientType].bUsed = 1;
-        gstScldmaBufferQueue[enClientType].u8Bufferflag= stCfg.u8Flag;
-        stCfg.u8MaxIdx = 0;//single change buffer
+        gstScldmaBufferQueue[enClientType].u8Bufferflag= stCfg->u8Flag;
+        stCfg->u8MaxIdx = 0;//single change buffer
     }
+    DRV_SCLDMA_MUTEX_UNLOCK_ISR();
 }
 void _Drv_SCLDMA_SetVsyncTrigMode(EN_SCLDMA_CLIENT_TYPE enClientType)
 {
@@ -1004,86 +1087,89 @@ void _Drv_SCLDMA_SetVsyncTrigMode(EN_SCLDMA_CLIENT_TYPE enClientType)
         _Drv_SCLDMA_SetVsyncRegenMode(E_SCLDMA_VS_ID_SC3, E_SCLDMA_VS_TRIG_MODE_HW_IN_VSYNC);
     }
 }
-MS_BOOL Drv_SCLDMA_SetDMAClientConfig(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_RW_CONFIG stCfg)
+MS_BOOL Drv_SCLDMA_SetDMAClientConfig(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_RW_CONFIG *stCfg)
 {
     MS_BOOL bRet = TRUE;
     MS_U8 u8BufferIdx;
     EN_SCLDMA_CLIENT_TYPE enClientType;
-    enClientType = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,stCfg.enRWMode);
+    MS_U32 u32Time          = 0;
+    MS_U32 u32Events;
+    u32Time = (((MS_U32)MsOS_GetSystemTimeStamp()));
+    enClientType = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,stCfg->enRWMode);
     SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&Get_DBGMG_SCLDMAclient(enClientType,0),
         "[DRVSCLDMA]%s %d, DmaID:%s(%d), Flag:%x, RW:%s(%d), Buf:%s(%d), color:%s(%d), (W:%d, H:%d)\n",
         __FUNCTION__, __LINE__,
         PARSING_SCLDMA_ID(enSCLDMA_ID), enSCLDMA_ID,
-        stCfg.u8Flag,
-        PARSING_SCLDMA_RWMD(stCfg.enRWMode), stCfg.enRWMode,
-        PARSING_SCLDMA_BUFMD(stCfg.enBuffMode), stCfg.enBuffMode,
-        PARSING_SCLDMA_COLOR(stCfg.enColor), stCfg.enColor,
-        stCfg.u16Width, stCfg.u16Height);
+        stCfg->u8Flag,
+        PARSING_SCLDMA_RWMD(stCfg->enRWMode), stCfg->enRWMode,
+        PARSING_SCLDMA_BUFMD(stCfg->enBuffMode), stCfg->enBuffMode,
+        PARSING_SCLDMA_COLOR(stCfg->enColor), stCfg->enColor,
+        stCfg->u16Width, stCfg->u16Height);
     SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&Get_DBGMG_SCLDMAclient(enClientType,0),
         "[DRVSCLDMA]%s %d, maxbuf:%d, (%lx, %lx, %lx), (%lx, %lx, %lx),(%lx, %lx, %lx), (%lx, %lx, %lx) \n",
         __FUNCTION__, __LINE__,
-        stCfg.u8MaxIdx,
-        stCfg.u32Base_Y[0], stCfg.u32Base_C[0],stCfg.u32Base_V[0],
-        stCfg.u32Base_Y[1], stCfg.u32Base_C[1],stCfg.u32Base_V[1],
-        stCfg.u32Base_Y[2], stCfg.u32Base_C[2],stCfg.u32Base_V[2],
-        stCfg.u32Base_Y[3], stCfg.u32Base_C[3],stCfg.u32Base_V[3]);
+        stCfg->u8MaxIdx,
+        stCfg->u32Base_Y[0], stCfg->u32Base_C[0],stCfg->u32Base_V[0],
+        stCfg->u32Base_Y[1], stCfg->u32Base_C[1],stCfg->u32Base_V[1],
+        stCfg->u32Base_Y[2], stCfg->u32Base_C[2],stCfg->u32Base_V[2],
+        stCfg->u32Base_Y[3], stCfg->u32Base_C[3],stCfg->u32Base_V[3]);
 
     // check
-    if(SCLDMA_CHECK_ALIGN(stCfg.u16Height, 2))
+    if(SCLDMA_CHECK_ALIGN(stCfg->u16Height, 2))
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA]: Height must be align 2\n"));
         bRet = FALSE;
     }
 
-    if(stCfg.enColor == E_SCLDMA_COLOR_YUV422 && SCLDMA_CHECK_ALIGN(stCfg.u16Width, 8))
+    if(stCfg->enColor == E_SCLDMA_COLOR_YUV422 && SCLDMA_CHECK_ALIGN(stCfg->u16Width, 8))
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA]%s %d: Width must be align 8\n", __FUNCTION__, __LINE__));
         bRet =  FALSE;
     }
-    else if(stCfg.enColor == E_SCLDMA_COLOR_YUV420 &&SCLDMA_CHECK_ALIGN(stCfg.u16Width, 16))
+    else if(stCfg->enColor == E_SCLDMA_COLOR_YUV420 &&SCLDMA_CHECK_ALIGN(stCfg->u16Width, 16))
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA]%s %d: Width must be align 16\n", __FUNCTION__, __LINE__));
         bRet =  FALSE;
     }
-    else if(stCfg.enColor == E_SCLDMA_COLOR_YCSep422 &&SCLDMA_CHECK_ALIGN(stCfg.u16Width, 16))
+    else if(stCfg->enColor == E_SCLDMA_COLOR_YCSep422 &&SCLDMA_CHECK_ALIGN(stCfg->u16Width, 16))
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA]%s %d: Width must be align 16\n", __FUNCTION__, __LINE__));
         bRet =  FALSE;
     }
-    else if(stCfg.enColor == E_SCLDMA_COLOR_YUVSep422 &&SCLDMA_CHECK_ALIGN(stCfg.u16Width, 16))
+    else if(stCfg->enColor == E_SCLDMA_COLOR_YUVSep422 &&SCLDMA_CHECK_ALIGN(stCfg->u16Width, 16))
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA]%s %d: Width must be align 16\n", __FUNCTION__, __LINE__));
         bRet =  FALSE;
     }
-    else if(stCfg.enColor == E_SCLDMA_COLOR_YUVSep420 &&SCLDMA_CHECK_ALIGN(stCfg.u16Width, 16))
+    else if(stCfg->enColor == E_SCLDMA_COLOR_YUVSep420 &&SCLDMA_CHECK_ALIGN(stCfg->u16Width, 16))
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA]%s %d: Width must be align 16\n", __FUNCTION__, __LINE__));
         bRet =  FALSE;
     }
 
-    if(stCfg.enBuffMode == E_SCLDMA_BUF_MD_SINGLE &&  stCfg.u8MaxIdx > 1)
+    if(stCfg->enBuffMode == E_SCLDMA_BUF_MD_SINGLE &&  stCfg->u8MaxIdx > 1)
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA]%s %d: More than 1 buffer to SINGLE mode\n", __FUNCTION__, __LINE__));
         bRet =  FALSE;
     }
 
-    if(stCfg.enRWMode == E_SCLDMA_RW_NUM)
+    if(stCfg->enRWMode == E_SCLDMA_RW_NUM)
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA]%s %d: RW mode is not coreect\n", __FUNCTION__, __LINE__));
         bRet =  FALSE;
     }
 
-    for(u8BufferIdx=0; u8BufferIdx<=stCfg.u8MaxIdx; u8BufferIdx++)
+    for(u8BufferIdx=0; u8BufferIdx<=stCfg->u8MaxIdx; u8BufferIdx++)
     {
-        if( SCLDMA_CHECK_ALIGN(stCfg.u32Base_Y[u8BufferIdx], 8))
+        if( SCLDMA_CHECK_ALIGN(stCfg->u32Base_Y[u8BufferIdx], 8))
         {
             DRV_SCLDMA_ERR(printf("[DRVSCLDMA]%s %d: YBase must be 8 byte align\n", __FUNCTION__, __LINE__));
             bRet = FALSE;
             break;
         }
 
-        if(((stCfg.enColor == E_SCLDMA_COLOR_YUV420)||(stCfg.enColor == E_SCLDMA_COLOR_YCSep422)) &&
-            SCLDMA_CHECK_ALIGN(stCfg.u32Base_C[u8BufferIdx], 8))
+        if(((stCfg->enColor == E_SCLDMA_COLOR_YUV420)||(stCfg->enColor == E_SCLDMA_COLOR_YCSep422)) &&
+            SCLDMA_CHECK_ALIGN(stCfg->u32Base_C[u8BufferIdx], 8))
         {
             DRV_SCLDMA_ERR(printf("[DRVSCLDMA]%s %d: CBase must be 8 byte align DmaID:%s(%d)\n", __FUNCTION__, __LINE__,PARSING_SCLDMA_ID(enSCLDMA_ID), enSCLDMA_ID));
             bRet = FALSE;
@@ -1091,17 +1177,37 @@ MS_BOOL Drv_SCLDMA_SetDMAClientConfig(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_R
         }
     }
 
-    if(stCfg.enColor == E_SCLDMA_COLOR_YUV422)
+    if(stCfg->enColor == E_SCLDMA_COLOR_YUV422)
     {
-        for(u8BufferIdx=0; u8BufferIdx<=stCfg.u8MaxIdx; u8BufferIdx++)
+        for(u8BufferIdx=0; u8BufferIdx<=stCfg->u8MaxIdx; u8BufferIdx++)
         {
-            if((stCfg.u32Base_C[u8BufferIdx] != (stCfg.u32Base_Y[u8BufferIdx] + 16) ))
+            if((stCfg->u32Base_C[u8BufferIdx] != (stCfg->u32Base_Y[u8BufferIdx] + 16) ))
             {
                 DRV_SCLDMA_ERR(printf("[DRVSCLDMA]Error:%s %d: YUV422 CBase_%08lx, YBase_%08lx, \n",
-                    __FUNCTION__, __LINE__, stCfg.u32Base_Y[u8BufferIdx], stCfg.u32Base_C[u8BufferIdx]));
+                    __FUNCTION__, __LINE__, stCfg->u32Base_Y[u8BufferIdx], stCfg->u32Base_C[u8BufferIdx]));
                 bRet = FALSE;
             }
         }
+    }
+    if(_IsFlagType(enClientType,E_SCLDMA_FLAG_ACTIVE))
+    {
+        if(enSCLDMA_ID ==E_SCLDMA_ID_3_W || enSCLDMA_ID ==E_SCLDMA_ID_3_R)
+        {
+            if(_IsFlagType(enClientType,E_SCLDMA_FLAG_ACTIVE))
+            {
+                MsOS_WaitEvent(Drv_SCLIRQ_Get_IRQ_SC3EventID(), E_SCLIRQ_SC3EVENT_DONE, &u32Events, E_OR, 100); // get status: FRM END
+                _ReSetFlagType(E_SCLDMA_3_FRM_R,E_SCLDMA_FLAG_ACTIVE);
+                _ReSetFlagType(E_SCLDMA_3_FRM_W,E_SCLDMA_FLAG_ACTIVE);
+            }
+        }
+        else
+        {
+            MsOS_WaitEvent(Drv_SCLIRQ_Get_IRQ_SYNCEventID(), E_SCLIRQ_EVENT_FRMENDSYNC, &u32Events, E_OR, 1000); // get status: FRM END
+            _ReSetFlagType(enClientType,E_SCLDMA_FLAG_ACTIVE);
+        }
+        SCL_ERR("[DRVSCLDMA] %s::%d %s_%s still R/W @:%lu\n",
+            __FUNCTION__,enClientType, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg->enRWMode),u32Time);
+
     }
 
     if(bRet == FALSE)
@@ -1195,9 +1301,37 @@ void _Drv_SCLDMA_ResetTrigCount(EN_SCLDMA_CLIENT_TYPE enClientType,MS_BOOL bEn)
             gu32TrigCount[enClientType] = 1;
         }
     }
+}
+void Drv_SCLDMA_SetSWReTrigCount(EN_SCLDMA_CLIENT_TYPE enClientType,MS_BOOL bEn)
+{
+    //for ISR don;t need to lock
+    if(bEn)
+    {
+        gu8ResetCount[enClientType]++;
+    }
     else
     {
-        gu32TrigCount[enClientType]--;
+        if(gu8ResetCount[enClientType])
+        {
+            gu8ResetCount[enClientType]--;
+        }
+
+    }
+}
+void Drv_SCLDMA_SetDMAIgnoreCount(EN_SCLDMA_CLIENT_TYPE enClientType,MS_BOOL bEn)
+{
+    //for ISR don;t need to lock
+    if(bEn)
+    {
+        gu8DMAErrCount[enClientType]++;
+    }
+    else
+    {
+        if(gu8DMAErrCount[enClientType])
+        {
+            gu8DMAErrCount[enClientType]--;
+        }
+
     }
 }
 MS_BOOL Drv_SCLDMA_SetISRHandlerDMAOff(EN_SCLDMA_CLIENT_TYPE enClientType,MS_BOOL bEn)
@@ -1205,14 +1339,10 @@ MS_BOOL Drv_SCLDMA_SetISRHandlerDMAOff(EN_SCLDMA_CLIENT_TYPE enClientType,MS_BOO
     EN_SCLDMA_RW_MODE_TYPE enRWMode;
     MS_U64 u64ActN;
     MS_BOOL bRet = 0;
-    if(gstScldmaInfo.bDMAOnOff[enClientType] == 0 &&_Is_RingMode(enClientType))
+    if(gstScldmaInfo.bDMAOnOff[enClientType] == bEn &&_Is_RingMode(enClientType))
     {
-        SCL_DBG(SCL_DBG_LV_DRVSCLIRQ()&Get_DBGMG_SCLIRQclient(enClientType,1), "[DRVSCLDMA] %s:: enClientType:%d still ON/OFF %hhd\n",
-        __FUNCTION__,enClientType,bEn);
-    }
-    else if(gstScldmaInfo.bDMAOnOff[enClientType] == bEn &&_Is_RingMode(enClientType))
-    {
-        SCL_DBG(SCL_DBG_LV_DRVSCLIRQ()&Get_DBGMG_SCLIRQclient(enClientType,1), "[DRVSCLDMA] %s:: enClientType:%d still ON/OFF %hhd\n",
+        SCL_DBG(SCL_DBG_LV_DRVSCLIRQ()&Get_DBGMG_SCLIRQclient(enClientType,1),
+            "[DRVSCLDMA] %s:: enClientType:%d still ON/OFF %hhd\n",
         __FUNCTION__,enClientType,bEn);
     }
     switch(enClientType)
@@ -1312,8 +1442,16 @@ MS_BOOL Drv_SCLDMA_SetISRHandlerDMAOff(EN_SCLDMA_CLIENT_TYPE enClientType,MS_BOO
     }
     else
     {
-        SCL_DBG(SCL_DBG_LV_DRVSCLIRQ()&Get_DBGMG_SCLIRQclient(8,1), "[DRVSCLDMA]%s Client:%s trig off\n",
-        __FUNCTION__,PARSING_SCLDMA_CLIENT(enClientType));
+        if(bEn)
+        {
+            SCL_DBG(SCL_DBG_LV_DRVSCLIRQ()&Get_DBGMG_SCLIRQclient(8,1), "[DRVSCLDMA]%s Client:%s trig on\n",
+            __FUNCTION__,PARSING_SCLDMA_CLIENT(enClientType));
+        }
+        else
+        {
+            SCL_DBG(SCL_DBG_LV_DRVSCLIRQ()&Get_DBGMG_SCLIRQclient(8,1), "[DRVSCLDMA]%s Client:%s trig off\n",
+            __FUNCTION__,PARSING_SCLDMA_CLIENT(enClientType));
+        }
     }
     return bRet;
 }
@@ -1329,21 +1467,29 @@ void Drv_SCLDMA_DoubleBufferOnOffById(MS_BOOL bEn, EN_SCLDMA_ID_TYPE enSCLDMA_ID
 void Drv_SCLDMA_SetISPFrameCount(void)
 {
     gu8ISPcount = Hal_SCLDMA_GetISPFrameCountReg();
-    if(SCL_DELAYFRAME_FROM_ISP == 1)
+    if(SCL_DELAYFRAME == 1)
     {
         gu8ISPcount = (gu8ISPcount==0) ? 0x7F : (gu8ISPcount -1);
     }
-    else if(SCL_DELAYFRAME_FROM_ISP == 2)
-    {
-        gu8ISPcount = (gu8ISPcount==0) ? 0x7E :
-                      (gu8ISPcount==1) ? 0x7F :(gu8ISPcount -2);
-    }
     SCL_DBG(SCL_DBG_LV_DRVSCLIRQ()==EN_DBGMG_SCLIRQLEVEL_ELSE, "[DRVSCLDMA]ISP Count:%hhx\n",gu8ISPcount);
 }
-void Drv_SCLDMA_SetSclFrameDoneTime(MS_U32 u32FRMDoneTime)
+void Drv_SCLDMA_SetSclFrameDoneTime(EN_SCLDMA_CLIENT_TYPE enClientType, MS_U64 u64FRMDoneTime)
 {
-    gu32FRMDoneTime = u32FRMDoneTime;
-    SCL_DBG(SCL_DBG_LV_DRVSCLIRQ()==EN_DBGMG_SCLIRQLEVEL_ELSE, "[DRVSCLDMA]FRMDoneTime:%lu\n",gu32FRMDoneTime);
+    MS_U16  u16RealIdx;
+    if(_Is_RingMode(enClientType))
+    {
+        u16RealIdx = _GetIdxType(enClientType,E_SCLDMA_ACTIVE_BUFFER_SCL);
+    }
+    else
+    {
+        u16RealIdx = 0;
+    }
+    gu64FRMDoneTime[enClientType][u16RealIdx] = (MS_U64)u64FRMDoneTime;
+    SCL_DBG(SCL_DBG_LV_DRVSCLIRQ()==EN_DBGMG_SCLIRQLEVEL_ELSE, "[DRVSCLDMA]%d FRMDoneTime:%llu\n",enClientType,u64FRMDoneTime);
+}
+MS_U64 Drv_SCLDMA_GetSclFrameDoneTime(EN_SCLDMA_CLIENT_TYPE enClientType, MS_U8 u8Count)
+{
+    return gu64FRMDoneTime[enClientType][u8Count];
 }
 EN_SCLDMA_DB_STATUS_TYPE Drv_SCLDMA_GetVsrcDoubleBufferStatus(MS_U32 u32Event)
 {
@@ -1415,34 +1561,36 @@ EN_SCLDMA_DB_STATUS_TYPE Drv_SCLDMA_GetVsrcDoubleBufferStatus(MS_U32 u32Event)
         }
     }
 }
-MS_BOOL _Drv_SCLDMA_SetSWRingModeDMAClientOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_ONOFF_CONFIG stCfg )
+MS_BOOL _Drv_SCLDMA_SetSWRingModeDMAClientOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_ONOFF_CONFIG *stCfg )
 {
     MS_U32 u32Time          = 0;
     EN_SCLDMA_CLIENT_TYPE enClientType;
-    u32Time = ((MS_U32)MsOS_GetSystemTime());
-    enClientType = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,stCfg.enRWMode);
+    u32Time = ((MS_U32)MsOS_GetSystemTimeStamp());
+    enClientType = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,stCfg->enRWMode);
     SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&Get_DBGMG_SCLDMAclient(enClientType,1),
         "[DRVSCLDMA]%s(%d), DmaID:%s(%d), RW:%s(%d), En:%d @:%lu\n",
         __FUNCTION__, __LINE__,
         PARSING_SCLDMA_ID(enSCLDMA_ID), enSCLDMA_ID,
-        PARSING_SCLDMA_RWMD(stCfg.enRWMode), stCfg.enRWMode,
-        stCfg.bEn,u32Time);
-    if(gstScldmaInfo.bDMAOnOff[enClientType] == 1 &&  gstScldmaInfo.bDMAOnOff[enClientType] == stCfg.bEn)
+        PARSING_SCLDMA_RWMD(stCfg->enRWMode), stCfg->enRWMode,
+        stCfg->bEn,u32Time);
+    if(gstScldmaInfo.bDMAOnOff[enClientType] == 1 &&  gstScldmaInfo.bDMAOnOff[enClientType] == stCfg->bEn)
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA] %s:: %s_%s still R/W \n",
-            __FUNCTION__, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg.enRWMode)));
+            __FUNCTION__, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg->enRWMode)));
         return FALSE;
     }
     if(gbForceClose[enClientType])
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA] %s:: %s_%s BLOCK \n",
-            __FUNCTION__, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg.enRWMode)));
+            __FUNCTION__, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg->enRWMode)));
         return FALSE;
     }
-    gstScldmaInfo.bDMAOnOff[enClientType] = stCfg.bEn;
-
-    if(stCfg.bEn)
+    DRV_SCLDMA_MUTEX_LOCK_ISR();
+    gstScldmaInfo.bDMAOnOff[enClientType] = stCfg->bEn;
+    DRV_SCLDMA_MUTEX_UNLOCK_ISR();
+    if(stCfg->bEn)
     {
+        DRV_SCLDMA_MUTEX_LOCK_ISR();
         gstScldmaInfo.bDmaflag[enClientType]   = E_SCLDMA_FLAG_BLANKING;
         gstScldmaInfo.bDMAidx[enClientType]    = (E_SCLDMA_ACTIVE_BUFFER_SCL|(gstScldmaInfo.bMaxid[enClientType]<<4));
         if(enClientType == E_SCLDMA_3_FRM_R || enClientType == E_SCLDMA_3_FRM_W)
@@ -1450,35 +1598,36 @@ MS_BOOL _Drv_SCLDMA_SetSWRingModeDMAClientOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID, S
             gstScldmaInfo.bDMAidx[enClientType]    = (E_SCLDMA_ACTIVE_BUFFER_SCL|(0x5<<4));
             gstScldmaInfo.bDmaflag[enClientType]   = 0;
         }
+        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
     }
-    if(stCfg.bEn)
+    if(stCfg->bEn)
     {
-        _Drv_SCLDMA_SetClkOnOff(enSCLDMA_ID,stCfg.stclk,1);
+        _Drv_SCLDMA_SetClkOnOff(enSCLDMA_ID,stCfg->stclk,1);
     }
     switch(enSCLDMA_ID)
     {
     case E_SCLDMA_ID_1_W:
-        _Drv_SCLDMA_SC1OnOff(stCfg.enRWMode, stCfg.bEn);
+        _Drv_SCLDMA_SC1OnOff(stCfg->enRWMode, stCfg->bEn);
         break;
 
     case E_SCLDMA_ID_2_W:
-        _Drv_SCLDMA_SC2OnOff(stCfg.enRWMode, stCfg.bEn);
+        _Drv_SCLDMA_SC2OnOff(stCfg->enRWMode, stCfg->bEn);
         break;
 
     case E_SCLDMA_ID_3_W:
-        Hal_SCLDMA_SetSC3DMAEn(stCfg.enRWMode, stCfg.bEn);
-        if(stCfg.bEn)
+        Hal_SCLDMA_SetSC3DMAEn(stCfg->enRWMode, stCfg->bEn);
+        if(stCfg->bEn)
         {
             Hal_SCLDMA_TrigRegenVSync(E_SCLDMA_VS_ID_SC3,0);
         }
         break;
 
     case E_SCLDMA_ID_3_R:
-        Hal_SCLDMA_SetSC3DMAEn(stCfg.enRWMode, stCfg.bEn);
+        Hal_SCLDMA_SetSC3DMAEn(stCfg->enRWMode, stCfg->bEn);
         break;
 
     case E_SCLDMA_ID_PNL_R:
-        Hal_SCLDMA_SetDisplayDMAEn(stCfg.enRWMode, stCfg.bEn);
+        Hal_SCLDMA_SetDisplayDMAEn(stCfg->enRWMode, stCfg->bEn);
 
         break;
 
@@ -1487,56 +1636,58 @@ MS_BOOL _Drv_SCLDMA_SetSWRingModeDMAClientOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID, S
     }
     return TRUE;
 }
-MS_BOOL _Drv_SCLDMA_SetDMAOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID,ST_SCLDMA_ONOFF_CONFIG stCfg)
+MS_BOOL _Drv_SCLDMA_SetDMAOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID,ST_SCLDMA_ONOFF_CONFIG *stCfg)
 {
     MS_BOOL bSingleMode;
     EN_SCLDMA_CLIENT_TYPE enClientType;
-    enClientType    = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,stCfg.enRWMode);
+    enClientType    = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,stCfg->enRWMode);
     bSingleMode     = gstScldmaInfo.enBuffMode[enClientType] == E_SCLDMA_BUF_MD_SINGLE ? TRUE : FALSE;
     switch(enSCLDMA_ID)
     {
     case E_SCLDMA_ID_1_W:
         if(DoubleBufferStatus)
         {
-            _Drv_SCLDMA_SC1OnOff(stCfg.enRWMode, stCfg.bEn);
+            _Drv_SCLDMA_SC1OnOff(stCfg->enRWMode, stCfg->bEn);
         }
         else
         {
-            _Drv_SCLDMA_SC1OnOffWithoutDoubleBuffer(stCfg.enRWMode, stCfg.bEn,enClientType);
+            _Drv_SCLDMA_SC1OnOffWithoutDoubleBuffer(stCfg->enRWMode, stCfg->bEn,enClientType);
         }
         break;
 
     case E_SCLDMA_ID_2_W:
         if(DoubleBufferStatus)
         {
-            _Drv_SCLDMA_SC2OnOff(stCfg.enRWMode, stCfg.bEn);
+            _Drv_SCLDMA_SC2OnOff(stCfg->enRWMode, stCfg->bEn);
         }
         else
         {
-            _Drv_SCLDMA_SC2OnOffWithoutDoubleBuffer(stCfg.enRWMode, stCfg.bEn,enClientType);
+            _Drv_SCLDMA_SC2OnOffWithoutDoubleBuffer(stCfg->enRWMode, stCfg->bEn,enClientType);
         }
         break;
 
     case E_SCLDMA_ID_3_W:
-        Hal_SCLDMA_SetSC3DMAEn(stCfg.enRWMode, stCfg.bEn);
-        if(bSingleMode && stCfg.bEn)
+        Hal_SCLDMA_SetSC3DMAEn(stCfg->enRWMode, stCfg->bEn);
+        if(bSingleMode && stCfg->bEn)
         {
             _Drv_SCLDMA_SWRegenVSyncTrigger(E_SCLDMA_VS_ID_SC3);
+            DRV_SCLDMA_MUTEX_LOCK_ISR();
             _SetANDGetFlagType(E_SCLDMA_3_FRM_W,E_SCLDMA_FLAG_EVERDMAON,~(E_SCLDMA_FLAG_DMAOFF));
+            DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         }
-        else if(!bSingleMode && stCfg.bEn)
+        else if(!bSingleMode && stCfg->bEn)
         {
             _Drv_SCLDMA_SetVsyncRegenMode(E_SCLDMA_VS_ID_SC3,E_SCLDMA_VS_TRIG_MODE_HW_IN_VSYNC);
         }
         break;
 
     case E_SCLDMA_ID_3_R:
-        Hal_SCLDMA_SetSC3DMAEn(stCfg.enRWMode, stCfg.bEn);
+        Hal_SCLDMA_SetSC3DMAEn(stCfg->enRWMode, stCfg->bEn);
         break;
 
     case E_SCLDMA_ID_PNL_R:
-        Hal_SCLDMA_SetDisplayDMAEn(stCfg.enRWMode, stCfg.bEn);
-        if(bSingleMode && stCfg.bEn)
+        Hal_SCLDMA_SetDisplayDMAEn(stCfg->enRWMode, stCfg->bEn);
+        if(bSingleMode && stCfg->bEn)
         {
             Drv_SCLDMA_DoubleBufferOnOffById(TRUE,E_SCLDMA_ID_PNL_R);
         }
@@ -1548,13 +1699,15 @@ MS_BOOL _Drv_SCLDMA_SetDMAOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID,ST_SCLDMA_ONOFF_CO
     }
     return TRUE;
 }
-MS_BOOL Drv_SCLDMA_SetDMAClientOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_ONOFF_CONFIG stCfg )
+MS_BOOL Drv_SCLDMA_SetDMAClientOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_ONOFF_CONFIG *stCfg )
 {
     MS_BOOL bSingleMode;
     MS_U32 u32Time          = 0;
+    MS_U32 u32Events;
     EN_SCLDMA_CLIENT_TYPE enClientType;
-    u32Time = ((MS_U32)MsOS_GetSystemTime());
-    enClientType    = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,stCfg.enRWMode);
+    static MS_U16 u16count[E_SCLDMA_CLIENT_NUM] = {0,0,0,0,0,0,0,0,0};
+    u32Time = (((MS_U32)MsOS_GetSystemTimeStamp()));
+    enClientType    = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,stCfg->enRWMode);
     if(_Is_SWRingMode(enClientType))
     {
         _Drv_SCLDMA_SetSWRingModeDMAClientOnOff(enSCLDMA_ID,stCfg);
@@ -1564,43 +1717,54 @@ MS_BOOL Drv_SCLDMA_SetDMAClientOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_ON
         "[DRVSCLDMA]%s(%d), DmaID:%s(%d), RW:%s(%d), En:%d @:%lu\n",
         __FUNCTION__, __LINE__,
         PARSING_SCLDMA_ID(enSCLDMA_ID), enSCLDMA_ID,
-        PARSING_SCLDMA_RWMD(stCfg.enRWMode), stCfg.enRWMode,
-        stCfg.bEn,u32Time);
+        PARSING_SCLDMA_RWMD(stCfg->enRWMode), stCfg->enRWMode,
+        stCfg->bEn,u32Time);
     bSingleMode     = gstScldmaInfo.enBuffMode[enClientType] == E_SCLDMA_BUF_MD_SINGLE ? TRUE : FALSE;
     if(bSingleMode)
     {
-        if(stCfg.bEn && _IsFlagType(enClientType,E_SCLDMA_FLAG_ACTIVE))
+        if(stCfg->bEn && _IsFlagType(enClientType,E_SCLDMA_FLAG_ACTIVE) &&
+            ((enClientType==E_SCLDMA_3_FRM_W)||(enClientType==E_SCLDMA_3_FRM_R)))
         {
-            DRV_SCLDMA_ERR(printf("[DRVSCLDMA] %s::%d %s_%s still R/W \n",
-                __FUNCTION__,enClientType, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg.enRWMode)));
-            return FALSE;
+            u16count[enClientType]++;
+            DRV_SCLDMA_ERR(printf("[DRVSCLDMA] %s::%d %s_%s still R/W @:%lu\n",
+                __FUNCTION__,enClientType, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg->enRWMode),u32Time));
+            if(u16count[enClientType]<2)
+            {
+                MsOS_WaitEvent(Drv_SCLIRQ_Get_IRQ_SC3EventID(),E_SCLIRQ_SC3EVENT_DONE, &u32Events, E_OR, 50);
+                if(_IsFlagType(enClientType,E_SCLDMA_FLAG_ACTIVE))
+                {
+                    _ReSetFlagType(enClientType,E_SCLDMA_FLAG_ACTIVE);
+                }
+                u16count[enClientType] = 0;
+            }
+            else
+            {
+                u16count[enClientType] = 0;
+            }
+        }
+        else
+        {
+            u16count[enClientType] = 0;
         }
         if(gbForceClose[enClientType])
         {
             DRV_SCLDMA_ERR(printf("[DRVSCLDMA] %s:: %s_%s BLOCK \n",
-                __FUNCTION__, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg.enRWMode)));
+                __FUNCTION__, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg->enRWMode)));
             return FALSE;
         }
     }
     else
     {
-        if(gstScldmaInfo.bDMAOnOff[enClientType] == 1 &&  gstScldmaInfo.bDMAOnOff[enClientType] == stCfg.bEn)
-        {
-            DRV_SCLDMA_ERR(printf("[DRVSCLDMA] %s:: %s_%s still R/W %d\n",
-                __FUNCTION__, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg.enRWMode),gstScldmaInfo.enBuffMode[enClientType]));
-            //DRV_SCLDMA_MUTEX_UNLOCK();
-            return FALSE;
-        }
         if(gbForceClose[enClientType])
         {
             DRV_SCLDMA_ERR(printf("[DRVSCLDMA] %s:: %s_%s BLOCK \n",
-                __FUNCTION__, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg.enRWMode)));
+                __FUNCTION__, PARSING_SCLDMA_ID(enSCLDMA_ID), PARSING_SCLDMA_RWMD(stCfg->enRWMode)));
             return FALSE;
         }
     }
-    gstScldmaInfo.bDMAOnOff[enClientType] = stCfg.bEn;
-
-    if(stCfg.bEn)
+    DRV_SCLDMA_MUTEX_LOCK_ISR();
+    gstScldmaInfo.bDMAOnOff[enClientType] = stCfg->bEn;
+    if(stCfg->bEn)
     {
         if(!bSingleMode)
         {
@@ -1612,10 +1776,19 @@ MS_BOOL Drv_SCLDMA_SetDMAClientOnOff(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_ON
                 gstScldmaInfo.bDmaflag[enClientType]   = 0;
             }
         }
+        else
+        {
+            gstScldmaInfo.bDmaflag[enClientType]   &= ~E_SCLDMA_FLAG_DMAFORCEOFF;
+        }
     }
-    if(stCfg.bEn)
+    else
     {
-        _Drv_SCLDMA_SetClkOnOff(enSCLDMA_ID,stCfg.stclk,1);
+        gstScldmaInfo.bDmaflag[enClientType]   |= E_SCLDMA_FLAG_DMAFORCEOFF;
+    }
+    DRV_SCLDMA_MUTEX_UNLOCK_ISR();
+    if(stCfg->bEn)
+    {
+        _Drv_SCLDMA_SetClkOnOff(enSCLDMA_ID,stCfg->stclk,1);
     }
 #if ENABLE_RING_DB
     if(_Is_VsrcDoubleBufferNotOpen() && _Is_VsrcId(enSCLDMA_ID) && DoubleBufferStatus)
@@ -1663,7 +1836,7 @@ void Drv_SCLDMA_PeekBufferQueue(ST_SCLDMA_BUFFER_QUEUE_CONFIG *pCfg)
         //pCfg->pstWriteAlready->u8FrameAddrIdx, pCfg->pstRead->u8FrameAddrIdx,pCfg->u8InQueueCount,(MS_U32)MsOS_GetSystemTime());
         SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&Get_DBGMG_SCLDMAclient(enClientType,1),
             "[DRVSCLDMA]%d W_P:%hhd R_P:%hhd Count:%hhd@:%lu\n",enClientType,
-        pCfg->pstWrite->u8FrameAddrIdx, pCfg->pstRead->u8FrameAddrIdx,pCfg->u8InQueueCount,(MS_U32)MsOS_GetSystemTime());
+        pCfg->pstWrite->u8FrameAddrIdx, pCfg->pstRead->u8FrameAddrIdx,pCfg->u8InQueueCount,((MS_U32)MsOS_GetSystemTimeStamp()));
     }
     else
     {
@@ -1676,6 +1849,7 @@ void _Drv_SCLDMA_BufferClearQueue(EN_SCLDMA_CLIENT_TYPE enClientType,unsigned ch
     unsigned char u8BufferIdx;
     if(_Is_SWRingModeBufferReady(enClientType))
     {
+        DRV_SCLDMA_MUTEX_LOCK_ISR();
         stCfg = gstScldmaBufferQueue[enClientType].pstHead;
         for(u8BufferIdx = 0; u8BufferIdx<=gstScldmaInfo.bMaxid[enClientType]; u8BufferIdx++)
         {
@@ -1686,16 +1860,18 @@ void _Drv_SCLDMA_BufferClearQueue(EN_SCLDMA_CLIENT_TYPE enClientType,unsigned ch
             }
             else
             {
-                stCfg += SCLDMA_BUFFER_QUEUE_OFFSET;
+                stCfg += 1;
             }
         }
+        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
     }
 }
 ST_SCLDMA_FRAME_BUFFER_CONFIG * _Drv_SCLDMA_MoveBufferQueueReadPoint(EN_SCLDMA_CLIENT_TYPE enClientType)
 {
     ST_SCLDMA_FRAME_BUFFER_CONFIG* pstCfg;
+    DRV_SCLDMA_MUTEX_LOCK_ISR();
     pstCfg = gstScldmaBufferQueue[enClientType].pstRead;
-    gstScldmaBufferQueue[enClientType].pstRead = gstScldmaBufferQueue[enClientType].pstRead + SCLDMA_BUFFER_QUEUE_OFFSET;
+    gstScldmaBufferQueue[enClientType].pstRead = gstScldmaBufferQueue[enClientType].pstRead + 1;
     if(gstScldmaBufferQueue[enClientType].pstRead >=gstScldmaBufferQueue[enClientType].pstTail)
     {
         gstScldmaBufferQueue[enClientType].pstRead = gstScldmaBufferQueue[enClientType].pstHead;
@@ -1705,6 +1881,7 @@ ST_SCLDMA_FRAME_BUFFER_CONFIG * _Drv_SCLDMA_MoveBufferQueueReadPoint(EN_SCLDMA_C
         gstScldmaBufferQueue[enClientType].bFull = 0;
     }
     _SetANDGetIdxType(enClientType,(pstCfg->u8FrameAddrIdx<<4),E_SCLDMA_ACTIVE_BUFFER_SCL);
+    DRV_SCLDMA_MUTEX_UNLOCK_ISR();
     return pstCfg;
 }
 void Drv_SCLDMA_BufferDeQueue(ST_SCLDMA_BUFFER_QUEUE_CONFIG *pCfg)
@@ -1715,37 +1892,37 @@ void Drv_SCLDMA_BufferDeQueue(ST_SCLDMA_BUFFER_QUEUE_CONFIG *pCfg)
     if(_Is_SWRingModeBufferReady(enClientType))
     {
         u8count = gstScldmaBufferQueue[enClientType].u8InQueueCount;
-        DRV_SCLDMA_MUTEX_LOCK_ISR();
         if(u8count)
         {
             pCfg->pstRead = _Drv_SCLDMA_MoveBufferQueueReadPoint(enClientType);
         }
+        DRV_SCLDMA_MUTEX_LOCK_ISR();
         _Drv_SCLDMA_GetInQueueCount(enClientType);
+        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         pCfg->pstHead = gstScldmaBufferQueue[enClientType].pstHead;
         pCfg->pstTail = gstScldmaBufferQueue[enClientType].pstTail;
         pCfg->pstWrite = gstScldmaBufferQueue[enClientType].pstWrite;
         pCfg->pstWriteAlready = gstScldmaBufferQueue[enClientType].pstWriteAlready;
         pCfg->u8InQueueCount = gstScldmaBufferQueue[enClientType].u8InQueueCount;
-        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         //printf("[DRVSCLDMA]%d DeQueue :R_P:%lx R_P:%hhd Count:%hhd@:%lu\n",enClientType,
         //    pCfg->pstRead->u32FrameAddr, pCfg->pstRead->u8FrameAddrIdx,gstScldmaBufferQueue[enClientType].u8InQueueCount,(MS_U32)MsOS_GetSystemTime());
         SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&Get_DBGMG_SCLDMAclient(enClientType,1),
             "[DRVSCLDMA]%d DeQueue :W_P:%hhd R_P:%hhd Count:%hhd@:%lu\n",enClientType,
-        pCfg->pstWriteAlready->u8FrameAddrIdx,gstScldmaBufferQueue[enClientType].pstRead->u8FrameAddrIdx,gstScldmaBufferQueue[enClientType].u8InQueueCount,(MS_U32)MsOS_GetSystemTime());
+        pCfg->pstWriteAlready->u8FrameAddrIdx,gstScldmaBufferQueue[enClientType].pstRead->u8FrameAddrIdx,gstScldmaBufferQueue[enClientType].u8InQueueCount,((MS_U32)MsOS_GetSystemTimeStamp()));
     }
     else
     {
         DRV_SCLDMA_ERR(printf("[DRVSCLDMA] enClientType:%d non-used Buffer Queue\n",enClientType ));
     }
 }
-void _Drv_SCLDMA_BufferFillQueue(ST_SCLDMA_FRAME_BUFFER_CONFIG *stCfg,const ST_SCLDMA_FRAME_BUFFER_CONFIG stTarget)
+void _Drv_SCLDMA_BufferFillQueue(ST_SCLDMA_FRAME_BUFFER_CONFIG *stCfg,const ST_SCLDMA_FRAME_BUFFER_CONFIG *stTarget)
 {
-    MsOS_Memcpy(stCfg,&stTarget,SCLDMA_BUFFER_QUEUE_OFFSET);
+    MsOS_Memcpy(stCfg,stTarget,SCLDMA_BUFFER_QUEUE_OFFSET);
 }
 void _Drv_SCLDMA_MoveBufferQueueWritePoint(EN_SCLDMA_CLIENT_TYPE enClientType)
 {
     gstScldmaBufferQueue[enClientType].pstWriteAlready = gstScldmaBufferQueue[enClientType].pstWrite;
-    gstScldmaBufferQueue[enClientType].pstWrite += SCLDMA_BUFFER_QUEUE_OFFSET;
+    gstScldmaBufferQueue[enClientType].pstWrite += 1;
     if(gstScldmaBufferQueue[enClientType].pstWrite >=gstScldmaBufferQueue[enClientType].pstTail)
     {
         gstScldmaBufferQueue[enClientType].pstWrite = gstScldmaBufferQueue[enClientType].pstHead;
@@ -1788,7 +1965,10 @@ void _Drv_SCLDMA_DisableBufferAccess(EN_SCLDMA_CLIENT_TYPE enClientType,MS_U8 u8
 }
 void _Drv_SCLDMA_EnableBufferAccess(EN_SCLDMA_CLIENT_TYPE enClientType,MS_U8 u8FrameAddrIdx)
 {
+    DRV_SCLDMA_MUTEX_LOCK_ISR();
     gstScldmaBufferQueue[enClientType].u8Bufferflag |= (0x1<<u8FrameAddrIdx);
+    gstScldmaBufferQueue[enClientType].u8AccessId = u8FrameAddrIdx;
+    DRV_SCLDMA_MUTEX_UNLOCK_ISR();
 }
 MS_BOOL _Drv_SCLDMA_MakeSureBufferIsReady(EN_SCLDMA_CLIENT_TYPE enClientType,MS_U8 u8FrameAddrIdx)
 {
@@ -1867,14 +2047,14 @@ void Drv_SCLDMA_SetFrameResolution(EN_SCLDMA_CLIENT_TYPE enClientType)
     gstScldmaInfo.u16FrameHeight[enClientType] = Hal_SCLDMA_GetOutputVsize(enClientType);
     gstScldmaInfo.u16FrameWidth[enClientType] = Hal_SCLDMA_GetOutputHsize(enClientType);
 }
-unsigned char Drv_SCLDMA_BufferEnQueue(EN_SCLDMA_CLIENT_TYPE enClientType,ST_SCLDMA_FRAME_BUFFER_CONFIG stTarget)
+unsigned char Drv_SCLDMA_BufferEnQueue(EN_SCLDMA_CLIENT_TYPE enClientType,ST_SCLDMA_FRAME_BUFFER_CONFIG *stTarget)
 {
     if(_Is_SWRingModeBufferReady(enClientType) && _Is_SWRingModeBufferNotFull(enClientType))
     {
-        stTarget.u8ISPcount = _Drv_SCLDMA_GetISPCount();
+        stTarget->u8ISPcount = _Drv_SCLDMA_GetISPCount();
         _Drv_SCLDMA_BufferFillQueue(gstScldmaBufferQueue[enClientType].pstWrite,stTarget);
         _Drv_SCLDMA_MoveBufferQueueWritePoint(enClientType);
-        _Drv_SCLDMA_DisableBufferAccess(enClientType,stTarget.u8FrameAddrIdx);
+        _Drv_SCLDMA_DisableBufferAccess(enClientType,stTarget->u8FrameAddrIdx);
         _Drv_SCLDMA_GetInQueueCount(enClientType);
 
         //printf("[DRVSCLDMA]%d EnQueue :W_P:%hhd R_P:%hhd Count:%hhd@:%lu\n",enClientType,
@@ -1885,7 +2065,7 @@ unsigned char Drv_SCLDMA_BufferEnQueue(EN_SCLDMA_CLIENT_TYPE enClientType,ST_SCL
             "[DRVSCLDMA]%d EnQueue :W_P:%hhd R_P:%hhd Count:%hhd@:%lu\n",enClientType,
         gstScldmaBufferQueue[enClientType].pstWriteAlready->u8FrameAddrIdx,
         gstScldmaBufferQueue[enClientType].pstRead->u8FrameAddrIdx,
-        gstScldmaBufferQueue[enClientType].u8InQueueCount,(MS_U32)MsOS_GetSystemTime());
+        gstScldmaBufferQueue[enClientType].u8InQueueCount,((MS_U32)MsOS_GetSystemTimeStamp()));
         return 1;
     }
     else if(_Is_SWRingModeBufferFull(enClientType))
@@ -1898,7 +2078,7 @@ unsigned char Drv_SCLDMA_BufferEnQueue(EN_SCLDMA_CLIENT_TYPE enClientType,ST_SCL
             "[DRVSCLDMA]%d EnQueue Fail (FULL) :W_P:%hhd R_P:%hhd Count:%hhd@:%lu\n",enClientType,
         gstScldmaBufferQueue[enClientType].pstWrite->u8FrameAddrIdx,
         gstScldmaBufferQueue[enClientType].pstRead->u8FrameAddrIdx,
-        gstScldmaBufferQueue[enClientType].u8InQueueCount,(MS_U32)MsOS_GetSystemTime());
+        gstScldmaBufferQueue[enClientType].u8InQueueCount,((MS_U32)MsOS_GetSystemTimeStamp()));
         return 0;
     }
     else
@@ -1984,32 +2164,76 @@ MS_BOOL _Drv_SCLDMA_GetSC2DoneFlag(MS_U32 u32Events)
 {
     MS_BOOL bSINGLE_SKIP = 0;
     MS_BOOL bDone;
-    bSINGLE_SKIP = (u32Events&E_SCLIRQ_EVENT_SC2FRM)? !(_IsFlagType(E_SCLDMA_2_FRM_W,E_SCLDMA_FLAG_FRMIN)):
-                    (u32Events&E_SCLIRQ_EVENT_SC2FRM2)? !(_IsFlagType(E_SCLDMA_2_FRM2_W,E_SCLDMA_FLAG_FRMIN))
+    bSINGLE_SKIP = (u32Events&E_SCLIRQ_EVENT_SC2FRM)?
+        ((_IsFlagType(E_SCLDMA_2_FRM_W,E_SCLDMA_FLAG_DROP)) || !(_IsFlagType(E_SCLDMA_2_FRM_W,E_SCLDMA_FLAG_FRMIN))):
+                    (u32Events&E_SCLIRQ_EVENT_SC2FRM2)?
+         ((_IsFlagType(E_SCLDMA_2_FRM2_W,E_SCLDMA_FLAG_DROP)) || !(_IsFlagType(E_SCLDMA_2_FRM2_W,E_SCLDMA_FLAG_FRMIN)))
                                                      : 0;
-    if((u32Events & E_SCLIRQ_EVENT_SC2) && bSINGLE_SKIP)  //ISP FIFO FULL
+    if((u32Events & (E_SCLIRQ_EVENT_SC2)) && bSINGLE_SKIP)  //ISP FIFO FULL
     {
         bDone = SINGLE_SKIP;
-        if((u32Events & (E_SCLIRQ_EVENT_SC2RE)))  //frmrestart
+        if((!_Is_RingMode(E_SCLDMA_2_FRM_W) && u32Events&E_SCLIRQ_EVENT_SC2FRM)||
+            (!_Is_RingMode(E_SCLDMA_2_FRM2_W)&& u32Events&E_SCLIRQ_EVENT_SC2FRM2))
+        {
+            if((u32Events&E_SCLIRQ_EVENT_SC2)==E_SCLIRQ_EVENT_SC2)
+            {
+                bDone = FRM_POLLIN|FRM2_POLLIN;
+            }
+            else if(u32Events&E_SCLIRQ_EVENT_SC2FRM)
+            {
+                bDone = FRM_POLLIN;
+            }
+            else if(u32Events&E_SCLIRQ_EVENT_SC2FRM2)
+            {
+                bDone = FRM2_POLLIN;
+            }
+        }
+        if((u32Events & (E_SCLIRQ_EVENT_FRM2RESTART|E_SCLIRQ_EVENT_SC2RESTART))==
+            (E_SCLIRQ_EVENT_FRM2RESTART|E_SCLIRQ_EVENT_SC2RESTART))  //frmrestart
+        {
+            bDone = FRM_POLLIN|FRM2_POLLIN;
+        }
+        else if((u32Events & (E_SCLIRQ_EVENT_RESUME)))  //frmrestart
+        {
+            bDone = FRM_POLLIN|FRM2_POLLIN;
+        }
+        else if((u32Events & (E_SCLIRQ_EVENT_FRM2RESTART)))  //frmrestart
         {
             bDone = FRM_POLLIN;
         }
+        else if((u32Events & (E_SCLIRQ_EVENT_SC2RESTART)))  //frmrestart
+        {
+            bDone = FRM2_POLLIN;
+        }
     }
-    else if((u32Events & E_SCLIRQ_EVENT_SC2FRM))  //frmend
+    else if((u32Events & (E_SCLIRQ_EVENT_SC2))==(E_SCLIRQ_EVENT_SC2))
+    {
+        bDone = FRM_POLLIN |FRM2_POLLIN;
+    }
+    else if((u32Events & (E_SCLIRQ_EVENT_FRM2RESTART|E_SCLIRQ_EVENT_SC2RESTART))==
+        (E_SCLIRQ_EVENT_FRM2RESTART|E_SCLIRQ_EVENT_SC2RESTART))  //frmrestart
+    {
+        bDone = FRM_POLLIN|FRM2_POLLIN;
+    }
+    else if((u32Events & (E_SCLIRQ_EVENT_SC2FRM)))  //frmend
     {
         bDone = FRM_POLLIN;
     }
-    else if((u32Events & E_SCLIRQ_EVENT_SC2FRM2))  //frmend
+    else if((u32Events & (E_SCLIRQ_EVENT_SC2FRM2)))  //frmend
+    {
+        bDone = FRM2_POLLIN;
+    }
+    else if((u32Events & (E_SCLIRQ_EVENT_SC2RESTART)))  //frmrestart
     {
         bDone = FRM_POLLIN;
     }
-    else if((u32Events & (E_SCLIRQ_EVENT_SC2RESTART)))  //frmend
+    else if((u32Events & (E_SCLIRQ_EVENT_FRM2RESTART)))  //frmrestart
     {
-        bDone = FRM_POLLIN;
+        bDone = FRM2_POLLIN;
     }
     else if(u32Events & E_SCLIRQ_EVENT_RESUME)
     {
-        bDone = FRM_POLLIN;
+        bDone = FRM_POLLIN|FRM2_POLLIN;
     }
     else   //timeout
     {
@@ -2021,19 +2245,56 @@ MS_BOOL _Drv_SCLDMA_GetSC1DoneFlag(MS_U32 u32Events)
 {
     MS_BOOL bSINGLE_SKIP = 0;
     MS_BOOL bDone;
-    bSINGLE_SKIP = (u32Events&E_SCLIRQ_EVENT_SC1SNP)? !(_IsFlagType(E_SCLDMA_1_SNP_W,E_SCLDMA_FLAG_FRMIN)):
-                    (u32Events&E_SCLIRQ_EVENT_SC1FRM)? !(_IsFlagType(E_SCLDMA_1_FRM_W,E_SCLDMA_FLAG_FRMIN)): 0;
+    bSINGLE_SKIP = (u32Events&E_SCLIRQ_EVENT_SC1SNP)?
+        ((_IsFlagType(E_SCLDMA_1_SNP_W,E_SCLDMA_FLAG_DROP)) || !(_IsFlagType(E_SCLDMA_1_SNP_W,E_SCLDMA_FLAG_FRMIN))):
+                    (u32Events&E_SCLIRQ_EVENT_SC1FRM)?
+        ((_IsFlagType(E_SCLDMA_1_FRM_W,E_SCLDMA_FLAG_DROP)) || !(_IsFlagType(E_SCLDMA_1_FRM_W,E_SCLDMA_FLAG_FRMIN)))
+                        : 0;
     if((u32Events & (E_SCLIRQ_EVENT_SC1)) && bSINGLE_SKIP)  //ISP FIFO FULL
     {
         bDone = SINGLE_SKIP;
-        if((u32Events & (E_SCLIRQ_EVENT_SC1RE)))  //frmrestart
+        if((!_Is_RingMode(E_SCLDMA_1_FRM_W) && u32Events&E_SCLIRQ_EVENT_SC1FRM)||
+            (!_Is_RingMode(E_SCLDMA_1_SNP_W)&& u32Events&E_SCLIRQ_EVENT_SC1SNP))
+        {
+            if((u32Events&E_SCLIRQ_EVENT_SC1)==E_SCLIRQ_EVENT_SC1)
+            {
+                bDone = FRM_POLLIN|SNP_POLLIN;
+            }
+            else if(u32Events&E_SCLIRQ_EVENT_SC1FRM)
+            {
+                bDone = FRM_POLLIN;
+            }
+            else if(u32Events&E_SCLIRQ_EVENT_SC1FRM)
+            {
+                bDone = SNP_POLLIN;
+            }
+        }
+        else if((u32Events & (E_SCLIRQ_EVENT_SC1RESTART|E_SCLIRQ_EVENT_SNPRESTART))==
+            (E_SCLIRQ_EVENT_SC1RESTART|E_SCLIRQ_EVENT_SNPRESTART))  //frmrestart
+        {
+            bDone = FRM_POLLIN|SNP_POLLIN;
+        }
+        else if((u32Events & (E_SCLIRQ_EVENT_SC1RESTART)))  //frmrestart
         {
             bDone = FRM_POLLIN;
+        }
+        else if((u32Events & (E_SCLIRQ_EVENT_SNPRESTART)))  //frmrestart
+        {
+            bDone = SNP_POLLIN;
+        }
+        else if((u32Events & (E_SCLIRQ_EVENT_RESUME)))  //frmrestart
+        {
+            bDone = FRM_POLLIN|SNP_POLLIN;
         }
     }
     else if((u32Events & (E_SCLIRQ_EVENT_SC1))==(E_SCLIRQ_EVENT_SC1))
     {
         bDone = FRM_POLLIN |SNP_POLLIN;
+    }
+    else if((u32Events & (E_SCLIRQ_EVENT_SC1RESTART|E_SCLIRQ_EVENT_SNPRESTART))==
+        (E_SCLIRQ_EVENT_SC1RESTART|E_SCLIRQ_EVENT_SNPRESTART))  //frmrestart
+    {
+        bDone = FRM_POLLIN|SNP_POLLIN;
     }
     else if((u32Events & (E_SCLIRQ_EVENT_SC1FRM)))  //frmend
     {
@@ -2047,9 +2308,13 @@ MS_BOOL _Drv_SCLDMA_GetSC1DoneFlag(MS_U32 u32Events)
     {
         bDone = FRM_POLLIN;
     }
+    else if((u32Events & (E_SCLIRQ_EVENT_SNPRESTART)))  //frmrestart
+    {
+        bDone = SNP_POLLIN;
+    }
     else if(u32Events & E_SCLIRQ_EVENT_RESUME)
     {
-        bDone = FRM_POLLIN;
+        bDone = FRM_POLLIN|SNP_POLLIN;
     }
     else   //timeout
     {
@@ -2097,8 +2362,11 @@ MS_BOOL Drv_SCLDMA_GetDMADoneEvent(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_DONE
     MS_BOOL bRet = 1;
     EN_SCLDMA_CLIENT_TYPE enClientType;
     MS_U32 u32Time   = 0;
+    MS_U32 u32DiffTime   = 0;
+    static MS_U32 u32SC3Polltime = 0;
     MS_U32 u32Events = 0;
-    u32Time = ((MS_U32)MsOS_GetSystemTime());
+    MS_U8 u8Count = 0;
+    u32Time = ((MS_U32)MsOS_GetSystemTimeStamp());
     enClientType = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,pCfg->enRWMode);
     if(enSCLDMA_ID ==E_SCLDMA_ID_PNL_R || enSCLDMA_ID ==E_SCLDMA_ID_3_R )
     {
@@ -2111,8 +2379,55 @@ MS_BOOL Drv_SCLDMA_GetDMADoneEvent(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_DONE
     {
         u32Events = MsOS_GetEvent(Drv_SCLIRQ_Get_IRQ_SC3EventID());
         pCfg->bDone = _Drv_SCLDMA_GetSC3DoneFlagAndClearSC3Event(u32Events);
-
-        SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&Get_DBGMG_SCLDMAclient(enClientType,3),
+        u32DiffTime = (u32Time>=u32SC3Polltime) ? (u32Time-u32SC3Polltime): u32Time;
+        if(pCfg->bDone)
+        {
+            gu32SendTime[E_SCLDMA_3_FRM_R] = u32Time;
+            gbSendPoll[E_SCLDMA_3_FRM_R] = pCfg->bDone;
+            gu32SendTime[E_SCLDMA_3_FRM_W] = u32Time;
+            gbSendPoll[E_SCLDMA_3_FRM_W] = pCfg->bDone;
+            if(gstScldmaInfo.bDMAOnOff[E_SCLDMA_3_FRM_W])
+            {
+                SCL_DBGERR("%s Delaly\n",__FUNCTION__);
+                MsOS_DelayTask(20);
+            }
+        }
+        else if(gbSendPoll[E_SCLDMA_3_FRM_W]&0x10 && (u32DiffTime>OMX_VSPL_POLLTIME))
+        {
+            //poll time out
+            if(gstScldmaInfo.enBuffMode[E_SCLDMA_3_FRM_W]== E_SCLDMA_BUF_MD_SINGLE && gstScldmaInfo.bDMAOnOff[E_SCLDMA_3_FRM_W])
+            {
+                while(!pCfg->bDone)
+                {
+                    _Drv_SCLDMA_SWRegenVSyncTrigger(E_SCLDMA_VS_ID_SC3);
+                    MsOS_WaitEvent(Drv_SCLIRQ_Get_IRQ_SC3EventID(),E_SCLIRQ_SC3EVENT_DONE, &u32Events, E_OR, 50);
+                    pCfg->bDone = _Drv_SCLDMA_GetSC3DoneFlagAndClearSC3Event(u32Events);
+                    u8Count++;
+                    if(u8Count > 5)
+                    {
+                        SCL_DBGERR("[SCLDMA]SC3 ERR\n");
+                        break;
+                    }
+                }
+                if(pCfg->bDone)
+                {
+                    gu32SendTime[E_SCLDMA_3_FRM_R] = u32Time;
+                    gbSendPoll[E_SCLDMA_3_FRM_R] = pCfg->bDone;
+                    gu32SendTime[E_SCLDMA_3_FRM_W] = u32Time;
+                    gbSendPoll[E_SCLDMA_3_FRM_W] = pCfg->bDone;
+                }
+            }
+        }
+        else
+        {
+            if(!(gbSendPoll[E_SCLDMA_3_FRM_W]&0x10))
+            {
+                u32SC3Polltime = u32Time;
+            }
+            gbSendPoll[E_SCLDMA_3_FRM_R] |= 0x10;
+            gbSendPoll[E_SCLDMA_3_FRM_W] |= 0x10;
+        }
+        SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&Get_DBGMG_SCLDMAclient(enClientType,0),
             "[DRVSCLDMA]%s:: Client:%s Event:%lx bDone=%x flag:%hhx@:%lu\n",
             __FUNCTION__, PARSING_SCLDMA_CLIENT(enClientType),u32Events, pCfg->bDone,
             gstScldmaInfo.bDmaflag[enClientType],u32Time);
@@ -2123,11 +2438,49 @@ MS_BOOL Drv_SCLDMA_GetDMADoneEvent(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_DONE
         {
             u32Events = _Drv_SCLDMA_GetEventById(E_SCLDMA_ID_1_W);
             pCfg->bDone = _Drv_SCLDMA_GetSC1DoneFlag(u32Events);
+            gu32FRMEvents = 0;
+            if(pCfg->bDone)
+            {
+                if((pCfg->bDone&(SNP_POLLIN))||pCfg->bDone==SINGLE_SKIP)
+                {
+                    gu32SendTime[E_SCLDMA_1_SNP_W] = u32Time;
+                    gbSendPoll[E_SCLDMA_1_SNP_W] = pCfg->bDone;
+                }
+                if((pCfg->bDone&(FRM_POLLIN))||pCfg->bDone==SINGLE_SKIP)
+                {
+                    gu32SendTime[E_SCLDMA_1_FRM_W] = u32Time;
+                    gbSendPoll[E_SCLDMA_1_FRM_W] = pCfg->bDone;
+                }
+            }
+            else
+            {
+                gbSendPoll[E_SCLDMA_1_SNP_W] |= 0x10;
+                gbSendPoll[E_SCLDMA_1_FRM_W] |= 0x10;
+            }
         }
         else if(enSCLDMA_ID ==E_SCLDMA_ID_2_W)
         {
             u32Events = _Drv_SCLDMA_GetEventById(E_SCLDMA_ID_2_W);
             pCfg->bDone = _Drv_SCLDMA_GetSC2DoneFlag(u32Events);
+            gu32SC2FRMEvents = 0;
+            if(pCfg->bDone)
+            {
+                if((pCfg->bDone&(FRM2_POLLIN))||pCfg->bDone==SINGLE_SKIP)
+                {
+                    gu32SendTime[E_SCLDMA_2_FRM2_W] = u32Time;
+                    gbSendPoll[E_SCLDMA_2_FRM2_W] = pCfg->bDone;
+                }
+                if((pCfg->bDone&(FRM_POLLIN))||pCfg->bDone==SINGLE_SKIP)
+                {
+                    gu32SendTime[E_SCLDMA_2_FRM_W] = u32Time;
+                    gbSendPoll[E_SCLDMA_2_FRM_W] = pCfg->bDone;
+                }
+            }
+            else
+            {
+                gbSendPoll[E_SCLDMA_2_FRM2_W] |= 0x10;
+                gbSendPoll[E_SCLDMA_2_FRM_W] |= 0x10;
+            }
         }
         SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&Get_DBGMG_SCLDMAclient(enClientType,1),"[DRVSCLDMA]%s:: Client:%s Event:%lx bDone=%x\n",
              __FUNCTION__, PARSING_SCLDMA_CLIENT(enClientType),u32Events, pCfg->bDone);
@@ -2168,17 +2521,25 @@ MS_BOOL _Drv_SCLDMA_GetAppReadPoint(EN_SCLDMA_CLIENT_TYPE enClientType ,MS_U8 u8
     {
         u8RPoint = (u8AppInfo & E_SCLDMA_ACTIVE_BUFFER_OMX_FLAG) ?
             (u8AppInfo &0x0F ) : (gstScldmaInfo.bDMAidx[enClientType]>>4)&E_SCLDMA_ACTIVE_BUFFER_SCL ;
+        if((u8AppInfo & E_SCLDMA_ACTIVE_BUFFER_OMX_FLAG))
+        {
+            SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&Get_DBGMG_SCLDMAclient(enClientType,1),
+                "[DRVSCLDMA] enClientType:%d Update Rp %hhd \n",enClientType,u8RPoint);
+        }
     }
     return u8RPoint;
 }
 void _Drv_SCLDMA_DMAOffAtActiveTimeWhetherNeedReOpen(ST_SCLDMA_POINT_CONFIG *stPointCfg)
 {
-    DRV_SCLDMA_MUTEX_LOCK_ISR();
     if(stPointCfg->bRWequal&&(_IsFlagType(stPointCfg->enClientType,E_SCLDMA_FLAG_DMAOFF)))
     {
         if(Drv_SCLDMA_SetISRHandlerDMAOff(stPointCfg->enClientType,1))
         {
+            DRV_SCLDMA_MUTEX_LOCK_ISR();
             _ReSetFlagType(stPointCfg->enClientType,(E_SCLDMA_FLAG_EVERDMAON|E_SCLDMA_FLAG_DMAOFF));
+            _ResetTrigCount(stPointCfg->enClientType);
+            Drv_SCLDMA_SetSWReTrigCount(stPointCfg->enClientType,0);
+            DRV_SCLDMA_MUTEX_UNLOCK_ISR();
             SCL_DBG(SCL_DBG_LV_DRVSCLDMA()&Get_DBGMG_SCLDMAclient(stPointCfg->enClientType,1),
                 "[DRVSCLDMA] enClientType:%d ReOpen \n",stPointCfg->enClientType);
         }
@@ -2188,15 +2549,19 @@ void _Drv_SCLDMA_DMAOffAtActiveTimeWhetherNeedReOpen(ST_SCLDMA_POINT_CONFIG *stP
                 "[DRVSCLDMA] enClientType:%d strong collisionR:%hhd\n",stPointCfg->enClientType,stPointCfg->u8RPoint ));
         }
     }
-    DRV_SCLDMA_MUTEX_UNLOCK_ISR();
 }
 void _Drv_SCLDMA_SetDMAOnWhenDMAOff
     (EN_SCLDMA_ID_TYPE enSCLDMA_ID, EN_SCLDMA_CLIENT_TYPE enClientType, ST_SCLDMA_ACTIVE_BUFFER_CONFIG *pCfg)
 {
+    SCLIRQTXEvent enType;
     pCfg->stOnOff.bEn = 1;
-    Drv_SCLDMA_SetDMAClientOnOff(enSCLDMA_ID ,pCfg->stOnOff);
-    MsOS_SetEvent_IRQ(Drv_SCLIRQ_Get_IRQ_EventID(), (enClientType==E_SCLDMA_1_FRM_W)
-        ? E_SCLIRQ_EVENT_SC1RESTART: E_SCLIRQ_EVENT_SC2RESTART);
+    enType = (enClientType==E_SCLDMA_1_FRM_W) ? E_SCLIRQ_EVENT_SC1RESTART :
+             (enClientType==E_SCLDMA_1_SNP_W) ? E_SCLIRQ_EVENT_SNPRESTART :
+             (enClientType==E_SCLDMA_2_FRM_W) ? E_SCLIRQ_EVENT_SC2RESTART :
+             (enClientType==E_SCLDMA_2_FRM2_W) ? E_SCLIRQ_EVENT_FRM2RESTART :
+                    E_SCLIRQ_EVENT_CLEAR;
+    Drv_SCLDMA_SetDMAClientOnOff(enSCLDMA_ID ,&pCfg->stOnOff);
+    MsOS_SetEvent_IRQ(Drv_SCLIRQ_Get_IRQ_EventID(), enType);
 }
 MS_U8 _Drv_SCLDMA_GetDoneIdxAndFlagWhenDMAOff(ST_SCLDMA_POINT_CONFIG *stPointCfg)
 {
@@ -2208,7 +2573,9 @@ MS_U8 _Drv_SCLDMA_GetDoneIdxAndFlagWhenDMAOff(ST_SCLDMA_POINT_CONFIG *stPointCfg
     else if((_IsFlagType(stPointCfg->enClientType,E_SCLDMA_FLAG_EVERDMAON)) && stPointCfg->bRPointChange)
     {
         u8ActiveBuffer = stPointCfg->u8WPoint|E_SCLDMA_ACTIVE_BUFFER_OMX_TRIG;
+        DRV_SCLDMA_MUTEX_LOCK_ISR();
         _ReSetFlagType(stPointCfg->enClientType,E_SCLDMA_FLAG_EVERDMAON);
+        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
     }
     else
     {
@@ -2226,7 +2593,9 @@ MS_U8 _Drv_SCLDMA_GetDoneIdxAndFlagWhenDMAOn(ST_SCLDMA_POINT_CONFIG *stPointCfg)
     else if((_IsFlagType(stPointCfg->enClientType,E_SCLDMA_FLAG_EVERDMAON)) && stPointCfg->bRPointChange)
     {
         u8ActiveBuffer = stPointCfg->u8WPoint;
+        DRV_SCLDMA_MUTEX_LOCK_ISR();
         _ReSetFlagType(stPointCfg->enClientType,E_SCLDMA_FLAG_EVERDMAON);
+        DRV_SCLDMA_MUTEX_UNLOCK_ISR();
     }
     else
     {
@@ -2234,21 +2603,20 @@ MS_U8 _Drv_SCLDMA_GetDoneIdxAndFlagWhenDMAOn(ST_SCLDMA_POINT_CONFIG *stPointCfg)
     }
     return u8ActiveBuffer;
 }
-ST_SCLDMA_POINT_CONFIG _Drv_SCLDMA_GetPointConfig(EN_SCLDMA_CLIENT_TYPE enClientType ,MS_U8 u8AppInfo)
+void _Drv_SCLDMA_GetPointConfig(EN_SCLDMA_CLIENT_TYPE enClientType ,MS_U8 u8AppInfo,ST_SCLDMA_POINT_CONFIG *stPointCfg)
 {
-    ST_SCLDMA_POINT_CONFIG stPointCfg;
-    stPointCfg.u8LPoint = _Drv_SCLDMA_GetLastTimePoint(enClientType);
-    stPointCfg.u8WPoint = _Drv_SCLDMA_GetDMAWritePoint(enClientType, stPointCfg.u8LPoint);
-    stPointCfg.u8RPoint = _Drv_SCLDMA_GetAppReadPoint(enClientType,u8AppInfo);
-    stPointCfg.bRWequal = (stPointCfg.u8WPoint == stPointCfg.u8RPoint)? 1 : 0;
-    stPointCfg.bRPointChange = (u8AppInfo & E_SCLDMA_ACTIVE_BUFFER_OMX_FLAG)? 1 : 0;
-    stPointCfg.enClientType = enClientType;
-    return stPointCfg;
+    stPointCfg->u8LPoint = _Drv_SCLDMA_GetLastTimePoint(enClientType);
+    stPointCfg->u8WPoint = _Drv_SCLDMA_GetDMAWritePoint(enClientType, stPointCfg->u8LPoint);
+    stPointCfg->u8RPoint = _Drv_SCLDMA_GetAppReadPoint(enClientType,u8AppInfo);
+    stPointCfg->bRWequal = (stPointCfg->u8WPoint == stPointCfg->u8RPoint)? 1 : 0;
+    stPointCfg->bRPointChange = (u8AppInfo & E_SCLDMA_ACTIVE_BUFFER_OMX_FLAG)? 1 : 0;
+    stPointCfg->enClientType = enClientType;
 }
 void _Drv_SCLDMA_HandlerBufferWhenDMAOff
     (EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_POINT_CONFIG *stPointCfg, ST_SCLDMA_ACTIVE_BUFFER_CONFIG *pCfg)
 {
-    if(_Is_DMACanReOpen(stPointCfg->bRWequal,stPointCfg->bRPointChange))
+    if(_Is_DMACanReOpen(stPointCfg->bRWequal,stPointCfg->bRPointChange) &&
+        !(_IsFlagType(stPointCfg->enClientType,E_SCLDMA_FLAG_DMAFORCEOFF)))// for issue race condition of OMX update Rp and ioctl.
     {
         _Drv_SCLDMA_SetDMAOnWhenDMAOff(enSCLDMA_ID,stPointCfg->enClientType,pCfg);
         pCfg->u8ActiveBuffer = 0x0F ;
@@ -2268,6 +2636,7 @@ MS_BOOL Drv_SCLDMA_GetDMABufferDoneIdx(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_
 {
     EN_SCLDMA_CLIENT_TYPE enClientType;
     ST_SCLDMA_POINT_CONFIG stPointCfg;
+    MsOS_Memset(&stPointCfg,0,sizeof(ST_SCLDMA_POINT_CONFIG));
     enClientType = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,pCfg->enRWMode);
 #if ENABLE_RING_DB
     if(_Is_VsrcDoubleBufferNotOpen() && _Is_VsrcId(enSCLDMA_ID) && DoubleBufferStatus)
@@ -2278,7 +2647,7 @@ MS_BOOL Drv_SCLDMA_GetDMABufferDoneIdx(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_
 #endif
     if(_Is_RingMode(enClientType))
     {
-        stPointCfg = _Drv_SCLDMA_GetPointConfig(enClientType,pCfg->u8ActiveBuffer);
+        _Drv_SCLDMA_GetPointConfig(enClientType,pCfg->u8ActiveBuffer,&stPointCfg);
         DRV_SCLDMA_MUTEX_LOCK_ISR();
         _SetANDGetIdxType(enClientType,(stPointCfg.u8RPoint<<4),E_SCLDMA_ACTIVE_BUFFER_SCL);
         DRV_SCLDMA_MUTEX_UNLOCK_ISR();
@@ -2290,13 +2659,24 @@ MS_BOOL Drv_SCLDMA_GetDMABufferDoneIdx(EN_SCLDMA_ID_TYPE enSCLDMA_ID, ST_SCLDMA_
         {
             _Drv_SCLDMA_HandlerBufferWhenDMAOff(enSCLDMA_ID,&stPointCfg,pCfg);
         }
+        if(pCfg->u8ActiveBuffer == 0xF)
+        {
+            pCfg->u64FRMDoneTime    = gu64FRMDoneTime[enClientType][MAX_BUFFER_COUNT];
+        }
+        else
+        {
+            pCfg->u64FRMDoneTime    = gu64FRMDoneTime[enClientType][stPointCfg.u8WPoint];
+            DRV_SCLDMA_MUTEX_LOCK_ISR();
+            gu64FRMDoneTime[enClientType][MAX_BUFFER_COUNT] = pCfg->u64FRMDoneTime;
+            DRV_SCLDMA_MUTEX_UNLOCK_ISR();
+        }
     }
     else
     {
         pCfg->u8ActiveBuffer    = 0xFF;
+        pCfg->u64FRMDoneTime    = gu64FRMDoneTime[enClientType][0];
     }
     pCfg->u8ISPcount        = gu8ISPcount;
-    pCfg->u32FRMDoneTime    = gu32FRMDoneTime;
     return 1;
 }
 void _Drv_SCLDMA_HandlerBufferWhenDMAOnWithoutDoublebuffer
@@ -2309,12 +2689,22 @@ MS_BOOL Drv_SCLDMA_GetDMABufferDoneIdxWithoutDoublebuffer
 {
     EN_SCLDMA_CLIENT_TYPE enClientType;
     ST_SCLDMA_POINT_CONFIG stPointCfg;
+    MsOS_Memset(&stPointCfg,0,sizeof(ST_SCLDMA_POINT_CONFIG));
     enClientType = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,pCfg->enRWMode);
     if(_Is_RingMode(enClientType))
     {
-        stPointCfg = _Drv_SCLDMA_GetPointConfig(enClientType,pCfg->u8ActiveBuffer);
+        _Drv_SCLDMA_GetPointConfig(enClientType,pCfg->u8ActiveBuffer,&stPointCfg);
         DRV_SCLDMA_MUTEX_LOCK_ISR();
         _SetANDGetIdxType(enClientType,(stPointCfg.u8RPoint<<4),E_SCLDMA_ACTIVE_BUFFER_SCL);
+        if(stPointCfg.u8WPoint == 0xF)
+        {
+            pCfg->u64FRMDoneTime    = gu64FRMDoneTime[enClientType][MAX_BUFFER_COUNT];
+        }
+        else
+        {
+            pCfg->u64FRMDoneTime    = gu64FRMDoneTime[enClientType][stPointCfg.u8WPoint];
+            gu64FRMDoneTime[enClientType][MAX_BUFFER_COUNT] = pCfg->u64FRMDoneTime;
+        }
         DRV_SCLDMA_MUTEX_UNLOCK_ISR();
         if(_Is_DMAClientOn(enClientType))
         {
@@ -2325,12 +2715,24 @@ MS_BOOL Drv_SCLDMA_GetDMABufferDoneIdxWithoutDoublebuffer
             _Drv_SCLDMA_HandlerBufferWhenDMAOff(enSCLDMA_ID,&stPointCfg,pCfg);
         }
     }
+    else if(_Is_SingleMode(enClientType))
+    {
+        if(_IsFlagType(enClientType,E_SCLDMA_FLAG_ACTIVE))
+        {
+            pCfg->u8ActiveBuffer    = 0xFF;
+        }
+        else
+        {
+            pCfg->u8ActiveBuffer    = (0xFF | ~E_SCLDMA_ACTIVE_BUFFER_OMX_TRIG);
+        }
+        pCfg->u64FRMDoneTime    = gu64FRMDoneTime[enClientType][0];
+    }
     else
     {
         pCfg->u8ActiveBuffer    = 0xFF;
+        pCfg->u64FRMDoneTime    = gu64FRMDoneTime[enClientType][0];
     }
     pCfg->u8ISPcount        = gu8ISPcount;
-    pCfg->u32FRMDoneTime    = gu32FRMDoneTime;
     return 1;
 }
 void Drv_SCLDMA_SetForceCloseDMA(EN_SCLDMA_ID_TYPE enID,EN_SCLDMA_RW_MODE_TYPE enRWMode,MS_BOOL bEn)
@@ -2357,27 +2759,73 @@ void Drv_SCLDMA_ResetTrigCountByClient(EN_SCLDMA_ID_TYPE enSCLDMA_ID,EN_SCLDMA_R
         gu32TrigCount[enClientType] = 0;
     }
 }
-ST_SCLDMA_ATTR_TYPE Drv_SCLDMA_GetDMAInformationByClient(EN_SCLDMA_ID_TYPE enSCLDMA_ID,EN_SCLDMA_RW_MODE_TYPE enRWMode)
+void Drv_SCLDMA_GetDMAInformationByClient
+    (EN_SCLDMA_ID_TYPE enSCLDMA_ID,EN_SCLDMA_RW_MODE_TYPE enRWMode,ST_SCLDMA_ATTR_TYPE *stAttr)
 {
     EN_SCLDMA_CLIENT_TYPE enClientType;
-    ST_SCLDMA_ATTR_TYPE stAttr;
     unsigned char u8BufferIdx;
+    unsigned char u8LP;
+    unsigned char u8WP;
     enClientType        = _Drv_SCLDMA_TransToClientType(enSCLDMA_ID ,enRWMode);
-    stAttr.u16DMAcount  = Hal_SCLDMA_GetDMAOutputCount(enClientType);
-    stAttr.u16DMAH      = Hal_SCLDMA_GetOutputHsize(enClientType);
-    stAttr.u16DMAV      = Hal_SCLDMA_GetOutputVsize(enClientType);
-    stAttr.u32Trigcount = gu32TrigCount[enClientType];
-    stAttr.enBuffMode   = gstScldmaInfo.enBuffMode[enClientType];
-    stAttr.enColor      = gstScldmaInfo.enColor[enClientType];
-    stAttr.u8MaxIdx     = gstScldmaInfo.bMaxid[enClientType];
-    for(u8BufferIdx=0;u8BufferIdx<=stAttr.u8MaxIdx;u8BufferIdx++)
+    stAttr->u16DMAcount  = Hal_SCLDMA_GetDMAOutputCount(enClientType);
+    stAttr->u16DMAH      = Hal_SCLDMA_GetOutputHsize(enClientType);
+    stAttr->u16DMAV      = Hal_SCLDMA_GetOutputVsize(enClientType);
+    stAttr->u32Trigcount = gu32TrigCount[enClientType];
+    stAttr->enBuffMode   = gstScldmaInfo.enBuffMode[enClientType];
+    stAttr->enColor      = gstScldmaInfo.enColor[enClientType];
+    stAttr->u8MaxIdx     = gstScldmaInfo.bMaxid[enClientType];
+    for(u8BufferIdx=0;u8BufferIdx<=stAttr->u8MaxIdx;u8BufferIdx++)
     {
-        stAttr.u32Base_Y[u8BufferIdx] = gstScldmaInfo.u32Base_Y[enClientType][u8BufferIdx];
-        stAttr.u32Base_C[u8BufferIdx] = gstScldmaInfo.u32Base_C[enClientType][u8BufferIdx];
-        stAttr.u32Base_V[u8BufferIdx] = gstScldmaInfo.u32Base_V[enClientType][u8BufferIdx];
+        stAttr->u32Base_Y[u8BufferIdx] = gstScldmaInfo.u32Base_Y[enClientType][u8BufferIdx];
+        stAttr->u32Base_C[u8BufferIdx] = gstScldmaInfo.u32Base_C[enClientType][u8BufferIdx];
+        stAttr->u32Base_V[u8BufferIdx] = gstScldmaInfo.u32Base_V[enClientType][u8BufferIdx];
     }
-    stAttr.bDMAEn = gstScldmaInfo.bDMAOnOff[enClientType];
-    return stAttr;
+    stAttr->bDMAEn = gstScldmaInfo.bDMAOnOff[enClientType];
+    if(stAttr->enBuffMode == E_SCLDMA_BUF_MD_RING)
+    {
+        stAttr->bDMAReadIdx = (gstScldmaInfo.bDMAidx[enClientType]>>4)&E_SCLDMA_ACTIVE_BUFFER_SCL;
+        stAttr->bDMAWriteIdx = gstScldmaInfo.bDMAidx[enClientType]&E_SCLDMA_ACTIVE_BUFFER_SCL;
+        if(stAttr->bDMAReadIdx>stAttr->bDMAWriteIdx)
+        {
+            stAttr->u8Count = (stAttr->u8MaxIdx+1)-(stAttr->bDMAReadIdx-stAttr->bDMAWriteIdx);
+        }
+        else
+        {
+            stAttr->u8Count = (stAttr->u8MaxIdx+1)-(stAttr->bDMAWriteIdx-stAttr->bDMAReadIdx);
+        }
+    }
+    else
+    {
+        stAttr->bDMAReadIdx = gstScldmaBufferQueue[enClientType].u8AccessId;
+        stAttr->bDMAWriteIdx = gstScldmaBufferQueue[enClientType].u8NextActiveId;
+        stAttr->u8Count = gstScldmaBufferQueue[enClientType].u8InQueueCount;
+    }
+    stAttr->bDMAFlag = gstScldmaInfo.bDmaflag[enClientType];
+    stAttr->bSendPoll = gbSendPoll[enClientType];
+    u8LP = (_GetIdxType(enClientType,E_SCLDMA_ACTIVE_BUFFER_SCL));
+    if( _IsFlagType(enClientType,E_SCLDMA_FLAG_ACTIVE))
+    {
+        u8WP =(u8LP==0) ? gstScldmaInfo.bMaxid[enClientType] : u8LP-1;
+    }
+    else if(_Is_DMAClientOn(enClientType) &&_IsFlagType(enClientType,E_SCLDMA_FLAG_BLANKING))
+    {
+        u8WP = MAX_BUFFER_COUNT;
+    }
+    else
+    {
+        u8WP = u8LP;
+    }
+    if(stAttr->enBuffMode == E_SCLDMA_BUF_MD_SINGLE)
+    {
+        stAttr->u32FrameDoneTime = (MS_U32)gu64FRMDoneTime[enClientType][0];
+    }
+    else
+    {
+        stAttr->u32FrameDoneTime = (MS_U32)gu64FRMDoneTime[enClientType][u8WP];
+    }
+    stAttr->u32SendTime = gu32SendTime[enClientType];
+    stAttr->u8ResetCount = gu8ResetCount[enClientType];
+    stAttr->u8DMAErrCount = gu8DMAErrCount[enClientType];
 }
 void Drv_SCLDMA_ClkClose(ST_SCLDMA_CLK_CONFIG* stclk)
 {
@@ -2388,7 +2836,7 @@ void Drv_SCLDMA_ClkClose(ST_SCLDMA_CLK_CONFIG* stclk)
         Hal_SCLDMA_ODCLKInit(0,stclk);
     }
 }
-wait_queue_head_t * Drv_SCLDMA_GetWaitQueueHead(EN_SCLDMA_ID_TYPE enID)
+void * Drv_SCLDMA_GetWaitQueueHead(EN_SCLDMA_ID_TYPE enID)
 {
     return Drv_SCLIRQ_GetWaitQueueHead(enID);
 }

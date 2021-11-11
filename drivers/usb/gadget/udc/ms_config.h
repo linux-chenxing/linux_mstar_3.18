@@ -33,7 +33,7 @@ extern "C" {
 #define otgRegAddress   			(MSB250X_BASE_REG_RIU_PA+0x2600*2)
 #define utmiRegAddress   			(MSB250X_BASE_REG_RIU_PA+0x1F00*2)
 #endif
-#if defined(CONFIG_ARCH_INFINITY)
+#if defined(CONFIG_ARCH_INFINITY) || defined(CONFIG_ARCH_INFINITY3)
 #define MSB250X_BASE_REG_RIU_PA		0xfd200000
 #define usbcRegAddress   			(MSB250X_BASE_REG_RIU_PA+0x42300*2)
 #define otgRegAddress   			(MSB250X_BASE_REG_RIU_PA+0x42500*2)

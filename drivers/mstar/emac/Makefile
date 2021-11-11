@@ -1,15 +1,11 @@
 #
 # Makefile for MStar EMAC device drivers.
 #
-ifdef CONFIG_ARCH_INFINITY
-    CONFIG_MSTAR_CHIP_NAME := infinity
-endif
-ifdef CONFIG_ARCH_INFINITY3
-    CONFIG_MSTAR_CHIP_NAME := infinity3
-endif
 
+CONFIG_MSTAR_CHIP_NAME := $(subst ",,$(CONFIG_MSTAR_CHIP_NAME))
 # general options
 EXTRA_CFLAGS      +=  -Idrivers/mstar/include
+EXTRA_CFLAGS      +=  -Idrivers/mstar/include/$(CONFIG_MSTAR_CHIP_NAME)
 EXTRA_CFLAGS      +=  -Idrivers/mstar/emac
 EXTRA_CFLAGS      +=  -Idrivers/mstar/emac/hal/$(CONFIG_MSTAR_CHIP_NAME)
 EXTRA_CFLAGS      +=  -Iinclude/linux

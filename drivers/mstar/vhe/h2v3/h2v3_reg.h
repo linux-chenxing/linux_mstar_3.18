@@ -10,11 +10,7 @@ int H2PutRegVal(uint* mir, enum H2REG_INDEX idx, uint  val);
 int H2GetRegVal(uint* mir, enum H2REG_INDEX idx, uint* val);
 
 /* ARM ARCH SWAP */
-#define ENCH2_PIC_SWAP64_YUV    1
-#define ENCH2_PIC_SWAP32_YUV    1
-#define ENCH2_PIC_SWAP16_YUV    1
-#define ENCH2_PIC_SWAP_8_YUV    1
-#define ENCH2_PIC_SWAP_YUV      (ENCH2_PIC_SWAP_8_YUV|(ENCH2_PIC_SWAP16_YUV<<1)|(ENCH2_PIC_SWAP32_YUV<<2)|(ENCH2_PIC_SWAP64_YUV<<3))
+#define ENCH2_PIC_SWAP_YUV      0
 #define ENCH2_DQM_SWAP64        1
 #define ENCH2_DQM_SWAP32        1
 #define ENCH2_DQM_SWAP16        1

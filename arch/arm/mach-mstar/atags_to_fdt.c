@@ -16,7 +16,7 @@ static int node_offset(void *fdt, const char *node_path)
         offset = fdt_add_subnode(fdt, 0, node_path);
     return offset;
 }
-
+#if 0
 static int setprop(void *fdt, const char *node_path, const char *property,
            uint32_t *val_array, int size)
 {
@@ -25,6 +25,7 @@ static int setprop(void *fdt, const char *node_path, const char *property,
         return offset;
     return fdt_setprop(fdt, offset, property, val_array, size);
 }
+#endif
 
 static int setprop_string(void *fdt, const char *node_path,
               const char *property, const char *string)
@@ -54,7 +55,7 @@ static const void *getprop(const void *fdt, const char *node_path,
 
     return fdt_getprop(fdt, offset, property, len);
 }
-
+#if 0
 static uint32_t get_cell_size(const void *fdt)
 {
     int len;
@@ -65,7 +66,7 @@ static uint32_t get_cell_size(const void *fdt)
         cell_size = fdt32_to_cpu(*size_len);
     return cell_size;
 }
-
+#endif
 static void merge_fdt_bootargs(void *fdt, const char *fdt_cmdline)
 {
     char cmdline[COMMAND_LINE_SIZE];
@@ -110,9 +111,11 @@ int early_atags_to_fdt(void *atag_list, void *fdt, int total_space)
     struct tag *atag = atag_list;
     /* In the case of 64 bits memory size, need to reserve 2 cells for
      * address and size for each bank */
+#if 0 /* Ignore memory atag, always use dtb */
     uint32_t mem_reg_property[2 * 2 * NR_BANKS];
-    int memcount = 0;
-    int ret, memsize;
+    int memcount = 0, memsize;
+#endif
+    int ret;
 
     /* make sure we've got an aligned pointer */
     if ((u32)atag_list & 0x3)
@@ -147,7 +150,9 @@ int early_atags_to_fdt(void *atag_list, void *fdt, int total_space)
             else
                 setprop_string(fdt, "/chosen", "bootargs",
                            atag->u.cmdline.cmdline);
-        } else if (atag->hdr.tag == ATAG_MEM) {
+        }
+#if 0 /* Ignore memory atag, always use dtb */
+        else if (atag->hdr.tag == ATAG_MEM) {
             if (memcount >= sizeof(mem_reg_property)/4)
                 continue;
             if (!atag->u.mem.size)
@@ -160,6 +165,8 @@ int early_atags_to_fdt(void *atag_list, void *fdt, int total_space)
                  * so the data are 64 bits */
                 uint64_t *mem_reg_prop64 =
                     (uint64_t *)mem_reg_property;
+                if (memcount >= (sizeof(mem_reg_property)/4)*2*2)
+                    continue;
                 mem_reg_prop64[memcount++] =
                     cpu_to_fdt64(atag->u.mem.start);
                 mem_reg_prop64[memcount++] =
@@ -171,7 +178,9 @@ int early_atags_to_fdt(void *atag_list, void *fdt, int total_space)
                     cpu_to_fdt32(atag->u.mem.size);
             }
 
-        } else if (atag->hdr.tag == ATAG_INITRD2) {
+        }
+#endif
+        else if (atag->hdr.tag == ATAG_INITRD2) {
             uint32_t initrd_start, initrd_size;
             initrd_start = atag->u.initrd.start;
             initrd_size = atag->u.initrd.size;
@@ -181,12 +190,12 @@ int early_atags_to_fdt(void *atag_list, void *fdt, int total_space)
                     initrd_start + initrd_size);
         }
     }
-
-    memcount = 0; /* Ignore memory atag, always use dtb */
+#if 0
     if (memcount) {
         setprop(fdt, "/memory", "reg", mem_reg_property,
             4 * memcount * memsize);
     }
+#endif
 
     return fdt_pack(fdt);
 }

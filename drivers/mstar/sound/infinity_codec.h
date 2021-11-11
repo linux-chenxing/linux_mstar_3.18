@@ -29,20 +29,25 @@
 #define CHIP_VERSION "Chip Version"
 
 /**
-* Used to set Playback volume 0~76 (mapping to -64dB~12dB)
+* Used to set Playback volume 0~94 (mapping to -64dB~30dB)
 */
 #define MAIN_PLAYBACK_VOLUME "Main Playback Volume"
 
 /**
-* Used to set Capture volume 0~76 (mapping to -64dB~12dB)
+* Used to set Capture volume 0~94 (mapping to -64dB~30dB)
 */
 #define MAIN_CAPTURE_VOLUME "Main Capture Volume"
 
 /**
-* Used to set microphone gain, total 5 bits ,
-* it consists of the upper 2 bits(4 levels) + the lower 3 bits (8 levels)
+* Used to set microphone pre gain level 0~7
 */
-#define MIC_GAIN_SELECTION "Mic Gain Selection"
+#define MICIN_GAIN_LEVEL "Mic Gain Level"
+
+/**
+* Used to set microphone gain level 0~3
+*/
+#define MICIN_PREGAIN_LEVEL "Mic PreGain Level"
+
 
 /**
 * Used to set line-in gain level 0~7
@@ -84,6 +89,7 @@ AUD_DPGA_PWR,   //0x3
 AUD_PLAYBACK_DPGA,
 AUD_CAPTURE_DPGA,
 AUD_MIC_GAIN,
+AUD_MICPRE_GAIN,
 AUD_LINEIN_GAIN,
 AUD_DIGMIC_PWR,
 AUD_DBG_SINERATE,

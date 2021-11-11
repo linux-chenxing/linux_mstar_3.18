@@ -296,6 +296,8 @@
 #define SPI_CMD_QPI			(0x35)
 #define SPI_CMD_QPI_RST	(0xF5)
 #define SPI_WRIET_BUSY        (0x01)
+  // support for 256Mb up MIX flash
+#define SPI_CMD_WREAR		(0xC5)
 
   // FSP Register
 #define REG_FSP_WDB0    0x60

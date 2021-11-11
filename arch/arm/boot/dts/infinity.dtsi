@@ -219,7 +219,7 @@
 
         emac {
             compatible = "mstar-emac";
-            interrupts = <GIC_SPI INT_IRQ_EMAC IRQ_TYPE_LEVEL_HIGH>;
+            interrupts = <GIC_SPI INT_IRQ_EMAC IRQ_TYPE_LEVEL_HIGH>, <GIC_SPI INT_FIQ_LAN_ESD IRQ_TYPE_LEVEL_HIGH>;
             clocks = <&CLK_emac_ahb>,<&CLK_emac_tx>,<&CLK_emac_rx>,<&GATE_MCM_emac>, <&GATE_SRAM_emac>;
         };
 

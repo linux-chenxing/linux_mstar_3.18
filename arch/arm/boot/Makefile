@@ -17,7 +17,7 @@ MZ_BIN = scripts/mz
 KERNEL_RELEASE_FILE = include/config/kernel.release
 ROOTFS = $(obj)/ramdisk_linaro4.8_minit.img.xz
 
-MS_BUILTIN_DTB=
+MS_BUILTIN_DTB=arch/arm/boot/dts/infinity3-BGA128M.dtb
 _BUILTIN_DTB_NAME=$(strip $(shell echo ${CONFIG_MS_BUILTIN_DTB}))
 ifneq ($(_BUILTIN_DTB_NAME),)
 ifneq ($(wildcard arch/arm/boot/dts/$(_BUILTIN_DTB_NAME).dts),)
@@ -30,9 +30,9 @@ ifneq ($(CONFIG_ARCH_INFINITY),)
 MS_EXTRA_DTBS=arch/arm/boot/dts/infinity-fpga.dtb arch/arm/boot/dts/infinity-zebu.dtb
 endif
 
-ifneq ($(CONFIG_ARCH_INFINITY3),)
-MS_EXTRA_DTBS=arch/arm/boot/dts/infinity3-fpga.dtb
-endif
+#ifneq ($(CONFIG_ARCH_INFINITY3),)
+#MS_EXTRA_DTBS=arch/arm/boot/dts/infinity3-fpga.dtb arch/arm/boot/dts/infinity3-fpgaxl.dtb
+#endif
 
 ifneq ($(MACHINE),)
 include $(srctree)/$(MACHINE)/Makefile.boot
@@ -132,8 +132,8 @@ ifneq ($(CONFIG_ARCH_INFINITY),)
 	fi;
 endif	
 ifneq ($(CONFIG_ARCH_INFINITY3),)
-	@echo 'Building extra images wifh different DTB for iNfinity3:'
-	@echo
+#	@echo 'Building extra images wifh different DTB for iNfinity3:'
+#	@echo
 #	@if [ -e "arch/arm/boot/dts/inf3-zebu.dtb" ]; then \
 #        echo "  IMAGE   $(obj)/Image-zebu"; \
 #        cp -f $(obj)/Image $(obj)/Image-zebu; \
@@ -142,13 +142,21 @@ ifneq ($(CONFIG_ARCH_INFINITY3),)
 #	    echo; \
 #	fi;
 	
-	@if [ -e "arch/arm/boot/dts/infinity3-fpga.dtb" ]; then \
-	    echo "  IMAGE   $(obj)/Image-fpga"; \
-	    cp -f $(obj)/Image $(obj)/Image-fpga; \
-	    echo "  BNDTB   infinity3-fpga.dtb"; \
-	    python scripts/ms_builtin_dtb_update.py $(obj)/Image-fpga "arch/arm/boot/dts/infinity3-fpga.dtb"; \
-	    echo; \
-	fi;
+#	@if [ -e "arch/arm/boot/dts/infinity3-fpga.dtb" ]; then \
+#	    echo "  IMAGE   $(obj)/Image-fpga"; \
+#	    cp -f $(obj)/Image $(obj)/Image-fpga; \
+#	    echo "  BNDTB   infinity3-fpga.dtb"; \
+#	    python scripts/ms_builtin_dtb_update.py $(obj)/Image-fpga "arch/arm/boot/dts/infinity3-fpga.dtb"; \
+#	    echo; \
+#	fi;
+## Run Kernel file system on norflash with infinity3-fpgaxl.dts
+#	@if [ -e "arch/arm/boot/dts/infinity3-fpgaxl.dtb" ]; then \
+#	    echo "  IMAGE   $(obj)/Image-fpgaxl"; \
+#	    cp -f $(obj)/Image $(obj)/Image-fpgaxl; \
+#	    echo "  BNDTB   infinity3-fpgaxl.dtb"; \
+#	    python scripts/ms_builtin_dtb_update.py $(obj)/Image-fpgaxl "arch/arm/boot/dts/infinity3-fpgaxl.dtb"; \
+#	    echo; \
+#	fi;
 endif	
 
 $(obj)/compressed/vmlinux: $(obj)/Image FORCE

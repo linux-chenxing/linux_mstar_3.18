@@ -22,7 +22,7 @@
 #define PAD_FUART_RX      18
 #define PAD_FUART_TX      19
 #define PAD_FUART_CTS     20
-#define PAD_FUART_RTX     21
+#define PAD_FUART_RTS     21
 #define PAD_UART0_RX      22
 #define PAD_UART0_TX      23
 #define PAD_UART1_RX      24

@@ -7,41 +7,48 @@
 #include <linux/err.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
-#include <linux/pwm.h>
 #include <linux/module.h>
+
 #include "mhal_pwm.h"
 
-/* backlight driver constants */
-#define ENABLE_PWM			1
-#define DISABLE_PWM			0
+static inline struct mstar_pwm_chip *to_mstar_pwm_chip(struct pwm_chip *c)
+{
+	return container_of(c, struct mstar_pwm_chip, chip);
+}
 
 static int mstar_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm, int duty_ns, int period_ns)
 {
-    printk("mstar_pwm_config, duty_ns=%d, period_ns=%d\n", duty_ns, period_ns);
-    DrvPWMSetPeriod(pwm->hwpwm,period_ns);
-    DrvPWMSetDuty(pwm->hwpwm,duty_ns);
+    struct mstar_pwm_chip *ms_pwm = to_mstar_pwm_chip(chip);
+
+    MS_PWM_DBG("[PWN] %s duty_ns=%d, period_ns=%d\n", __func__, duty_ns, period_ns);
+
+    DrvPWMSetPeriod(ms_pwm, pwm->hwpwm, period_ns);
+    DrvPWMSetDuty(ms_pwm, pwm->hwpwm, duty_ns);
+//    DrvPWMPadSet(pwm->hwpwm, (U8)ms_pwm->pad_ctrl[pwm->hwpwm]);
 	return 0;
 }
 
 static int mstar_pwm_enable(struct pwm_chip *chip, struct pwm_device *pwm)
 {
-    printk("mstar_pwm_enable\n");
-    DrvPWMEnable(pwm->hwpwm,ENABLE_PWM);
-    //DrvPWMInit(ENABLE_PWM);
+    struct mstar_pwm_chip *ms_pwm = to_mstar_pwm_chip(chip);
+    MS_PWM_DBG("[PWM] %s\n", __func__);
+    DrvPWMEnable(ms_pwm, pwm->hwpwm, 1);
+	DrvPWMPadSet(pwm->hwpwm, (U8)ms_pwm->pad_ctrl[pwm->hwpwm]);
 	return 0;
 }
 
-
 static void mstar_pwm_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 {
-    printk("mstar_pwm_disable\n");
-    DrvPWMEnable(pwm->hwpwm,DISABLE_PWM);
+    struct mstar_pwm_chip *ms_pwm = to_mstar_pwm_chip(chip);
+    MS_PWM_DBG("[PWM] %s\n", __func__);
+    DrvPWMEnable(ms_pwm, pwm->hwpwm, 0);
 }
 
 static int mstar_pwm_set_polarity(struct pwm_chip *chip, struct pwm_device *pwm, enum pwm_polarity polarity)
 {
-    printk("mstar_pwm_set_polarity=%d\n", (U32)polarity);
-    DrvPWMSetPolarity(pwm->hwpwm,(U8)polarity);
+    struct mstar_pwm_chip *ms_pwm = to_mstar_pwm_chip(chip);
+    MS_PWM_DBG("[PWM] %s %d\n", __func__, (U8)polarity);
+    DrvPWMSetPolarity(ms_pwm, pwm->hwpwm, (U8)polarity);
 	return 0;
 }
 
@@ -56,46 +63,90 @@ static const struct pwm_ops mstar_pwm_ops = {
 
 static int ms_pwm_probe(struct platform_device *pdev)
 {
-	struct pwm_chip *mstar_pwm_chip;
-	int err;
+	struct mstar_pwm_chip *ms_pwm;
+    struct resource *res;
+	int ret=0, i=0;
 
-	mstar_pwm_chip = devm_kzalloc(&pdev->dev, sizeof(*mstar_pwm_chip), GFP_KERNEL);
-	if (mstar_pwm_chip == NULL) {
+	ms_pwm = devm_kzalloc(&pdev->dev, sizeof(*ms_pwm), GFP_KERNEL);
+	if (ms_pwm == NULL)
+    {
 		dev_err(&pdev->dev, "failed to allocate memory\n");
 		return -ENOMEM;
 	}
 
-	mstar_pwm_chip->dev = &pdev->dev;
-	mstar_pwm_chip->ops = &mstar_pwm_ops;
-	mstar_pwm_chip->base = -1;
-	mstar_pwm_chip->npwm = 4;
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res) {
+		dev_err(&pdev->dev,	"Can't get I/O resource regs for pwm\n");
+		return 0;
+	}
 
-	err = pwmchip_add(mstar_pwm_chip);
-	if (err < 0)
-		return err;
+	//ms_pwm->base = devm_ioremap_resource(&pdev->dev, res);
+    ms_pwm->base = (void *)res->start;
+
+	if (IS_ERR(ms_pwm->base))
+		return PTR_ERR(ms_pwm->base);
+
+	ms_pwm->clk = devm_clk_get(&pdev->dev, NULL);
+	if (IS_ERR(ms_pwm->clk))
+		return PTR_ERR(ms_pwm->clk);
+
+	ret = clk_prepare_enable(ms_pwm->clk);
+	if (ret)
+		return ret;
+
+	platform_set_drvdata(pdev, ms_pwm);
+
+	ms_pwm->chip.dev = &pdev->dev;
+	ms_pwm->chip.ops = &mstar_pwm_ops;
+	ms_pwm->chip.base = -1;
+    if(of_property_read_u32(pdev->dev.of_node, "npwm", &ms_pwm->chip.npwm))
+    	ms_pwm->chip.npwm = 4;
+
+    ms_pwm->pad_ctrl = devm_kzalloc(&pdev->dev, sizeof(*ms_pwm->pad_ctrl), GFP_KERNEL);
+	if (ms_pwm->pad_ctrl == NULL)
+    {
+		dev_err(&pdev->dev, "failed to allocate memory\n");
+		return -ENOMEM;
+	}
+
+    if((ret=of_property_read_u32_array(pdev->dev.of_node, "pad-ctrl", ms_pwm->pad_ctrl, ms_pwm->chip.npwm)))
+        dev_err(&pdev->dev, "read pad-ctrl failed\n");
+
+    for(i=0; i<ms_pwm->chip.npwm; i++)
+    {
+        MS_PWM_DBG("ms_pwm->pad_ctrl[%d]=%d\n", i, ms_pwm->pad_ctrl[i]);
+    }
+
+	ret = pwmchip_add(&ms_pwm->chip);
+	if (ret < 0)
+    {
+        clk_disable_unprepare(ms_pwm->clk);
+        dev_err(&pdev->dev, "pwmchip_add failed\n");
+		return ret;
+    }
 
 	dev_info(&pdev->dev, "probe successful\n");
-    platform_set_drvdata(pdev, mstar_pwm_chip);
 
 	return 0;
 }
 
 static int ms_pwm_remove(struct platform_device *pdev)
 {
-	struct pwm_chip *mstar_pwm_chip = dev_get_drvdata(&pdev->dev);
+	struct mstar_pwm_chip *ms_pwm = dev_get_drvdata(&pdev->dev);
 	int err;
 
-	err = pwmchip_remove(mstar_pwm_chip);
+    clk_disable_unprepare(ms_pwm->clk);
+
+	err = pwmchip_remove(&ms_pwm->chip);
 	if (err < 0)
 		return err;
 
 	dev_info(&pdev->dev, "remove successful\n");
-
 	return 0;
 }
 
 static const struct of_device_id ms_pwm_of_match_table[] = {
-    { .compatible = "mstar,infinity-pwm" },
+    { .compatible = "mstar,infinity3-pwm" },
     {}
 };
 
@@ -105,7 +156,7 @@ static struct platform_driver ms_pwm_driver = {
     .remove = ms_pwm_remove,
     .probe = ms_pwm_probe,
     .driver = {
-        .name = "ms_pwm_driver",
+        .name = "mstar-i3pwm",
         .owner = THIS_MODULE,
         .of_match_table = ms_pwm_of_match_table,
     },

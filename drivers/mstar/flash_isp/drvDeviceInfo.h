@@ -69,6 +69,7 @@
 #define FLASH_IC_MX25L4006E      0x050DUL      // 512K    MXIC
 #define FLASH_IC_MX25L8006E      0x050EUL      // 1M    MXIC
 #define FLASH_IC_MX25L3255D      0x0512UL      // 4M for secure option
+#define FLASH_IC_MX25L25645G     0x0513UL      // 32M
 
 // NX
 #define FLASH_IC_NX25P80         0x0600UL      // 1M    NX
@@ -124,6 +125,8 @@
 #define FLASH_IC_GD25S80         0x0B02UL
 #define FLASH_IC_GD25Q64         0x0B03UL      // 8M
 #define FLASH_IC_GD25Q128        0x0B05UL      //16M
+#define FLASH_IC_GD25Q256C       0x0B06UL      //32M
+
 // AM
 #define FLASH_IC_A25LM032        0x0D00UL
 
@@ -135,6 +138,9 @@
 #define FLASH_IC_NUMONYX_M25PX16 0x0E04UL      // 2M
 
 
+//ZB
+#define FLASH_IC_ZB25Q64        0x1002UL       // 8M
+#define FLASH_IC_ZB25Q128       0x1003UL       // 16M
 
 
 // Flash Manufacture ID

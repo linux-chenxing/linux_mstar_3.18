@@ -144,12 +144,44 @@ typedef struct
 }ST_HVSP_CROP_INFO;
 typedef enum
 {
-    EN_VIP_SRAM_DUMP_ICC,
-    EN_VIP_SRAM_DUMP_IHC,
-    EN_VIP_SRAM_DUMP_HVSP,
-    EN_VIP_SRAM_DUMP_HVSP_1,
-    EN_VIP_SRAM_DUMP_HVSP_2,
-}EN_VIP_SRAM_DUMP_TYPE;
+    EN_HVSP_SRAM_DUMP_ICC,
+    EN_HVSP_SRAM_DUMP_IHC,
+    EN_HVSP_SRAM_DUMP_HVSP_V,
+    EN_HVSP_SRAM_DUMP_HVSP_V_1,
+    EN_HVSP_SRAM_DUMP_HVSP_V_2,
+    EN_HVSP_SRAM_DUMP_WDR,
+    EN_HVSP_SRAM_DUMP_GAMMA_Y,
+    EN_HVSP_SRAM_DUMP_GAMMA_U,
+    EN_HVSP_SRAM_DUMP_GAMMA_V,
+    EN_HVSP_SRAM_DUMP_GM10to12_R,
+    EN_HVSP_SRAM_DUMP_GM10to12_G,
+    EN_HVSP_SRAM_DUMP_GM10to12_B,
+    EN_HVSP_SRAM_DUMP_GM12to10_R,
+    EN_HVSP_SRAM_DUMP_GM12to10_G,
+    EN_HVSP_SRAM_DUMP_GM12to10_B,
+    EN_HVSP_SRAM_DUMP_HVSP_H,
+    EN_HVSP_SRAM_DUMP_HVSP_H_1,
+    EN_HVSP_SRAM_DUMP_HVSP_H_2,
+    EN_HVSP_SRAM_DUMP_NUM,
+}EN_HVSP_SRAM_DUMP_TYPE;
+typedef enum
+{
+    EN_HVSP_TRIGGER_OFF = 0,
+    EN_HVSP_TRIGGER_ON,
+    EN_HVSP_TRIGGER_CMDQ,
+    EN_HVSP_TRIGGER_CMDQOFF,
+}EN_HVSP_PRIMASK_TRIGGER_TYPE;
+
+typedef enum
+{
+    EN_HVSP_ISPCLK_123M = 0x0,
+    EN_HVSP_ISPCLK_OFF = 0x1,
+    EN_HVSP_ISPCLK_86M = 0x4,
+    EN_HVSP_ISPCLK_72M = 0x8,
+    EN_HVSP_ISPCLK_54M = 0xC,
+    EN_HVSP_ISPCLK_144M = 0x10,
+    EN_HVSP_ISPCLK_NUM,
+}EN_HVSP_ISPCLK_TYPE;
 
 //-------------------------------------------------------------------------------------------------
 //  Prototype
@@ -160,24 +192,38 @@ typedef enum
 #else
 #define INTERFACE
 #endif
-
+INTERFACE void Hal_HVSP_Exit(void);
 INTERFACE void Hal_HVSP_SetRiuBase(MS_U32 u32RiuBase);
-INTERFACE void Hal_HVSP_SetCropConfig(EN_HVSP_CROP_ID_TYPE enID, ST_HVSP_CROP_INFO stCropInfo);
+INTERFACE void Hal_HVSP_SetInputSrcSize(ST_HVSP_SIZE_CONFIG *stSrc);
+INTERFACE void Hal_HVSP_SetCropConfig(EN_HVSP_CROP_ID_TYPE enID, ST_HVSP_CROP_INFO *stCropInfo);
 INTERFACE void Hal_HVSP_SetHWInputMux(EN_HVSP_IP_MUX_TYPE enIpType);
 INTERFACE void Hal_HVSP_SetInputMuxType(EN_HVSP_IP_MUX_TYPE enIpType);
-INTERFACE MS_U32 Hal_HVSP_GetInputSrcMux(void);
+INTERFACE EN_HVSP_IP_MUX_TYPE Hal_HVSP_GetInputSrcMux(void);
 INTERFACE void Hal_HVSP_Set_Reset(void);
+INTERFACE void Hal_HVSP_Set_CLKOFF(void);
+INTERFACE void Hal_HVSP_Set_SW_Reset(MS_BOOL bEn);
+INTERFACE void Hal_HVSP_Set_DNR_Reset(MS_BOOL bEn);
 
 // NLM
-INTERFACE void Hal_HVSP_SetNLMSize(MS_U16 u16Width, MS_U16 u16Height);
+INTERFACE void Hal_HVSP_SetVIPSize(MS_U16 u16Width, MS_U16 u16Height);
 INTERFACE void Hal_HVSP_SetNLMEn(MS_BOOL bEn);
 INTERFACE void Hal_HVSP_SetNLMLineBufferSize(MS_U16 u16Width, MS_U16 u16Height);
 INTERFACE void Hal_HVSP_SetVpsSRAMEn(MS_BOOL bEn);
+//AIP
+INTERFACE void Hal_HVSP_SetWDRGlobalSize(MS_U16 u16Width, MS_U16 u16Height);
+INTERFACE void Hal_HVSP_SetWDRLocalSize(MS_U16 u16Width, MS_U16 u16Height);
+INTERFACE void Hal_HVSP_SetMXNRSize(MS_U16 u16Width, MS_U16 u16Height);
+INTERFACE void Hal_HVSP_SetUVadjSize(MS_U16 u16Width, MS_U16 u16Height);
+INTERFACE void Hal_HVSP_SetXNRSize(MS_U16 u16Width, MS_U16 u16Height);
 
 // IPM
-INTERFACE void Hal_HVSP_SetIPMReadEn(MS_BOOL bEn);
-INTERFACE void Hal_HVSP_SetIPMWriteEn(MS_BOOL bEn);
-INTERFACE void Hal_HVSP_SetIPMBase(MS_U32 u32Base);
+INTERFACE void Hal_HVSP_SetIPMYCMReadEn(MS_BOOL bEn);
+INTERFACE void Hal_HVSP_SetIPMYCMWriteEn(MS_BOOL bEn);
+INTERFACE void Hal_HVSP_SetIPMCIIRReadEn(MS_BOOL bEn);
+INTERFACE void Hal_HVSP_SetIPMCIIRWriteEn(MS_BOOL bEn);
+INTERFACE void Hal_HVSP_SetIPMYCBase(MS_U32 u32Base);
+INTERFACE void Hal_HVSP_SetIPMMotionBase(MS_U32 u32Base);
+INTERFACE void Hal_HVSP_SetIPMCIIRBase(MS_U32 u32Base);
 INTERFACE void Hal_HVSP_SetIPMvSize(MS_U16 u16Vsize);
 INTERFACE void Hal_HVSP_SetIPMLineOffset(MS_U16 u16Lineoffset);
 INTERFACE void Hal_HVSP_SetIPMFetchNum(MS_U16 u16FetchNum);
@@ -230,13 +276,17 @@ INTERFACE void Hal_HVSP_SetTestPatCfg(void);
 INTERFACE void Hal_HVSP_Set_Reg(MS_U32 u32Reg, MS_U8 u8Val, MS_U8 u8Mask);
 
 // CMD buffer
-INTERFACE void Hal_HVSP_SetCMDQTrigCfg(ST_HVSP_CMD_TRIG_CONFIG stCmdTrigCfg);
+INTERFACE void Hal_HVSP_SetCMDQTrigCfg(ST_HVSP_CMD_TRIG_CONFIG *stCmdTrigCfg);
 INTERFACE void Hal_HVSP_GetCMDQTrigCfg(ST_HVSP_CMD_TRIG_CONFIG *pCfg);
+INTERFACE void Hal_HVSP_SetResetDNR(MS_BOOL bEn);
 INTERFACE void Hal_HVSP_SetCMDQTrigFrameCnt(MS_U16 u16Idx);
 INTERFACE void Hal_HVSP_SetCMDQTrigFire(void);
 INTERFACE void Hal_HVSP_SetFrameBufferManageLock(MS_BOOL bEn);
 INTERFACE void Hal_HVSP_SetLDCPathSel(MS_BOOL bEn);
 INTERFACE MS_BOOL Hal_HVSP_GetLDCPathSel(void);
+INTERFACE MS_U16 Hal_HVSP_GetShiftMultipleByISPClk(EN_HVSP_ISPCLK_TYPE enISPClkType);
+INTERFACE EN_HVSP_ISPCLK_TYPE Hal_HVSP_GetISPClkType(void);
+INTERFACE MS_U16 Hal_HVSP_GetLimitationByISPClk(EN_HVSP_ISPCLK_TYPE enISPClkType, MS_U16 u16SrcWidth, MS_U16 u16DspHeight);
 INTERFACE void Hal_HVSP_SetLDCBypass(MS_BOOL bEn);
 INTERFACE void Hal_HVSP_SetLDCHeight(MS_U16 u16Height);
 INTERFACE void Hal_HVSP_SetLDCWidth(MS_U16 u16Width);
@@ -279,12 +329,31 @@ INTERFACE MS_U16 Hal_HVSP_GetCrop2OutputHeight(void);
 INTERFACE MS_U16 Hal_HVSP_Get_Crop2_CountH(void);
 INTERFACE MS_U16 Hal_HVSP_Get_Crop2_CountV(void);
 INTERFACE MS_U16 Hal_HVSP_GetCrop2En(void);
+INTERFACE MS_U16 Hal_HVSP_GetCrop1En(void);
 INTERFACE void Hal_HVSP_SetCLKRate(unsigned char u8Idx);
 INTERFACE MS_U32 Hal_HVSP_GetCMDQStatus(void);
+INTERFACE void Hal_HVSP_PriMask_ColorY(MS_U16 u16Y);
+INTERFACE void Hal_HVSP_PriMask_ColorU(MS_U16 u16U);
+INTERFACE void Hal_HVSP_PriMask_ColorV(MS_U16 u16V);
+INTERFACE void Hal_HVSP_PriMask_Width(MS_U16 u16W);
+INTERFACE void Hal_HVSP_PriMask_Height(MS_U16 u16H);
+INTERFACE void Hal_HVSP_PriMask_bEn(MS_BOOL bEn);
+INTERFACE void Hal_HVSP_SetPrv2CropOnOff(MS_BOOL bEn);
+INTERFACE MS_BOOL Hal_HVSP_GetPrv2CropOnOff(void);
+INTERFACE void Hal_HVSP_PriMask_SRAMEn(MS_BOOL bEn,MS_U8 u8Idx);
+INTERFACE void Hal_HVSP_PriMask_Fire(void);
+INTERFACE void Hal_HVSP_PriMask_SRAMOffsetRe(MS_BOOL bEn);
+INTERFACE void Hal_HVSP_PriMask_SRAMRdIdx(MS_U8 u8Idx);
+INTERFACE void Hal_HVSP_PriMask_SRAMWriteIdx(MS_U8 u8Idx);
+INTERFACE void Hal_HVSP_PriMaskSetSRAM(MS_U8 u8idx,MS_U16 u16val);
+INTERFACE MS_U16 Hal_HVSP_PriMask_GetSRAMData(void);
 INTERFACE MS_U16 Hal_HVSP_GetDMAHeight(EN_HVSP_MONITOR_TYPE enMonitorType);
 INTERFACE MS_U16 Hal_HVSP_GetDMAHeightCount(EN_HVSP_MONITOR_TYPE enMonitorType);
 INTERFACE MS_U16 Hal_HVSP_GetDMAEn(EN_HVSP_MONITOR_TYPE enMonitorType);
-INTERFACE void Hal_VIP_SRAM_Dump(EN_VIP_SRAM_DUMP_TYPE endump,MS_BOOL u8Sram);
+INTERFACE MS_BOOL Hal_HVSP_SRAM_Dump(EN_HVSP_SRAM_DUMP_TYPE endump,MS_U32 u32Sram);
+INTERFACE MS_U16 Hal_HVSP_Get_2ByteReg(MS_U32 u32Reg);
+INTERFACE void Hal_HVSP_Set_2ByteReg(MS_U32 u32Reg, MS_U16 u16Val, MS_U16 u16Mask);
+
 #undef INTERFACE
 
 #endif

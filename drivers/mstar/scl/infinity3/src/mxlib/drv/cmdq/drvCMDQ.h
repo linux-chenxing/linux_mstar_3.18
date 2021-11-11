@@ -169,25 +169,19 @@ typedef enum
 typedef enum
 {
     CMDQ_FLAG_FIRE              = 0x1,  // whether already fire or need to fire
-    CMDQ_FLAG_FIRST_NONFRAMECNT = 0x2,  // first non-frame cnt cmd need wait
-    CMDQ_FLAG_FRAMECNT_CMD      = 0x4,  // cmd whether framecnt
-    CMDQ_FLAG_ROTATION          = 0x8,  // using in nonframecnt , if full
-    CMDQ_FLAG_SAMEFRAME         = 0x10, // using in framecnt , if trig but next cmd is same frame ,don't add poll
-    CMDQ_FLAG_NONFRAMEBUFFER    = 0x20,
 }CMDQ_FLAG_TYPE;
 typedef struct
 {
     MS_U16 u16WPoint;           // current cmd end
     MS_U16 u16RPoint;           // last trig
     MS_U16 u16FPoint;           // fire point (128 bit/unit)
-    MS_U16 u16assFrame_Point;   // assign frame count
     MS_PHYADDR PhyAddr;         // by Chip_Phys_to_MIU
     MS_U16 u16MaxCmdCnt;        // assframe buf count
-    MS_U16 u16BufCmdCnt;        // nonframecnt buf count
     MS_BOOL bEnable;            // CMDQ enable ((nonuse
     MS_U32 u32VirAddr;          // kernel virtul after allocate
     MS_PHYADDR PhyAddrEnd;      // by Chip_Phys_to_MIU+cnt
     MS_U16 u16LPoint;           // To get trig Count
+    MS_U16 u16DPoint;           //  last done
 }MS_CMDQ_Info;
 
 typedef struct
@@ -200,7 +194,6 @@ typedef struct
     MS_U16 u16EndPoint;
     MS_U32 u32CmdDiffCnt;
     MS_U32 u32ActualCmdDiffCnt;
-    MS_BOOL bframecount;
     MS_BOOL Ret;
     MS_U32 u32addr;
     MS_U16 u16mask;
@@ -220,6 +213,12 @@ typedef struct
    MS_U8 bAddPollFunc;
 }MS_CMDQ_CMD;
 
+typedef struct
+{
+   MS_U16 u16Data;  // 16bit data
+   MS_U32 u32Addr;  // 16bit Bank addr + 8bit 16bit-regaddr
+   MS_U16 u16Mask;  // inverse normal case
+}MS_CMDQ_CMDReg;
 
 typedef enum
 {
@@ -230,18 +229,30 @@ typedef enum
 #define DRVCMDQ_OK                   0x00000000
 #define DRVCMDQ_FAIL                 0x00000001
 
+typedef struct
+{
+    MS_U32 u32RiuBase;
+    MS_U32 u32CMDQ_Phy[EN_CMDQ_TYPE_MAX];
+    MS_U32 u32CMDQ_Size[EN_CMDQ_TYPE_MAX];
+    MS_U32 u32CMDQ_Vir[EN_CMDQ_TYPE_MAX];
+}ST_VIP_OPEN_CONFIG;
 
 //--------------------------------------------------------------------------------------------------
 //  Function Prototype
 //--------------------------------------------------------------------------------------------------
 //==============================Enable===============================================
  void Drv_CMDQ_Enable(MS_BOOL bEnable,EN_CMDQ_IP_TYPE enIPType);
+void Drv_CMDQ_SetForceSkip(bool bEn);
 
 //==============================Delete===============================================
-void Drv_CMDQ_Delete(void);
+void Drv_CMDQ_Delete(EN_CMDQ_IP_TYPE enIPType);
 void Drv_CMDQ_SetRPoint(EN_CMDQ_IP_TYPE enIPType);
-MS_U64 Drv_CMDQ_GetCMDFromPoint(MS_U16 u16Point);
+void Drv_CMDQ_SetDPoint(EN_CMDQ_IP_TYPE enIPType);
+void Drv_CMDQ_SetLPoint(EN_CMDQ_IP_TYPE enIPType);
+MS_U32 Drv_CMDQ_BeTrigger(EN_CMDQ_IP_TYPE enIPType,MS_BOOL bStart);
+MS_U64 Drv_CMDQ_GetCMDFromPoint(EN_CMDQ_IP_TYPE enIPType,MS_U16 u16Point);
 MS_U32 Drv_CMDQ_GetCMDBankFromCMD(MS_U64 u64Cmd);
+void _Drv_CMDQ_WriteRegWithMaskDirect(MS_U32 u32Addr,MS_U16 u16Data,MS_U16 u16Mask);
 //===============================init==============================================
 //-------------------------------------------------------------------------------------------------
 /// Drv_CMDQ_Init
@@ -251,7 +262,7 @@ MS_U32 Drv_CMDQ_GetCMDBankFromCMD(MS_U64 u64Cmd);
 /// @param  u32BufByteLen \b IN:already allocate memory size
 /// @param  u32RIUBase     \b IN:RIU's base shift
 //-------------------------------------------------------------------------------------------------
- void Drv_CMDQ_Init(MS_PHYADDR PhyAddr1, MS_U32 u32VirAddr1, MS_U32 u32BufByteLen,MS_U32 u32RIUBase);
+ void Drv_CMDQ_Init(ST_VIP_OPEN_CONFIG *stCMDQIniCfg);
 void Drv_CMDQ_InitRIUBase(MS_U32 u32RIUBase);
 
 //-------------------------------------------------------------------------------------------------
@@ -283,7 +294,7 @@ MS_U16 Drv_CMDQ_GetFinalIrq(EN_CMDQ_IP_TYPE enIPType);
 void Drv_CMDQ_ClearIrqByFlag(EN_CMDQ_IP_TYPE enIPType,MS_U16 u16Irq);
 void Drv_CMDQ_SetISRStatus(MS_BOOL bEn);
 void Drv_CMDQ_GetModuleMutex(EN_CMDQ_IP_TYPE enIPType,MS_BOOL bEn);
-MS_CMDQ_Info Drv_CMDQ_GetCMDQInformation(EN_CMDQ_IP_TYPE enIPType);
+MS_CMDQ_Info* Drv_CMDQ_GetCMDQInformation(EN_CMDQ_IP_TYPE enIPType);
 
 //===============================write==============================================
 //-------------------------------------------------------------------------------------------------
@@ -294,18 +305,11 @@ MS_CMDQ_Info Drv_CMDQ_GetCMDQInformation(EN_CMDQ_IP_TYPE enIPType);
 /// @param  u16Mask \b IN:  16bit ~mask,
 /// @param  bSkipCheckSameAddr     \b IN:if true,don't need to check .if false don't use mask(for RIU 32bit)
 //-------------------------------------------------------------------------------------------------
-MS_BOOL Drv_CMDQ_WriteCmd(MS_U32 u32Addr, MS_U16 u16Data, MS_U16 u16Mask,MS_BOOL bSkipCheckSameAddr);
+MS_BOOL Drv_CMDQ_WriteCmd(EN_CMDQ_IP_TYPE enIPType, MS_CMDQ_CMDReg *stCfg, MS_BOOL bSkipCheckSameAddr);
+void Drv_CMDQ_FillCmd(MS_CMDQ_CMDReg *stCfg,MS_U32 u32Addr, MS_U16 u16Data, MS_U16 u16Mask);
 
-//-------------------------------------------------------------------------------------------------
-/// Drv_CMDQ_AssignFrameWriteCmd
-/// write cmd API for frame count case ,to handle frame count case and add to MIU(use Drv_CMDQ_WriteCmd)
-/// @param  u32Addr         \b IN: 8bit-addr
-/// @param  u16Data         \b IN:  16bit data
-/// @param  u16Mask         \b IN:  16bit ~mask,
-/// @param  u8framecnt     \b IN: want to set cmd in this count
-//-------------------------------------------------------------------------------------------------
-MS_BOOL Drv_CMDQ_AssignFrameWriteCmd(MS_U32 u32Addr, MS_U16 u16Data, MS_U16 u16Mask,MS_U8 u8framecnt);
-void Drv_CMDQ_release(void);
+void Drv_CMDQ_release(EN_CMDQ_IP_TYPE enIPType);
+MS_U8 Drv_CMDQ_GetISPHWCnt(void);
 
 //-------------------------------------------------------------------------------------------------
 /// Drv_CMDQ_AddCmd
@@ -333,7 +337,7 @@ void Drv_CMDQ_release(void);
  /// To add wait CMD
  /// @param  u16bus         \b IN: wait trigger bus
  //-------------------------------------------------------------------------------------------------
- void Drv_CMDQ_WaitCmd(MS_U16 u16bus);
+ void Drv_CMDQ_WaitCmd(EN_CMDQ_IP_TYPE enIPType,MS_U16 u16bus);
 
  //===============================poll==============================================
  //-------------------------------------------------------------------------------------------------
@@ -343,8 +347,9 @@ void Drv_CMDQ_release(void);
  /// @param  u16Data  \b IN:  16bit data
  /// @param  u16Mask \b IN:  16bit ~mask,
  //-------------------------------------------------------------------------------------------------
- void Drv_CMDQ_PollingEqCmd(MS_U32 u32Addr, MS_U16 u16Data, MS_U16 u16Mask);
- void Drv_CMDQ_PollingNeqCmd(MS_U32 u32Addr, MS_U16 u16Data, MS_U16 u16Mask);
+ void Drv_CMDQ_PollingEqCmd(EN_CMDQ_IP_TYPE enIPType,MS_CMDQ_CMDReg *stCfg);
+ void Drv_CMDQ_PollingNeqCmd(EN_CMDQ_IP_TYPE enIPType,MS_CMDQ_CMDReg *stCfg);
+ void Drv_CMDQ_CheckVIPSRAM(MS_U32 u32Type);
 
  //===============================fire==============================================
  //-------------------------------------------------------------------------------------------------
@@ -353,6 +358,7 @@ void Drv_CMDQ_release(void);
  /// @param  bStart   \b IN: trig
  //-------------------------------------------------------------------------------------------------
 MS_BOOL Drv_CMDQ_Fire(EN_CMDQ_IP_TYPE enIPType,MS_BOOL bStart);
+ void Drv_CMDQ_SetEventForFire(void);
 
 //===============================check==============================================
 //-------------------------------------------------------------------------------------------------

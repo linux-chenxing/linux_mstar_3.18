@@ -7,8 +7,6 @@
 //------------------------------------------------------------------------------
 //  Variable
 //------------------------------------------------------------------------------
-/* Note!!!: In kernel 2.6.29.1, there is no more "struct snd_soc_cpu_dai" */
-//extern struct snd_soc_cpu_dai g_msb2501_i2s_dai;
-//extern struct snd_soc_dai g_msb2501_i2s_dai;
+
 
 #endif /*_INFINITY_DAI_H_*/

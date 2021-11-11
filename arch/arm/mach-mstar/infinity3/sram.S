@@ -36,6 +36,12 @@ ENTRY(infinity_suspend_imi)
     str   r0, [r2, #0x06 << 1]
     str   r0, [r2, #0x26 << 1]
 
+	//delay
+    ldr   r0,=0x10000
+1:
+    subs  r0, #1
+    bne   1b
+
     //wriu -w   0x101218,0x0400 //reg_mrx
     //wriu -w   0x101200,0x002f //Bit[05]reg_auto_ref_off
     //wriu -w   0x101200,0x052e //trig precharge all
@@ -62,10 +68,23 @@ ENTRY(infinity_suspend_imi)
     str   r0, [r2, #0x00 << 1]
     ldr   r0, =0x1430
     str   r0, [r2, #0x06 << 1]
+
+	//delay
+    ldr   r0,=0x10000
+1:
+    subs  r0, #1
+    bne   1b
+
     ldr   r0, =0xFFFF
     str   r0, [r2, #0x46 << 1]
     ldr   r0, =0x202E
     str   r0, [r2, #0x00 << 1]
+
+	//delay
+    ldr   r0,=0x10000
+1:
+    subs  r0, #1
+    bne   1b
 
     // 2. AN power down
     //wriu -b 0x101203 0xF0 0xF0
@@ -84,6 +103,12 @@ ENTRY(infinity_suspend_imi)
     str   r0, [r2, #0x54 << 1]
     ldr   r0, =0x0000
     str   r0, [r2, #0x08 << 1]
+
+	//delay
+    ldr   r0,=0x10000
+1:
+    subs  r0, #1
+    bne   1b
 
     // 3. Switch reg_ckg_mcu/reg_ckg_spi to xtal, or it will hang when resume
     ldr   r3, =0x000E00

@@ -55,6 +55,7 @@
 struct ms_rtc_info {
     struct platform_device *pdev;
     struct rtc_device *rtc_dev;
+    struct device* rtc_devnode;
     void __iomem *rtc_base;
 };
 
@@ -243,7 +244,6 @@ static int ms_rtc_probe(struct platform_device *pdev)
     struct ms_rtc_info *info;
     struct resource *res;
     struct clk *clk;
-    struct device* rtc_dev;
     dev_t dev;
     int ret = 0;
     u16 reg;
@@ -332,9 +332,8 @@ static int ms_rtc_probe(struct platform_device *pdev)
     if (0 != (ret = alloc_chrdev_region(&dev, 0, 1, "ms_rtc")))
         return ret;
 
-    rtc_dev = device_create(msys_get_sysfs_class(), NULL, dev, NULL, "ms_rtc");
-
-    device_create_file(rtc_dev, &dev_attr_auto_wakeup_timer);
+    info->rtc_devnode = device_create(msys_get_sysfs_class(), NULL, dev, NULL, "ms_rtc");
+    device_create_file(info->rtc_devnode, &dev_attr_auto_wakeup_timer);
 
     return ret;
 }

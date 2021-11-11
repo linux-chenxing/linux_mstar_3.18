@@ -522,6 +522,24 @@ config CMA_DEBUGFS
     help
       Turns on the DebugFS interface for CMA.
 
+config CMA_BUFFER_LIST
+	bool "List of currently allocated CMA buffers in debugfs"
+	depends on CMA_DEBUGFS
+	default n
+	help
+	  /sys/kernel/debug/cma/cma-<N>/buffers contains a list of currently
+	  allocated CMA buffers for each CMA region (N stands for number of
+	  CMA region).
+	  Format is:
+	  <base_phys_addr> - <end_phys_addr> (<size> kB), allocated by <PID> (<comm>)
+
+config CMA_ALLOC_STACKTRACE
+	bool "Add stack trace to CMA buffer list"
+	depends on CMA_BUFFER_LIST && STACKTRACE
+	default n
+	help
+	  Add stack traces saved at the moment of allocation for each buffer
+	  listed in /sys/kernel/debug/cma/cma-<N>/buffers.
 
 config CMA_AREAS
 	int "Maximum count of the CMA areas"

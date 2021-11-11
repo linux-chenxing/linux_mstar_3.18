@@ -162,7 +162,7 @@ int crypto_run(struct fcrypt *fcr, struct kernel_crypt_op *kcop)
 {
     struct csession *ses_ptr;
 	struct crypt_op *cop = &kcop->cop;
-	int ret;
+	int ret = 0;
     AESDMA_DBG("%s %d\n",__FUNCTION__,__LINE__);
 	if (unlikely(cop->op != COP_ENCRYPT && cop->op != COP_DECRYPT)) {
 		return -EINVAL;

@@ -2,7 +2,7 @@
 //
 // infinity.h
 //
-// defines for the registers in the iNfinity BACH chip
+// defines for the registers in the iNfinity3 BACH chip
 //
 //
 #ifndef _INFINITY_H
@@ -39,17 +39,12 @@ typedef short           S16;
 
 #define TYPE_CAST(OldType, NewType, Var)    ((NewType)(Var))
 
-//#define BACH_RIU_BASE_ADDR        0x25000000
 #define BACH_RIU_BASE_ADDR        0x1f000000
-//#define BACH_REG_BANK_1           0x1a00
 #define BACH_REG_BANK_1           0x150200//0x112a00
-//#define BACH_REG_BANK_2           0x1b00
 #define BACH_REG_BANK_2           0x150300//0x112b00
-//#define BACH_REG_BANK_3           0x1c00
 #define BACH_REG_BANK_3           0x103400//0x112c00
 
 #define MIU0_OFFSET 0x20000000
-//#define BACH_REG_BANK_4           0x112d00
 
 #define MIU_WORD_BYTE_SIZE          (8)
 #define BACH_ARM_CACHE_LINE_ALIGN   (32)
@@ -60,7 +55,7 @@ typedef short           S16;
 #define DMA_STOPPED         2
 #define DMA_RUNNING         3
 
-#define BACH_DPGA_GAIN_MAX_DB 12
+#define BACH_DPGA_GAIN_MAX_DB 30
 #define BACH_DPGA_GAIN_MIN_DB -64 //actually -63.5 dB
 #define BACH_DPGA_GAIN_MIN_IDX 0x7F
 
@@ -86,24 +81,6 @@ typedef struct DMAChannelTag
     U32 nBytesPerInt;       // number of samples to play before interrupting
 
 } DMACHANNEL;
-
-/*
-typedef struct InterfaceConfigTag
-{
-    U32 nDMAChannelState;
-
-    // system things
-    U32 nPhysDMAAddr;         // physical RAM address of the buffer
-    U32 nBufferSize;          // lenght of contiguous physical RAM
-
-    // internal things
-    U32 nChannels;            // number of channels (1 or 2)
-    U32 nSampleSize;          // sample word size
-    U32 nSampleRate;          // sample rate in samples/second
-    U32 nBytesPerInt;       // number of samples to play before interrupting
-
-} IFConfig_t;
-*/
 
 
 /**
@@ -264,8 +241,10 @@ extern "C" {
     void InfinityAtopLineIn(BOOL bEnable);
     BOOL InfinityOpenAtop(BachAtopPath_e ePath);
     BOOL InfinityCloseAtop(BachAtopPath_e ePath);
-    BOOL InfinityAtopMicGain(U16 nSel);
-    BOOL InfinityAtopLineInGain(U16 nSel);
+   // BOOL InfinityAtopMicGain(U16 nLevel);
+    BOOL InfinityAtopMicPreGain(U16 nLevel);
+   // BOOL InfinityAtopLineInGain(U16 nLevel);
+	BOOL InfinityAtopAdcGain(U16 nLevel, BachAtopPath_e eAtop);
 
     //sinegen
     BOOL InfinitySineGenGain(U16 nGain);

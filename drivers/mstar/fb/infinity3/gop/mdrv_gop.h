@@ -32,12 +32,13 @@
  ******************************************************************************/
 
 #include <asm/io.h>
+#include <linux/delay.h>
 #include "../include/ms_types.h"
 #include "../include/ms_platform.h"
 
 #include "gop_c2_reg.h"
 
-#define GOP_DEBUG 1
+#define GOP_DEBUG 0
 #if (GOP_DEBUG==1)
 #define GOPDBG(fmt, arg...) printk(KERN_INFO fmt, ##arg)
 #else
@@ -189,6 +190,7 @@
 //global functions
 void SwitchSubBank(int subbank);
 void GOP_Setmode(int bResume, int Screen,int Panel_Width,int  Panel_Height,U32  FB_Start_Addr,U32 Pixel_Format,U16 Bytes_Per_Pixel, int bInterlaceOut);
+void GOP_Setmode_Stretch_H(int bResume, int Screen,int Panel_Width,int  Panel_Height,U32  FB_Start_Addr,U32 Pixel_Format,U16 Bytes_Per_Pixel, int bInterlaceOut, int StretchRatio);
 void GOP_Pan_Display(int Screen, U32 FB_Start_Addr);
 void GOP_Set_OutFormat(int screen, int byuvoutput);
 void GOP_Set_Constant_Alpha(int screen, int bEn, int alpha);

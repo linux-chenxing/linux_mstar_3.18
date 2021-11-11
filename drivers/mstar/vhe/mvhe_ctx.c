@@ -39,12 +39,26 @@ static void _vhectx_release(void* pctx)
             msys_release_dmem(&mctx->m_dmems[--mctx->i_dmems]);
         mutex_lock(&mctx->m_stream);
         mctx->p_handle = NULL;
-        mops->release(mops);
+        if (mops)
+        {
+            if (mops->release)
+                mops->release(mops);
+            kfree(mops);
+            mctx->p_handle = NULL;
+        }
         mutex_unlock(&mctx->m_stream);
 #if MVHE_TIMER_SIZE>0
-        kfree(mctx->p_timer);
+        if (mctx->p_timer)
+        {
+            kfree(mctx->p_timer);
+            mctx->p_timer = NULL;
+        }
 #endif
-        kfree(mctx->p_usrdt);
+        if (mctx->p_usrdt)
+        {
+            kfree(mctx->p_usrdt);
+            mctx->p_usrdt = NULL;
+        }
         kfree(mctx);
     }
 }
@@ -62,8 +76,14 @@ mvhectx_acquire(
 {
     mvhe_ctx* mctx = NULL;
     mhve_ops* mops = NULL;
+
     if (!mdev || !(mctx = kzalloc(sizeof(mvhe_ctx), GFP_KERNEL)))
+    {
+        printk(KERN_ERR"%s() alloc fail\n", __func__);
         return mctx;
+    }
+
+    mctx->p_usrdt = NULL;
     do
     {
         if (!(mops = mvheops_acquire(mdev->i_rctidx)))
@@ -82,13 +102,29 @@ mvhectx_acquire(
         mctx->adduser =_vhectx_adduser;
         atomic_set(&mctx->i_refcnt, 1);
         mctx->p_handle = mops;
+        mctx->i_strid = STREAM_ID_DEFAULT;
         return mctx;
     }
     while (0);
+
+    if (mctx->p_usrdt)
+    {
+        kfree(mctx->p_usrdt);
+        mctx->p_usrdt = NULL;
+    }
     if (mops)
-        mops->release(mops);
-    kfree(mctx);
-    return NULL;
+    {
+        if (mops->release)
+            mops->release(mops);
+        kfree(mops);
+        mctx->p_handle = NULL;
+    }
+    if (mctx)
+    {
+        kfree(mctx);
+        mctx = NULL;
+    }
+    return mctx;
 }
 
 long
@@ -156,45 +192,71 @@ _vhectx_streamon(
     mvhe_dev* mdev = mctx->p_device;
     mhve_ops* mops = mctx->p_handle;
     rqct_ops* rqct = mops->rqct_ops(mops);
-    rqct_cfg  rqcf;
+    mhve_cfg mcfg;
+    rqct_cfg rqcf;
     int i, err = 0;
 
     mutex_lock(&mctx->m_stream);
     do
     if (on)
     {
-        mhve_cfg mcfg;
         int pixels_size, luma4n_size, chroma_size, output_size;
-        int compr_ysize = 0;
+        int compr_ysize, compr_csize, rcbmap_size, roimap_size;
         int rpbuff_size;
         int outsize;
-        int score, rpbn;
+        int score, rpbn, maxw, maxh;
         uint  addr;
         char* kptr;
         msys_mem* pdmem;
+        compr_ysize = compr_csize = 0;
         if (MVHE_CTX_STATE_NULL != mctx->i_state)
             break;
         mctx->i_dmems = 0;
         mcfg.type = MHVE_CFG_RES;
         mops->get_conf(mops, &mcfg);
-        pixels_size = (int)mctx->i_max_w*mctx->i_max_h;
-        luma4n_size = (pixels_size)/4;
-        chroma_size = (pixels_size)/2;
+        maxw = mctx->i_max_w;
+        maxh = mctx->i_max_h;
+        pixels_size = maxw*maxh;
+        luma4n_size = pixels_size/4;
+        chroma_size = pixels_size/2;
+        rcbmap_size = pixels_size/2048;
+        rcbmap_size = _ALIGN(rcbmap_size, 4);
+#if defined(ROIMAP)
+        roimap_size = pixels_size/128;
+        roimap_size = _ALIGN(roimap_size, 4);
+#else
+        roimap_size = 0;
+#endif
         output_size = _ALIGN(pixels_size,19);
         if (mcfg.res.u_conf&MHVE_CFG_OMMAP)
             output_size = 0;
+        /* Calculate compression buffer size */
         if (mcfg.res.u_conf&MHVE_CFG_COMPR)
-            compr_ysize = pixels_size/512;
+        {
+            compr_ysize = _ALIGN((maxw*maxh)/512,4);
+            compr_csize = (_ALIGN(maxw,8)*maxh)/128;
+        }
+        score = pixels_size >> 12;
+        /* shrink mode luma and chroma buffer buffer set from user */
         if (mctx->i_imode == MVHE_IMODE_PLUS)
             pixels_size = chroma_size = 0;
         rpbn = mcfg.res.i_rpbn;
-        rpbuff_size = pixels_size + luma4n_size + chroma_size + compr_ysize;
-        score = pixels_size >> 12;
+        rpbuff_size = pixels_size + luma4n_size + chroma_size + compr_ysize + compr_csize;
         do
         {
-            outsize = output_size + MVHE_MISC_LEN;
+            /* config output buffer */
+            outsize = output_size + MVHE_MISC_LEN + rcbmap_size*2+roimap_size;
             pdmem = &mctx->m_dmems[mctx->i_dmems++];
-            snprintf(pdmem->name,15,"S%d:VHEDMOUT",mctx->i_index);
+
+            if (mctx->i_strid == STREAM_ID_DEFAULT)
+            {
+                snprintf(pdmem->name, 15, "S%d:VHEDMOUT", mctx->i_index);
+            }
+            else
+            {
+                /* encoder buffer name alignment */
+                snprintf(pdmem->name, 15, "S%d:VENCDMOUT", mctx->i_strid);
+            }
             pdmem->length = outsize;
             if (0 != (err = msys_request_dmem(pdmem)))
                 break;
@@ -207,7 +269,7 @@ _vhectx_streamon(
             if (output_size > 0)
             {
                 mcfg.type = MHVE_CFG_DMA;
-                mcfg.dma.i_dmem = -1;
+                mcfg.dma.i_dmem = MHVE_CFG_DMA_OUTPUT_BUFFER;
                 mcfg.dma.p_vptr = kptr;
                 mcfg.dma.u_phys = addr;
                 mcfg.dma.i_size[0] = output_size;
@@ -219,19 +281,54 @@ _vhectx_streamon(
                 kptr += output_size;
                 addr += output_size;
             }
+            /* config NALU buffer */
             mcfg.type = MHVE_CFG_DMA;
-            mcfg.dma.i_dmem = -2;
+            mcfg.dma.i_dmem = MHVE_CFG_DMA_NALU_BUFFER;
             mcfg.dma.p_vptr = kptr;
             mcfg.dma.u_phys = addr;
             mcfg.dma.i_size[0] = MVHE_NALU_LEN;
             mcfg.dma.i_size[1] = compr_ysize?MVHE_COEF_LEN:0;
             mops->set_conf(mops, &mcfg);
+            kptr += MVHE_MISC_LEN;
+            addr += MVHE_MISC_LEN;
+            rqcf.type = RQCT_CFG_RCM;
+            rqcf.rcm.p_kptr = kptr;
+            rqcf.rcm.u_phys = addr;
+            rqcf.rcm.i_size = rcbmap_size;
+            rqct->set_rqcf(rqct, &rqcf);
+            kptr += rcbmap_size*2;
+            addr += rcbmap_size*2;
+            rqcf.type = RQCT_CFG_DQM;
+#if defined(ROIMAP)
+            mcfg.type = MHVE_CFG_HEV;
+            mops->get_conf(mops, &mcfg);
+            rqcf.dqm.i_unit = 8>>(3&(mcfg.hev.b_ctu_qp_delta_enable-1));
+            rqcf.dqm.p_kptr = kptr;
+            rqcf.dqm.u_phys = addr;
+            rqcf.dqm.i_size = roimap_size;
+            rqcf.dqm.i_dqmw = mctx->i_max_w>>3;
+            rqcf.dqm.i_dqmh = mctx->i_max_h>>3;
+#else
+            rqcf.dqm.i_unit = 1;
+            rqcf.dqm.i_dqmw = mctx->i_max_w>>6;
+            rqcf.dqm.i_dqmh = mctx->i_max_h>>6;
+#endif
+            rqct->set_rqcf(rqct, &rqcf);
 
+            /* config reconstruct/reference buffer */
             for (i = 0; i < rpbn; i++)
             {
                 pdmem = &mctx->m_dmems[mctx->i_dmems++];
-                snprintf(pdmem->name,15,"S%d:VHEDMRP%d",mctx->i_index,i);
                 pdmem->length = rpbuff_size;
+                if (mctx->i_strid == STREAM_ID_DEFAULT)
+                {
+                    snprintf(pdmem->name, 15, "S%d:VHEDMRP%d", mctx->i_index, i);
+                }
+                else
+                {
+                    /* encoder buffer name alignment */
+                    snprintf(pdmem->name, 15, "S%d:VENCDMP%d", mctx->i_strid, i);
+                }
                 if (0 != (err = msys_request_dmem(pdmem)))
                     break;
                 addr = Chip_Phys_to_MIU(pdmem->phys);
@@ -244,6 +341,7 @@ _vhectx_streamon(
                 mcfg.dma.i_size[1] = chroma_size;
                 mcfg.dma.i_size[2] = luma4n_size;
                 mcfg.dma.i_size[3] = compr_ysize;
+                mcfg.dma.i_size[4] = compr_csize;
                 mops->set_conf(mops, &mcfg);
             }
             rqcf.type = RQCT_CFG_FPS;
@@ -260,6 +358,7 @@ _vhectx_streamon(
             mvhedev_poweron(mdev, mctx->i_score);
             mdev->i_counts[mctx->i_index][0] = mdev->i_counts[mctx->i_index][1] = 0;
             mdev->i_counts[mctx->i_index][2] = mdev->i_counts[mctx->i_index][3] = 0;
+            mdev->i_counts[mctx->i_index][4] = 0;
             mctx->i_state = MVHE_CTX_STATE_IDLE;
             break;
         }
@@ -272,10 +371,10 @@ _vhectx_streamon(
         mctx->i_state = MVHE_CTX_STATE_NULL;
         mctx->i_score = 0;
         mops->seq_done(mops);
-#if MVHE_TIMER_SIZE>0
-        printk("<%d>vhe performance:\n",mctx->i_id);
+#if 0
+        printk("<%d>vhe performance:\n",mctx->i_index);
         for (i = 0; i < MVHE_TIMER_SIZE/8; i++)
-            printk("<%d>%4d/%4d/%8d\n",mctx->i_id,mctx->p_timer[i].tm_dur[0],mctx->p_timer[i].tm_dur[1],mctx->p_timer[i].tm_cycles);
+            printk("<%d>%4d/%4d/%8d\n",mctx->i_index,mctx->p_timer[i].tm_dur[0],mctx->p_timer[i].tm_dur[1],mctx->p_timer[i].tm_cycles);
 #endif
     }
     while (0);
@@ -304,20 +403,31 @@ _vhectx_set_parm(
     {
         mhve_cfg mcfg;
         rqct_cfg rqcf;
+        unsigned char b_long_term_reference;
         switch (parm->type)
         {
         case MVHE_PARM_RES:
+            /* check LTR mode */
+            mcfg.type = MHVE_CFG_LTR;
+            err = mops->get_conf(mops, &mcfg);
+            b_long_term_reference = mcfg.ltr.b_long_term_reference;
             if ((unsigned)parm->res.i_pixfmt > MVHE_PIXFMT_YUYV)
                 break;
             if ((parm->res.i_pict_w%16) || (parm->res.i_pict_h%8))
                 break;
             mctx->i_max_w = _ALIGN(parm->res.i_pict_w,6);
             mctx->i_max_h = _ALIGN(parm->res.i_pict_h,6);
+            //TODO: add stream id
+            mctx->i_strid = parm->res.i_strid;
             mcfg.type = MHVE_CFG_RES;
             mcfg.res.e_pixf = parm->res.i_pixfmt;
             mcfg.res.i_pixw = parm->res.i_pict_w;
             mcfg.res.i_pixh = parm->res.i_pict_h;
-            mcfg.res.i_rpbn = 2;
+            /* recn buffer number depend on LTR mode */
+            if (b_long_term_reference)
+                mcfg.res.i_rpbn = 3;
+            else
+                mcfg.res.i_rpbn = 2;
             mcfg.res.u_conf = 0;
             if (parm->res.i_flags&MVHE_FLAGS_COMPR)
                 mcfg.res.u_conf |= MHVE_CFG_COMPR;
@@ -329,10 +439,6 @@ _vhectx_set_parm(
             rqcf.type = RQCT_CFG_RES;
             rqcf.res.i_picw = parm->res.i_pict_w;
             rqcf.res.i_pich = parm->res.i_pict_h;
-            rqct->set_rqcf(rqct, &rqcf);
-            rqcf.type = RQCT_CFG_DQM;
-            rqcf.dqm.i_dqmw = mctx->i_max_w>>6;
-            rqcf.dqm.i_dqmh = mctx->i_max_h>>6;
             rqct->set_rqcf(rqct, &rqcf);
             err = 0;
             break;
@@ -413,7 +519,30 @@ _vhectx_set_parm(
         case MVHE_PARM_VUI:
             mcfg.type = MHVE_CFG_VUI;
             mcfg.vui.b_video_full_range = parm->vui.b_video_full_range!=0;
+            mcfg.vui.b_timing_info_pres = parm->vui.b_timing_info_pres!=0;
             err = mops->set_conf(mops, &mcfg);
+            break;
+        case MVHE_PARM_LTR:
+            /* OPs set LTR mode */
+            mcfg.type = MHVE_CFG_LTR;
+            mcfg.ltr.b_long_term_reference = parm->ltr.b_long_term_reference;
+            mcfg.ltr.b_enable_pred = parm->ltr.b_enable_pred;
+            err = mops->set_conf(mops, &mcfg);
+            b_long_term_reference = mcfg.ltr.b_long_term_reference;
+            /* Set recn buffer depend on LTR mode */
+            mcfg.type = MHVE_CFG_RES;
+            if (!mops->get_conf(mops, &mcfg))
+            {
+                mcfg.res.i_rpbn = b_long_term_reference ? 3 : 2;
+                err = mops->set_conf(mops, &mcfg);
+            }
+            /* RQCT control LTR P-frame period */
+            rqcf.type = RQCT_CFG_LTR;
+            if (!rqct->get_rqcf(rqct, &rqcf))
+            {
+                rqcf.ltr.i_period = b_long_term_reference ? parm->ltr.i_ltr_period : 0;
+                err = rqct->set_rqcf(rqct, &rqcf);
+            }
             break;
         default:
             break;
@@ -446,6 +575,7 @@ _vhectx_get_parm(
         mops->get_conf(mops, &mcfg);
         parm->res.i_pict_w = mcfg.res.i_pixw;
         parm->res.i_pict_h = mcfg.res.i_pixh;
+        parm->res.i_strid  = mctx->i_strid;
         parm->res.i_pixfmt = mcfg.res.e_pixf;
         parm->res.i_outlen = 0;
         parm->res.i_flags = (mcfg.res.u_conf&MHVE_CFG_COMPR)?MVHE_FLAGS_COMPR:0;
@@ -500,7 +630,31 @@ _vhectx_get_parm(
     case MVHE_PARM_VUI:
         mcfg.type = MHVE_CFG_VUI;
         if (!(err = mops->get_conf(mops, &mcfg)))
+        {
             parm->vui.b_video_full_range = 0!=mcfg.vui.b_video_full_range;
+            parm->vui.b_timing_info_pres = 0!=mcfg.vui.b_timing_info_pres;
+        }
+        break;
+    case MVHE_PARM_LTR:
+        mcfg.type = MHVE_CFG_LTR;
+        if (!(err = mops->get_conf(mops, &mcfg)))
+        {
+            parm->ltr.b_long_term_reference = mcfg.ltr.b_long_term_reference;
+            if (mcfg.ltr.b_long_term_reference)
+            {
+                parm->ltr.b_enable_pred = mcfg.ltr.b_enable_pred;
+                rqcf.type = RQCT_CFG_LTR;
+                if (!rqct->get_rqcf(rqct, &rqcf))
+                {
+                    parm->ltr.i_ltr_period = rqcf.ltr.i_period;
+                }
+            }
+            else
+            {
+                parm->ltr.i_ltr_period = 0;
+                parm->ltr.b_enable_pred = 0;
+            }
+        }
         break;
     default:
         err = -EINVAL;
@@ -561,12 +715,13 @@ _vhectx_set_ctrl(
         break;
     case MVHE_CTRL_SEQ:
         if ((unsigned)ctrl->seq.i_pixfmt <= MVHE_PIXFMT_YUYV &&
-            ctrl->seq.i_pixelw >= 128 && ctrl->seq.i_pixelw <= mctx->i_max_w &&
-            ctrl->seq.i_pixelh >= 128 && ctrl->seq.i_pixelh <= mctx->i_max_h &&
+            ctrl->seq.i_pixelw >= 128 &&
+            ctrl->seq.i_pixelh >= 128 &&
             ctrl->seq.d_fps > 0 &&
-            ctrl->seq.n_fps > 0)
+            ctrl->seq.n_fps > 0 &&
+            (ctrl->seq.i_pixelw*ctrl->seq.i_pixelh) <= (mctx->i_max_w*mctx->i_max_h))
         {
-            int cbw, cbh;
+            int dqmw, dqmh, size = 0;
             mcfg.type = MHVE_CFG_RES;
             mops->get_conf(mops, &mcfg);
             mcfg.res.e_pixf = ctrl->seq.i_pixfmt;
@@ -574,8 +729,9 @@ _vhectx_set_ctrl(
             mcfg.res.i_pixh = ctrl->seq.i_pixelh;
             if ((err = mops->set_conf(mops, &mcfg)))
                 break;
-            cbw = _ALIGN(mcfg.res.i_pixw,6)>>6;
-            cbh = _ALIGN(mcfg.res.i_pixh,6)>>6;
+            dqmw = _ALIGN(mcfg.res.i_pixw,6)>>3;
+            dqmh = _ALIGN(mcfg.res.i_pixh,6)>>3;
+            size = dqmw*dqmh/2;
             rqcf.type = RQCT_CFG_FPS;
             rqcf.fps.n_fps = ctrl->seq.n_fps;
             rqcf.fps.d_fps = ctrl->seq.d_fps;
@@ -593,10 +749,44 @@ _vhectx_set_ctrl(
             /* reset dqm */
             rqcf.type = RQCT_CFG_DQM;
             rqct->get_rqcf(rqct, &rqcf);
-            rqcf.dqm.i_dqmw = cbw;
-            rqcf.dqm.i_dqmh = cbh;
+#if defined(ROIMAP)
+            mcfg.type = MHVE_CFG_HEV;
+            mops->get_conf(mops, &mcfg);
+            rqcf.dqm.i_unit = 8>>(3&(mcfg.hev.b_ctu_qp_delta_enable-1));
+            rqcf.dqm.i_dqmw = dqmw;
+            rqcf.dqm.i_dqmh = dqmh;
+            rqcf.dqm.i_size = size;
+#else
+            rqcf.dqm.i_dqmw = dqmw>>3;
+            rqcf.dqm.i_dqmh = dqmh>>3;
+            rqcf.dqm.i_size = 0;
+            rqcf.dqm.i_unit = 1;
+#endif
             rqct->set_rqcf(rqct, &rqcf);
+
+            mcfg.type = MHVE_CFG_DMA;
+            mcfg.dma.i_dmem = MHVE_CFG_DMA_RESET_RECN_BUFFER;
+            mops->set_conf(mops, &mcfg);
         }
+        break;
+    case MVHE_CTRL_LTR:
+        /* MUST set param first(can't open LTR mode after streamon) */
+        mcfg.type = MHVE_CFG_LTR;
+        err = mops->get_conf(mops, &mcfg);
+        /* RQCT control LTR P-frame period */
+        if (mcfg.ltr.b_long_term_reference)
+        {
+            mcfg.ltr.b_enable_pred = ctrl->ltr.b_enable_pred;
+            err = mops->set_conf(mops, &mcfg);
+            rqcf.type = RQCT_CFG_LTR;
+            if (!rqct->get_rqcf(rqct, &rqcf))
+            {
+                rqcf.ltr.i_period = ctrl->ltr.i_ltr_period;
+                if (!rqct->set_rqcf(rqct, &rqcf))
+                    err = 0;
+            }
+        }
+        err = 0;
         break;
     default:
         break;
@@ -668,6 +858,26 @@ _vhectx_get_ctrl(
         ctrl->seq.d_fps = (int)rqcf.fps.d_fps;
         err = 0;
         break;
+    case MVHE_CTRL_LTR:
+        mcfg.type = MHVE_CFG_LTR;
+        err = mops->get_conf(mops, &mcfg);
+        /* RQCT control LTR P-frame period */
+        if (mcfg.ltr.b_long_term_reference)
+        {
+            ctrl->ltr.b_enable_pred = mcfg.ltr.b_enable_pred;
+            rqcf.type = RQCT_CFG_LTR;
+            if (!rqct->get_rqcf(rqct, &rqcf))
+            {
+                ctrl->ltr.i_ltr_period = rqcf.ltr.i_period;
+            }
+        }
+        else
+        {
+            ctrl->ltr.b_enable_pred = 0;
+            ctrl->ltr.i_ltr_period = 0;
+        }
+        err = 0;
+        break;
     default:
         break;
     }
@@ -676,7 +886,12 @@ _vhectx_get_ctrl(
     return err;
 }
 
+#define DISABLE_DISPOSABLE  0
+#if DISABLE_DISPOSABLE
+#define MVHE_FLAGS_CONTROL  (MVHE_FLAGS_IDR|MVHE_FLAGS_NIGHT_MODE)
+#else
 #define MVHE_FLAGS_CONTROL  (MVHE_FLAGS_IDR|MVHE_FLAGS_DISPOSABLE|MVHE_FLAGS_NIGHT_MODE)
+#endif
 
 static int
 _vhectx_enc_pict(
@@ -688,6 +903,7 @@ _vhectx_enc_pict(
     mvhe_ctx* mctx = pctx;
     mvhe_dev* mdev = mctx->p_device;
     mhve_ops* mops = mctx->p_handle;
+    mhve_cpb* pcpb = mctx->m_mcpbs;
 
     if (buff->i_memory != MVHE_MEMORY_MMAP)
         return -EINVAL;
@@ -725,19 +941,25 @@ _vhectx_enc_pict(
             mvpb.planes[1].i_bias = buff->planes[1].i_bias;
         }
 
-        mctx->m_mcpbs->i_index = -1;
         mctx->i_state = MVHE_CTX_STATE_BUSY;
+        if (!(err = mops->enc_buff(mops, &mvpb)))
+        do
+        {
+            mops->put_data(mops, mctx->p_usrdt, mctx->i_usrsz);
+            mops->enc_conf(mops);
+            mvhedev_pushjob(mdev, mctx);
+        }
+        while (0 < (err = mops->enc_done(mops)));
 
-        mops->enc_buff(mops, &mvpb);
-        mops->put_data(mops, mctx->p_usrdt, mctx->i_usrsz);
-        mops->enc_conf(mops);
-        mvhedev_pushjob(mdev, mctx);
-        mops->enc_done(mops);
+        if (!err)
+        {
+            mctx->i_usrcn = mctx->i_usrsz = 0;
+            pcpb->i_index = -1;
+        }
+
+        mctx->i_ormdr =
         err =
-        mops->out_buff(mops, mctx->m_mcpbs);
-
-        mctx->i_ormdr = err;
-        mctx->i_usrcn = mctx->i_usrsz = 0;
+        mops->out_buff(mops, pcpb);
     }
     while (0);
     mutex_unlock(&mctx->m_stream);
@@ -816,6 +1038,7 @@ _vhectx_compress(
 {
     int err = -EINVAL;
     int pitch = 0;
+    mvhe_buff* buf = buff;
     mvhe_buff* out = buff + 1;
     mvhe_ctx* mctx = pctx;
     mvhe_dev* mdev = mctx->p_device;
@@ -838,59 +1061,98 @@ _vhectx_compress(
         mhve_cpb mcpb;
         mhve_vpb mvpb;
         mhve_cfg mcfg;
+        unsigned char   b_long_term_reference;
 
+        /* get LTR mode status */
+        mcfg.type = MHVE_CFG_LTR;
+        err = mops->get_conf(mops, &mcfg);
+        b_long_term_reference = mcfg.ltr.b_long_term_reference;
+
+        /* check pixel format and resolution */
         mcfg.type = MHVE_CFG_RES;
         mops->get_conf(mops, &mcfg);
         if (buff->i_planes != 2 && (MHVE_PIX_NV21 >= mcfg.res.e_pixf))
             break;
         if (buff->i_planes != 1 && (MHVE_PIX_YUYV == mcfg.res.e_pixf))
             break;
-        if (mcfg.res.i_pixw != buff->i_width || mcfg.res.i_pixh != buff->i_height)
+        if (mcfg.res.i_pixw != buf->i_width || mcfg.res.i_pixh != buf->i_height)
             break;
 
-        mcpb.i_index = -1;
-        mvpb.i_index = buff->i_index;
-        mvpb.i_stamp = buff->i_timecode;
-        mvpb.u_flags = buff->i_flags&MVHE_FLAGS_CONTROL;
+        /* setup input buffer */
+        mcpb.i_index = 0;
+        mvpb.i_index = buf->i_index;
+        mvpb.i_stamp = buf->i_timecode;
+        mvpb.u_flags = buf->i_flags&MVHE_FLAGS_CONTROL;
+        /* TODO: fix LTR mode can't not open disposable */
+        if (b_long_term_reference)
+            mvpb.u_flags &= ~MVHE_FLAGS_DISPOSABLE;
         mvpb.i_pitch = pitch;
         mvpb.planes[1].u_phys = 0;
         mvpb.planes[1].i_bias = 0;
-        mvpb.planes[0].u_phys = buff->planes[0].mem.phys;
-        mvpb.planes[0].i_bias = buff->planes[0].i_bias;
+        addr = (uint)Chip_Phys_to_MIU(buf->planes[0].mem.phys);
+        mvpb.planes[0].u_phys = addr;
+        mvpb.planes[0].i_bias = buf->planes[0].i_bias;
         if (mcfg.res.e_pixf <= MHVE_PIX_NV21)
         {
-            mvpb.planes[1].u_phys = buff->planes[1].mem.phys;
-            mvpb.planes[1].i_bias = buff->planes[1].i_bias;
+            addr = (uint)Chip_Phys_to_MIU(buf->planes[1].mem.phys);
+            mvpb.planes[1].u_phys = addr;
+            mvpb.planes[1].i_bias = buf->planes[1].i_bias;
         }
 
-        addr = Chip_Phys_to_MIU(out->planes[0].mem.phys); 
+        /* setup output buffer */
+        addr = Chip_Phys_to_MIU(out->planes[0].mem.phys);
         if (!(kptr = phys2kptr(out->planes[0].mem.phys)))
             break;
         mcfg.type = MHVE_CFG_DMA;
-        mcfg.dma.i_dmem = -1;
+        mcfg.dma.i_dmem = MHVE_CFG_DMA_OUTPUT_BUFFER;
         mcfg.dma.p_vptr = kptr;
         mcfg.dma.u_phys = addr;
         mcfg.dma.i_size[0] = out->planes[0].i_size;
+        mops->set_conf(mops, &mcfg);
 
         mctx->i_state = MVHE_CTX_STATE_BUSY;
+        do
+        {
+            if (0 != (err = mops->enc_buff(mops, &mvpb)))
+            {
+                printk(KERN_ERR "%s() enc_buff err\n", __func__);
+                break;
+            }
+            mops->put_data(mops, mctx->p_usrdt, mctx->i_usrsz);
+            if(0 != (err = mops->enc_conf(mops)))
+            {
+                printk(KERN_ERR "%s() enc_conf err\n", __func__);
+                break;
+            }
+            /* call hw to encode frame */
+            if (0 != (err = mvhedev_pushjob(mdev, mctx)))
+            {
+                printk(KERN_ERR "%s() mvhedev_pushjob err\n", __func__);
+                break;
+            }
+            //TODO: super frame
+            if (0 < (err = mops->enc_done(mops)))
+            {
+                printk(KERN_ERR "vhe-re-encode\n");
+            }
+        }
+        while (err > 0);
 
-        mops->set_conf(mops, &mcfg);
-        mops->enc_buff(mops, &mvpb);
-        mops->put_data(mops, mctx->p_usrdt, mctx->i_usrsz);
-        mops->enc_conf(mops);
-        mvhedev_pushjob(mdev, mctx);
-        mops->enc_done(mops);
+        if (!err)
+        {
+            mctx->i_usrsz = mctx->i_usrcn = 0;
+            mcpb.i_index = -1;
+        }
+
         mops->deq_buff(mops, &mvpb);
-        mops->out_buff(mops, &mcpb);
+        buf->i_index = mvpb.i_index;
 
-        err =
+        err = mops->out_buff(mops, &mcpb);
         out->planes[0].i_used = mcpb.planes[0].i_size;
+        out->planes[0].i_bias = mcpb.planes[0].i_bias;
         out->i_timecode = mcpb.i_stamp;
         out->i_flags = mcpb.i_flags;
 
-        buff->i_index = mvpb.i_index;
-
-        mctx->i_usrsz = mctx->i_usrcn = 0;
         mctx->i_state = MVHE_CTX_STATE_IDLE;
     }
     while (0);
@@ -944,7 +1206,7 @@ _vhectx_set_rqcf(
     rqct_ops* rqct = mops->rqct_ops(mops);
 
     mutex_lock(&mctx->m_stream);
-    if (!rqct->set_rqcf(rqct, (rqct_cfg*)rqcf))
+    if ((unsigned)rqcf->type < RQCT_CONF_END && !rqct->set_rqcf(rqct, (rqct_cfg*)rqcf))
         err = 0;
     mutex_unlock(&mctx->m_stream);
 
@@ -962,7 +1224,7 @@ _vhectx_get_rqcf(
     rqct_ops* rqct = mops->rqct_ops(mops);
 
     mutex_lock(&mctx->m_stream);
-    if (!rqct->get_rqcf(rqct, (rqct_cfg*)rqcf))
+    if ((unsigned)rqcf->type < RQCT_CONF_END && !rqct->get_rqcf(rqct, (rqct_cfg*)rqcf))
         err = 0;
     mutex_unlock(&mctx->m_stream);
 

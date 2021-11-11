@@ -30,7 +30,7 @@
 // CL1426052 //THEALE/RedLion/mstar2/drv/emac/
 /////////////////////////////////////////////////////
 
-
+#define CONFIG_EMAC_PHY_RESTART_AN 1
 //-------------------------------------------------------------------------------------------------
 //  Include files
 //-------------------------------------------------------------------------------------------------
@@ -61,7 +61,6 @@
 #include <asm/uaccess.h>
 #include <linux/buffer_head.h>
 
-
 #if defined(CONFIG_MIPS)
 #include <asm/mips-boards/prom.h>
 #include "mhal_chiptop_reg.h"
@@ -69,6 +68,7 @@
 #include <asm/prom.h>
 #include <asm/mach/map.h>
 #endif
+
 #include "mdrv_types.h"
 //#include "mst_platform.h"
 //#include "mdrv_system.h"
@@ -76,17 +76,30 @@
 #include "mhal_emac.h"
 #include "mdrv_emac.h"
 #include "ms_platform.h"
+#include "registers.h"
 
 #ifdef CONFIG_EMAC_SUPPLY_RNG
 #include <linux/input.h>
 #include <random.h>
 #include "mhal_rng_reg.h"
 #endif
+
 #include "mdrv_msys_io_st.h"
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
 #include "ms_msys.h"
+#include "gpio.h"
+
+
+int g_emac_led_orange = -1;
+int g_emac_led_green  = -1;
+int g_emac_led_count  = 0;
+int g_emac_led_flick_speed = 30;
+
+extern void MDrv_GPIO_Set_Low(U8 u8IndexGPIO);
+extern void MDrv_GPIO_Set_High(U8 u8IndexGPIO);
+extern void MDrv_GPIO_Pad_Set(U8 u8IndexGPIO);
 
 int msys_request_dmem(MSYS_DMEM_INFO *mem_info);
 int msys_release_dmem(MSYS_DMEM_INFO *mem_info);
@@ -96,17 +109,12 @@ int msys_release_dmem(MSYS_DMEM_INFO *mem_info);
 //--------------------------------------------------------------------------------------------------
 #define EMAC_RX_TMR         (0)
 #define EMAC_LINK_TMR       (1)
+#define EMAC_FLOW_CTL_TMR   (2)
 
 #define EMAC_CHECK_LINK_TIME    	(HZ)
 u32 gu32CheckLinkTime = HZ;
 u32 gu32CheckLinkTimeDis = 100;
-
-
-#if defined(TX_SKB_PTR)
-#define IER_FOR_INT_JULIAN_D  EMAC_INT_DONE|EMAC_INT_RBNA|EMAC_INT_TUND|EMAC_INT_RTRY|EMAC_INT_TCOM|EMAC_INT_ROVR|EMAC_INT_HRESP
-#else
-#define IER_FOR_INT_JULIAN_D  EMAC_INT_DONE|EMAC_INT_RBNA|EMAC_INT_TUND|EMAC_INT_RTRY|EMAC_INT_ROVR|EMAC_INT_HRESP
-#endif
+u32 gu32intrEnable;
 
 
 
@@ -130,6 +138,18 @@ u32 gu32CheckLinkTimeDis = 100;
 #define TX_SW_QUEUE_IN_IRQ            1
 #define TX_SW_QUEUE_IN_TIMER          2
 
+#if defined (SOFTWARE_TX_FLOW_CONTROL)
+#define MAC_CONTROL_TYPE              0x8808
+#define MAC_CONTROL_OPCODE            0x0001
+#define PAUSE_QUANTA_TIME_10M         ((1000000*10)/500)
+#define PAUSE_QUANTA_TIME_100M        ((1000000*100)/500)
+#define PAUSE_TIME_DIVISOR_10M        (PAUSE_QUANTA_TIME_10M/HZ)
+#define PAUSE_TIME_DIVISOR_100M       (PAUSE_QUANTA_TIME_100M/HZ)
+unsigned char g_emac_speed = 0;
+static unsigned int eth_pause_cmd_enable=0;
+spinlock_t emac_flow_ctl_lock;
+static struct timer_list EMAC_flow_ctl_timer;
+#endif
 //--------------------------------------------------------------------------------------------------
 //  Local variable
 //--------------------------------------------------------------------------------------------------
@@ -254,6 +274,7 @@ unsigned char packet_content[] = {
 
 static unsigned int max_rx_packet_count=0;
 static unsigned int max_tx_packet_count=0;
+static unsigned int min_tx_fifo_idle_count=0xffff;
 static unsigned int tx_bytes_per_timerbak=0;
 static unsigned int tx_bytes_per_timer=0;
 u32 RAM_ALLOC_SIZE=0;
@@ -277,8 +298,8 @@ static int MDev_EMAC_SwReset(struct net_device *dev);
 static void MDev_EMAC_Send_PausePkt(struct net_device* dev);
 #endif
 #ifdef RX_ZERO_COPY
-static int fill_rx_ring(struct net_device *netdev);
-static int dequeue_rx_buffer(struct EMAC_private *p, struct sk_buff **pskb);
+//static int fill_rx_ring(struct net_device *netdev);
+//static int dequeue_rx_buffer(struct EMAC_private *p, struct sk_buff **pskb);
 static void free_rx_skb(void)
 {
 	int i = 0;
@@ -433,8 +454,13 @@ static void RX_timer_callback( unsigned long value){
 //-------------------------------------------------------------------------------------------------
 static int MDev_EMAC_update_linkspeed (struct net_device *dev)
 {
-    u32 bmsr, bmcr, LocPtrA;
+    u32 bmsr, bmcr, adv, lpa, neg;
     u32 speed, duplex;
+
+#ifdef CONFIG_EMAC_PHY_RESTART_AN
+        u32 hcd_link_st_ok, an_100t_link_st = 0;
+        static unsigned int phy_restart_cnt = 0;
+#endif /* CONFIG_EMAC_PHY_RESTART_AN */
 
     // Link status is latched, so read twice to get current value //
     MHal_EMAC_read_phy (phyaddr, MII_BMSR, &bmsr);
@@ -464,19 +490,52 @@ static int MDev_EMAC_update_linkspeed (struct net_device *dev)
             return -2;
         }
 
-        MHal_EMAC_read_phy (phyaddr, MII_LPA, &LocPtrA);
-        if ((LocPtrA & LPA_100FULL) || (LocPtrA & LPA_100HALF))
+        /* Get Link partner and advertisement from the PHY not from the MAC */
+        MHal_EMAC_read_phy(phyaddr, MII_ADVERTISE, &adv);
+        MHal_EMAC_read_phy(phyaddr, MII_LPA, &lpa);
+
+        /* For Link Parterner adopts force mode and EPHY used,
+         * EPHY LPA reveals all zero value.
+         * EPHY would be forced to Full-Duplex mode.
+         */
+        if (!lpa)
+        {
+            /* 100Mbps Full-Duplex */
+            if (bmcr & BMCR_SPEED100)
+                lpa |= LPA_100FULL;
+            else /* 10Mbps Full-Duplex */
+                lpa |= LPA_10FULL;
+        }
+
+        neg = adv & lpa;
+
+        if (neg & LPA_100FULL)
         {
             speed = SPEED_100;
+            duplex = DUPLEX_FULL;
+        }
+        else if (neg & LPA_100HALF)
+        {
+            speed = SPEED_100;
+            duplex = DUPLEX_HALF;
+        }
+        else if (neg & LPA_10FULL)
+        {
+            speed = SPEED_10;
+            duplex = DUPLEX_FULL;
+        }
+        else if (neg & LPA_10HALF)
+        {
+            speed = SPEED_10;
+            duplex = DUPLEX_HALF;
         }
         else
         {
             speed = SPEED_10;
-        }
-        if ((LocPtrA & LPA_100FULL) || (LocPtrA & LPA_10FULL))
-            duplex = DUPLEX_FULL;
-        else
             duplex = DUPLEX_HALF;
+            EMAC_DBG("%s: No speed and mode found (LPA=0x%x, ADV=0x%x)\n", __FUNCTION__, lpa, adv);
+        }
+
     }
     else
     {
@@ -504,6 +563,22 @@ static int MDev_EMAC_update_linkspeed (struct net_device *dev)
 #endif
 
     PreLinkStatus = 1;
+#ifdef CONFIG_EMAC_PHY_RESTART_AN
+        if (speed == SPEED_100) {
+            MHal_EMAC_read_phy(phyaddr, 0x21, &hcd_link_st_ok);
+            MHal_EMAC_read_phy(phyaddr, 0x22, &an_100t_link_st);
+            if (((hcd_link_st_ok & 0x100) && !(an_100t_link_st & 0x300)) || (!(hcd_link_st_ok & 0x100) && ((an_100t_link_st & 0x300) == 0x200))) {
+                phy_restart_cnt++;
+                if (phy_restart_cnt > 10) {
+                    EMAC_DBG("MDev_EMAC_update_linkspeed: restart AN process\n");
+                    MHal_EMAC_write_phy(phyaddr, MII_BMCR, 0x1200UL);
+                    phy_restart_cnt = 0;
+                }
+            } else {
+                phy_restart_cnt = 0;
+            }
+        }
+#endif /* CONFIG_EMAC_PHY_RESTART_AN */
 
     return 0;
 }
@@ -801,11 +876,6 @@ static int MDev_EMAC_ethtool_ioctl (struct net_device *dev, void *useraddr)
         {
             struct ethtool_cmd ecmd = { ETHTOOL_GSET };
             res = mii_ethtool_gset (&LocPtr->mii, &ecmd);
-            if (LocPtr->phy_media == PORT_FIBRE)
-            {   //override media type since mii.c doesn't know //
-                ecmd.supported = SUPPORTED_FIBRE;
-                ecmd.port = PORT_FIBRE;
-            }
             if (copy_to_user (useraddr, &ecmd, sizeof (ecmd)))
                 res = -EFAULT;
             break;
@@ -846,7 +916,7 @@ static int MDev_EMAC_ioctl (struct net_device *dev, struct ifreq *rq, int cmd)
 {
     struct EMAC_private *LocPtr = (struct EMAC_private*) netdev_priv(dev);
     struct mii_ioctl_data *data = if_mii(rq);
-
+    u32 value;
     if (!netif_running(dev))
     {
         rq->ifr_metric = ETHERNET_TEST_INIT_FAIL;
@@ -881,7 +951,8 @@ static int MDev_EMAC_ioctl (struct net_device *dev, struct ifreq *rq, int cmd)
             }
             else
             {
-                MHal_EMAC_read_phy((phyaddr & 0x1FUL), (data->reg_num & 0x1fUL), (u32 *)&(data->val_out));
+                MHal_EMAC_read_phy((phyaddr & 0x1FUL), (data->reg_num & 0x1fUL), (u32 *)&(value));
+                data->val_out = value;
             }
             return 0;
 
@@ -977,19 +1048,20 @@ static int MDev_EMAC_open (struct net_device *dev)
     MHal_EMAC_enable_phyirq ();
 
     // Enable MAC interrupts //
-#ifndef INT_JULIAN_D
-    MHal_EMAC_Write_IDR(0xFFFF);
-    uRegVal = EMAC_INT_RCOM | IER_FOR_INT_JULIAN_D;
-    MHal_EMAC_Write_IER(uRegVal);
-#else
-    MHal_EMAC_Write_IDR(0xFFFF);
-    MHal_EMAC_Write_IER(IER_FOR_INT_JULIAN_D);
-
+    MHal_EMAC_Write_IDR(0xFFFFFFFF); //clear interrupt maybe it was set in uboot
+    gu32intrEnable = EMAC_INT_RBNA|EMAC_INT_TUND|EMAC_INT_RTRY|EMAC_INT_ROVR|EMAC_INT_HRESP;
+#if defined(TX_SKB_PTR)
+    gu32intrEnable = gu32intrEnable | EMAC_INT_TCOM;
+#endif
+#if defined(INT_JULIAN_D)
     // enable delay interrupt
     uRegVal = MHal_EMAC_Read_JULIAN_0104();
     uRegVal |= 0x00000080UL;
     MHal_EMAC_Write_JULIAN_0104(uRegVal);
+#else
+    gu32intrEnable = gu32intrEnable | EMAC_INT_RCOM;
 #endif
+    MHal_EMAC_Write_IER(gu32intrEnable);
 
     LocPtr->ep_flag |= EP_FLAG_OPEND;
 
@@ -1034,12 +1106,10 @@ static int MDev_EMAC_close (struct net_device *dev)
     MHal_EMAC_Write_CTL(uRegVal);
     // Disable PHY interrupt //
     MHal_EMAC_disable_phyirq ();
-#ifndef INT_JULIAN_D
-    //Disable MAC interrupts //
-    uRegVal = EMAC_INT_RCOM | IER_FOR_INT_JULIAN_D;
-    MHal_EMAC_Write_IDR(uRegVal);
-#else
-    MHal_EMAC_Write_IDR(IER_FOR_INT_JULIAN_D);
+
+    MHal_EMAC_Write_IDR(0xFFFFFFFF);
+#ifdef INT_JULIAN_D
+
 #endif
     netif_stop_queue (dev);
     netif_carrier_off(dev);
@@ -1056,14 +1126,14 @@ static int MDev_EMAC_close (struct net_device *dev)
     int i;
     for (i=0;i<TX_RING_SIZE;i++)
     {
-        if( LocPtr->tx_swq[LocPtr->tx_wridx].used ==1 && LocPtr->tx_swq[LocPtr->tx_wridx].skb != NULL)
+        if( LocPtr->tx_swq[i].used ==1 && LocPtr->tx_swq[i].skb != NULL)
         {
-            dma_unmap_single(&dev->dev, LocPtr->tx_swq[LocPtr->tx_wridx].skb_physaddr,
-                LocPtr->tx_swq[LocPtr->tx_wridx].skb->len, DMA_TO_DEVICE);
-            dev_kfree_skb_any(LocPtr->tx_swq[LocPtr->tx_wridx].skb);
-            LocPtr->tx_swq[LocPtr->tx_wridx].used = 0;
-            LocPtr->tx_swq[LocPtr->tx_wridx].skb = NULL;
-            LocPtr->tx_swq[LocPtr->tx_wridx].skb_physaddr = 0;
+            dma_unmap_single(&dev->dev, LocPtr->tx_swq[i].skb_physaddr,
+                LocPtr->tx_swq[i].skb->len, DMA_TO_DEVICE);
+            dev_kfree_skb_any(LocPtr->tx_swq[i].skb);
+            LocPtr->tx_swq[i].used = 0;
+            LocPtr->tx_swq[i].skb = NULL;
+            LocPtr->tx_swq[i].skb_physaddr = 0;
         }
     }
 }
@@ -1174,9 +1244,9 @@ static int MDev_EMAC_CheckTSR(void)
     return NETDEV_TX_BUSY;
 }
 #endif
+
 int MDev_EMAC_GetTXFIFOIdle(void)
 {
-
     u32 tsrval = 0;
     u8  avlfifo[8] = {0};
     u8  avlfifoidx;
@@ -1200,9 +1270,17 @@ int MDev_EMAC_GetTXFIFOIdle(void)
 
     if (avlfifoval > 4)
     {
-        return avlfifoval-4;
+        avlfifoval-=4;
     }
-    return 0;
+    else
+    {
+        avlfifoval= 0;
+    }
+
+#if defined(NEW_TX_QUEUE_128)
+      avlfifoval = avlfifoval + (NEW_TX_QUEUE_SIZE - MHal_EMAC_get_TXQUEUE_Count());
+#endif
+    return avlfifoval;
 }
 
 #ifdef CONFIG_MSTAR_EEE
@@ -1306,7 +1384,7 @@ static int MDev_EMAC_BGsend(struct net_device* dev, phys_addr_t addr, int len )
 
     LocPtr->stats.tx_bytes += len;
 
-    Chip_Flush_Memory(); //Chip_Flush_Memory_Range(0, 0xFFFFFFFFUL);
+    Chip_Flush_Cache_Range(skb_addr, len); // Chip_Flush_Memory();
 
     //Set address of the data in the Transmit Address register //
     MHal_EMAC_Write_TAR(skb_addr - RAM_VA_PA_OFFSET - MIU0_BUS_BASE);
@@ -1466,7 +1544,7 @@ void MDev_EMAC_bottom_tx_task(struct work_struct *work)
         #endif
             LocPtr->stats.tx_bytes += skb->len;
 
-            Chip_Flush_Memory(); //Chip_Flush_Memory_Range(0, 0xFFFFFFFFUL);
+            Chip_Flush_Cache_Range(skb_addr, skb->len); //Chip_Flush_Memory_Range(0, 0xFFFFFFFFUL);
 
             //MDrv_EMAC_DumpMem(tx_swq->skb_physaddr,skb->len);
 
@@ -1633,6 +1711,15 @@ static int MDev_EMAC_tx (struct sk_buff *skb, struct net_device *dev)
     struct EMAC_private *LocPtr = (struct EMAC_private*) netdev_priv(dev);
     unsigned long flags;
     dma_addr_t skb_addr;
+    int txIdleCount=0;
+
+    if(g_emac_led_orange!=-1 && g_emac_led_green!=-1)
+    {
+        if(g_emac_led_count++ > g_emac_led_flick_speed){
+            MDrv_GPIO_Set_Low(g_emac_led_orange);
+            g_emac_led_count=0;
+        }
+    }
 
     spin_lock_irqsave(LocPtr->lock, flags);
 #ifdef CONFIG_MSTAR_EEE
@@ -1641,10 +1728,12 @@ static int MDev_EMAC_tx (struct sk_buff *skb, struct net_device *dev)
 
     if (netif_queue_stopped(emac_dev)){
         EMAC_ERR("netif_queue_stopped\n");
+        spin_unlock_irqrestore(LocPtr->lock, flags);
         return NETDEV_TX_BUSY;
     }
     if (!netif_carrier_ok(emac_dev)){
         EMAC_ERR("netif_carrier_off\n");
+        spin_unlock_irqrestore(LocPtr->lock, flags);
         return NETDEV_TX_BUSY;
     }
     if (skb->len > EMAC_MTU)
@@ -1668,7 +1757,7 @@ static int MDev_EMAC_tx (struct sk_buff *skb, struct net_device *dev)
 
 #ifdef TX_SW_QUEUE
     {
-        int txIdleCount=0;//MDev_EMAC_GetTXFIFOIdle();
+
         int queue_size=0;
         //FIFO full, loop until HW empty then try again
         //This is an abnormal condition as the upper network tx_queue should already been stopped by "netif_stop_queue(dev)" in code below
@@ -1689,7 +1778,6 @@ static int MDev_EMAC_tx (struct sk_buff *skb, struct net_device *dev)
 
             goto out_unlock;
         }
-
 
         LocPtr->tx_swq[LocPtr->tx_wridx].skb = skb;
         LocPtr->tx_swq[LocPtr->tx_wridx].skb_physaddr= skb_addr;
@@ -1718,18 +1806,17 @@ static int MDev_EMAC_tx (struct sk_buff *skb, struct net_device *dev)
 
         _MDev_EMAC_tx_clear_TX_SW_QUEUE(txIdleCount,dev,TX_SW_QUEUE_IN_GENERAL_TX);
         _MDev_EMAC_tx_read_TX_SW_QUEUE(txIdleCount,dev,TX_SW_QUEUE_IN_GENERAL_TX);
-
-
 	}
 #else
+
     //if buffer remains one space, notice upperr layer to block transmition.
-    if( MDev_EMAC_GetTXFIFOIdle() <= 0)
+    txIdleCount = MDev_EMAC_GetTXFIFOIdle();
+    if( txIdleCount <= 0)
     {
         netif_stop_queue(dev);
         spin_unlock_irqrestore(LocPtr->lock, flags);
         return NETDEV_TX_BUSY;
     }
-
 
     //map skbuffer for DMA
     skb_addr = dma_map_single(&dev->dev, skb->data, skb->len, DMA_TO_DEVICE);
@@ -1738,6 +1825,7 @@ static int MDev_EMAC_tx (struct sk_buff *skb, struct net_device *dev)
         dev_kfree_skb_any(skb);
         printk(KERN_ERR"ERROR!![%s]%d\n",__FUNCTION__,__LINE__);
         dev->stats.tx_dropped++;
+
         goto out_unlock;
     }
 
@@ -1764,6 +1852,8 @@ static int MDev_EMAC_tx (struct sk_buff *skb, struct net_device *dev)
     MHal_EMAC_Write_TCR(skb->len);
 
 #endif
+    if(min_tx_fifo_idle_count>txIdleCount) min_tx_fifo_idle_count=txIdleCount;
+
     dev->trans_start = jiffies;
 
 
@@ -1832,7 +1922,7 @@ static int MDev_EMAC_tx (struct sk_buff *skb, struct net_device *dev)
     //LocPtr->skb_length =(int) skb->len;
     LocPtr->stats.tx_bytes += skb->len;
 
-    Chip_Flush_Memory(); //Chip_Flush_Memory_Range(0, 0xFFFFFFFFUL);
+    Chip_Flush_Cache_Range(skb_addr, skb->len); //Chip_Flush_Memory_Range(0, 0xFFFFFFFFUL);
 
     //MDrv_EMAC_DumpMem(tx_swq->skb_physaddr,skb->len);
     //Set address of the data in the Transmit Address register //
@@ -1953,14 +2043,21 @@ static int MDev_EMAC_rx (struct net_device *dev)
     u32 received=0;
     struct sk_buff *skb;
 
-
 #ifdef RX_ZERO_COPY
     u32 RBQP_offset;
     u32 RBQP_rx_skb_addr = 0;
-    unsigned long flags;
+//    unsigned long flags;
 //    int cidx=0;
-
 #endif
+
+    if(g_emac_led_orange!=-1 && g_emac_led_green!=-1)
+    {
+        if(g_emac_led_count++ > g_emac_led_flick_speed){
+            MDrv_GPIO_Set_Low(g_emac_led_orange);
+            g_emac_led_count=0;
+        }
+    }
+
 
     dlist = LocPtr->dlist ;
     // If any Ownership bit is 1, frame received.
@@ -1978,17 +2075,28 @@ static int MDev_EMAC_rx (struct net_device *dev)
 
         p_recv = (char *) ((((dlist->descriptors[LocPtr->rxBuffIndex].addr) & 0xFFFFFFFFUL) + RAM_VA_PA_OFFSET + MIU0_BUS_BASE) &~(EMAC_DESC_DONE | EMAC_DESC_WRAP));
 
-
         pktlen = dlist->descriptors[LocPtr->rxBuffIndex].size & 0x7ffUL;    /* Length of frame including FCS */
 
     #if RX_THROUGHPUT_TEST
     	receive_bytes += pktlen;
     #endif
 
-        if (pktlen > SOFTWARE_DESC_LEN)
+        if (pktlen > EMAC_MTU || pktlen < 64)
         {
-            printk(KERN_WARNING"!!!! pktlen:%d > SOFTWARE_DESC_LEN:%d, alloc_skb()\n",pktlen,SOFTWARE_DESC_LEN);
-            return -EIO;
+            EMAC_ERR("drop packet!!(pktlen = %d)", pktlen);
+            dlist->descriptors[LocPtr->rxBuffIndex].addr  &= ~EMAC_DESC_DONE;  /* reset ownership bit */
+            Chip_Flush_Cache_Range((unsigned long)(&(dlist->descriptors[LocPtr->rxBuffIndex].addr)), sizeof(dlist->descriptors[LocPtr->rxBuffIndex].addr));
+
+            //wrap after last buffer //
+            LocPtr->rxBuffIndex++;
+            if (LocPtr->rxBuffIndex == MAX_RX_DESCR)
+            {
+                LocPtr->rxBuffIndex = 0;
+            }
+            LocPtr->stats.rx_length_errors++;
+            LocPtr->stats.rx_errors++;
+            LocPtr->stats.rx_dropped++;
+            continue;
         }
 
 #ifndef RX_ZERO_COPY
@@ -2002,14 +2110,12 @@ static int MDev_EMAC_rx (struct net_device *dev)
 		}
         skb_reserve (skb, 2); /* Align IP on 16 byte boundaries */
 
-        //Chip_Inv_Cache_Range_VA_PA((unsigned long)p_recv,(unsigned long)(p_recv - RAM_VA_PA_OFFSET) ,pktlen);
-        //Chip_Inv_Cache_Range((unsigned long)p_recv, pktlen);
-        Chip_Flush_Memory();
+        Chip_Inv_Cache_Range((unsigned long)p_recv, pktlen);  //Chip_Inv_Cache_Range_VA_PA((unsigned long)p_recv,(unsigned long)(p_recv - RAM_VA_PA_OFFSET) ,pktlen);
 
         /* 'skb_put()' points to the start of sk_buff data area. */
         memcpy(skb_put(skb, pktlen), p_recv, pktlen);
 #else
-
+        pktlen -= 4; /* Remove FCS */
         skb = rx_skb[LocPtr->rxBuffIndex];
         pData=skb_put(rx_skb[LocPtr->rxBuffIndex], pktlen);
         Chip_Inv_Cache_Range((unsigned long)pData, pktlen);
@@ -2042,11 +2148,96 @@ static int MDev_EMAC_rx (struct net_device *dev)
         }
 #endif
 #endif
+
         skb->dev = dev;
         skb->protocol = eth_type_trans (skb, dev);
         //skb->len = pktlen;
         dev->last_rx = jiffies;
         LocPtr->stats.rx_bytes += pktlen;
+#if defined (SOFTWARE_TX_FLOW_CONTROL)
+        //check the pause ctl frame protocol //MAC_CONTROL_TYPE=0x8808
+        if (((MAC_CONTROL_TYPE&0xFF)==((skb->protocol>>8)&0xFF)) && \
+           (((MAC_CONTROL_TYPE>>8)&0xFF)==(skb->protocol&0xFF)))
+        {
+            int pause_time = 0;
+            int pause_time_to_jiffies = 0;
+            unsigned int mac_ctl_opcode = 0;
+            #if 0
+            int i = 0;
+            unsigned char *pcc = p_recv;
+
+            printk("Get ethernet flow control data:\n");
+            for (i=0; i<((pktlen<0x20)?pktlen:0x20); i++)
+            {
+                printk("%02x ",*(pcc+i));
+                if (i==7) printk(" ");
+                if ((0x10<i) && (0==(i-7)%0x10)) printk(" ");
+                if ((i>0) && (0 == (i+1)%0x10)) printk("\n");
+            }
+            //printk("\n");
+            #endif
+
+            //Get the pause ctl frame opcode //MAC_CONTROL_OPCODE=0x0001
+            mac_ctl_opcode = (((*(p_recv+14))<<8)&0xFF00) + ((*(p_recv+15))&0xFF);
+            if (MAC_CONTROL_OPCODE == mac_ctl_opcode)
+            {
+                pause_time = (((*(p_recv+16))<<8)&0xFF00) + ((*(p_recv+17))&0xFF);
+
+                spin_lock_irq(&emac_flow_ctl_lock);
+                if (0 == eth_pause_cmd_enable)
+                {
+                    netif_stop_queue (dev);
+
+                    //init_timer(&EMAC_flow_ctl_timer);
+                    //EMAC_flow_ctl_timer.data = EMAC_FLOW_CTL_TMR;
+                    if (EMAC_SPEED_100 == ThisBCE.speed)
+                    {
+                        pause_time_to_jiffies = (pause_time/PAUSE_TIME_DIVISOR_100M)+((0==(pause_time%PAUSE_TIME_DIVISOR_100M))?0:1);
+                        EMAC_flow_ctl_timer.expires = jiffies + pause_time_to_jiffies;
+                    }
+                    else if (EMAC_SPEED_10 == ThisBCE.speed)
+                    {
+                        pause_time_to_jiffies = (pause_time/PAUSE_TIME_DIVISOR_10M)+((0==(pause_time%PAUSE_TIME_DIVISOR_10M))?0:1);
+                        EMAC_flow_ctl_timer.expires = jiffies + pause_time_to_jiffies;
+                    }
+                    else
+                    {
+                        printk(KERN_WARNING"[%s:%d] Get emac speed(%d) error!\n", __func__, __LINE__, g_emac_speed);
+                    }
+
+                    //printk(KERN_WARNING"[pause ctl] jiffies=0x%lx, expires==0x%lx, pause_time_to_jiffies=%d\n",
+                    //                      jiffies, EMAC_flow_ctl_timer.expires, pause_time_to_jiffies);
+                    add_timer(&EMAC_flow_ctl_timer);
+
+                    eth_pause_cmd_enable = 1;
+                }
+                else
+                {
+                    unsigned long expires_new = 0;
+
+                    if (EMAC_SPEED_100 == ThisBCE.speed)
+                    {
+                        pause_time_to_jiffies = (pause_time/PAUSE_TIME_DIVISOR_100M)+((0==(pause_time%PAUSE_TIME_DIVISOR_100M))?0:1);
+                        expires_new = jiffies + pause_time_to_jiffies;
+                    }
+                    else if (EMAC_SPEED_10 == ThisBCE.speed)
+                    {
+                        pause_time_to_jiffies = (pause_time/PAUSE_TIME_DIVISOR_10M)+((0==(pause_time%PAUSE_TIME_DIVISOR_10M))?0:1);
+                        expires_new = jiffies + pause_time_to_jiffies;
+                    }
+                    else
+                    {
+                        printk(KERN_WARNING"[%s:%d] Get emac speed(%d) error!\n", __func__, __LINE__, g_emac_speed);
+                    }
+
+                    mod_timer(&EMAC_flow_ctl_timer, expires_new);
+                }
+                spin_unlock_irq(&emac_flow_ctl_lock);
+                printk(KERN_WARNING"[%s:%d] Get pause time(0x%04x) from MAC PAUSE frame, eth_pause_cmd_enable=%d\n",
+                                              __func__, __LINE__, pause_time, eth_pause_cmd_enable);
+            }
+        }
+#endif
     #if RX_THROUGHPUT_TEST
         kfree_skb(skb);
     #else
@@ -2081,11 +2272,16 @@ static int MDev_EMAC_rx (struct net_device *dev)
         }
 
 #ifdef RX_ZERO_COPY
-        dequeue_rx_buffer(LocPtr, &skb);
-        if (!skb) {
-               printk(KERN_ERR"%d: rx_next:%d rx_next_fill:%d rx_current_fill:%d\n",__LINE__,LocPtr->rx_next, LocPtr->rx_next_fill, LocPtr->rx_current_fill);
-               panic("Can't dequeue skb from buffer.");
-        }
+        //dequeue_rx_buffer(LocPtr, &skb);
+        //if (!skb) {
+        //    printk(KERN_ERR"%d: rx_next:%d rx_next_fill:%d rx_current_fill:%d\n",__LINE__,LocPtr->rx_next, LocPtr->rx_next_fill, LocPtr->rx_current_fill);
+        //    panic("Can't dequeue skb from buffer.");
+        //}
+        if (!(skb = alloc_skb (SOFTWARE_DESC_LEN, GFP_ATOMIC))) {
+            printk(KERN_ERR"Can't alloc skb.[%s]%d\n",__FUNCTION__,__LINE__);;
+			return -ENOMEM;
+		}
+
         rx_skb[LocPtr->rxBuffIndex] = skb;
         rx_abso_addr[LocPtr->rxBuffIndex] = (u32)rx_skb[LocPtr->rxBuffIndex]->data;
 
@@ -2096,12 +2292,12 @@ static int MDev_EMAC_rx (struct net_device *dev)
         if(LocPtr->rxBuffIndex == (MAX_RX_DESCR-1))
             RBQP_rx_skb_addr |= EMAC_DESC_WRAP;
         MHal_EMAC_WritRam32(RAM_VA_PA_OFFSET, RBQP_BASE + RBQP_offset, RBQP_rx_skb_addr);
-
 #endif
 
         dlist->descriptors[LocPtr->rxBuffIndex].addr  &= ~EMAC_DESC_DONE;  /* reset ownership bit */
         //Chip_Inv_Cache_Range_VA_PA((unsigned long)(&(dlist->descriptors[LocPtr->rxBuffIndex].addr)),(unsigned long)(&(dlist->descriptors[LocPtr->rxBuffIndex].addr)) - RAM_VA_PA_OFFSET ,sizeof(dlist->descriptors[LocPtr->rxBuffIndex].addr));
-        Chip_Flush_Memory();
+        Chip_Flush_Cache_Range((unsigned long)(&(dlist->descriptors[LocPtr->rxBuffIndex].addr)), sizeof(dlist->descriptors[LocPtr->rxBuffIndex].addr));
+
 
         //wrap after last buffer //
         LocPtr->rxBuffIndex++;
@@ -2120,9 +2316,9 @@ static int MDev_EMAC_rx (struct net_device *dev)
 
 
 #ifdef RX_ZERO_COPY
-    spin_lock_irqsave(LocPtr->lock, flags);
-	fill_rx_ring(emac_dev);
-    spin_unlock_irqrestore(LocPtr->lock, flags);
+    //spin_lock_irqsave(LocPtr->lock, flags);
+    //fill_rx_ring(emac_dev);
+    //spin_unlock_irqrestore(LocPtr->lock, flags);
 #endif
 
     if(received>max_rx_packet_count)max_rx_packet_count=received;
@@ -2154,7 +2350,7 @@ irqreturn_t MDev_EMAC_interrupt(int irq,void *dev_id)
     u32 intstatus=0;
     unsigned long flags;
 #ifdef TX_SW_QUEUE
-    int txIdleCount=0;//MDev_EMAC_GetTXFIFOIdle();
+    int txIdleCount=0;
 #endif
 #ifndef RX_ZERO_COPY
     u32 wp = 0;
@@ -2221,6 +2417,13 @@ irqreturn_t MDev_EMAC_interrupt(int irq,void *dev_id)
         if (intstatus & EMAC_INT_TCOM)
         {
             LocPtr->tx_irqcnt++;
+            if(g_emac_led_orange!=-1 && g_emac_led_green!=-1)
+            {
+                if(g_emac_led_count++ > g_emac_led_flick_speed){
+                    MDrv_GPIO_Set_High(g_emac_led_orange);
+                    g_emac_led_count=0;
+                }
+            }
 
         #ifdef TX_SOFTWARE_QUEUE
             /*Triger tx_task*/
@@ -2318,6 +2521,15 @@ irqreturn_t MDev_EMAC_interrupt(int irq,void *dev_id)
         // Receive complete //
         if(LocPtr->xReceiveFlag == 1)
         {
+            if(g_emac_led_orange!=-1 && g_emac_led_green!=-1)
+            {
+                if(g_emac_led_count++ > g_emac_led_flick_speed){
+                    MDrv_GPIO_Set_High(g_emac_led_orange);
+                    g_emac_led_count=0;
+                }
+
+            }
+
             LocPtr->xReceiveFlag = 0;
         #ifdef MSTAR_EMAC_NAPI
             /* Receive packets are processed by poll routine. If not running start it now. */
@@ -2347,9 +2559,8 @@ static void MDEV_EMAC_ENABLE_RX_REG(void)
     u32 uRegVal;
     //printk( KERN_ERR "[EMAC] %s\n" , __FUNCTION__);
 #ifndef INT_JULIAN_D
-    // disable MAC interrupts
-    uRegVal = EMAC_INT_RCOM | IER_FOR_INT_JULIAN_D;
-    MHal_EMAC_Write_IER(uRegVal);
+    // enable MAC interrupts
+    MHal_EMAC_Write_IER(EMAC_INT_RCOM);
 #else
     // enable delay interrupt
     uRegVal = MHal_EMAC_Read_JULIAN_0104();
@@ -2364,9 +2575,7 @@ static void MDEV_EMAC_DISABLE_RX_REG(void)
     u32 uRegVal;
     //printk( KERN_ERR "[EMAC] %s\n" , __FUNCTION__);
 #ifndef INT_JULIAN_D
-    // Enable MAC interrupts
-    uRegVal = EMAC_INT_RCOM | IER_FOR_INT_JULIAN_D;
-    MHal_EMAC_Write_IDR(uRegVal);
+    MHal_EMAC_Write_IDR(EMAC_INT_RCOM);
 #else
     // disable delay interrupt
     uRegVal = MHal_EMAC_Read_JULIAN_0104();
@@ -2401,6 +2610,30 @@ static int MDev_EMAC_napi_poll(struct napi_struct *napi, int budget)
 
 #endif
 
+#ifdef LAN_ESD_CARRIER_INTERRUPT
+irqreturn_t MDev_EMAC_interrupt_cable_unplug(int irq,void *dev_id)
+{
+    //printk( KERN_ERR "[EMAC] %s\n" , __FUNCTION__);
+    if (netif_carrier_ok(emac_dev))
+        netif_carrier_off(emac_dev);
+    if (!netif_queue_stopped(emac_dev))
+        netif_stop_queue(emac_dev);
+    ThisBCE.connected = 0;
+
+    #ifdef TX_SW_QUEUE
+    _MDev_EMAC_tx_reset_TX_SW_QUEUE(emac_dev);
+    #endif
+
+    if(g_emac_led_orange!=-1 && g_emac_led_green!=-1)
+    {
+        MDrv_GPIO_Set_Low(g_emac_led_orange);
+        MDrv_GPIO_Set_Low(g_emac_led_green);
+    }
+
+    return IRQ_HANDLED;
+}
+#endif
+
 //-------------------------------------------------------------------------------------------------
 // EMAC Hardware register set
 //-------------------------------------------------------------------------------------------------
@@ -2416,7 +2649,7 @@ void MDev_EMAC_HW_init(void)
 #ifdef RX_ZERO_COPY
     struct sk_buff *skb = NULL;
     u32 RBQP_rx_skb_addr = 0;
-    struct EMAC_private *LocPtr = (struct EMAC_private*) netdev_priv(emac_dev);
+//    struct EMAC_private *LocPtr = (struct EMAC_private*) netdev_priv(emac_dev);
 #endif
 #endif
 
@@ -2466,10 +2699,16 @@ void MDev_EMAC_HW_init(void)
 #ifdef RX_ZERO_COPY
     for(idxRBQP = 0; idxRBQP < RBQP_LENG; idxRBQP++)
     {
-		dequeue_rx_buffer(LocPtr, &skb);
-		if (!skb) {
-			skb = alloc_skb(SOFTWARE_DESC_LEN, GFP_ATOMIC);
+
+        //dequeue_rx_buffer(LocPtr, &skb);
+        //if (!skb) {
+        //    skb = alloc_skb(SOFTWARE_DESC_LEN, GFP_ATOMIC);
+        //}
+        if (!(skb = alloc_skb (SOFTWARE_DESC_LEN, GFP_ATOMIC))) {
+			printk("%s %d: alloc skb failed!\n",__func__, __LINE__);
+            panic("can't alloc skb");
 		}
+
         rx_skb[idxRBQP] = skb;
 
         rx_abso_addr[idxRBQP] = (u32)rx_skb[idxRBQP]->data;
@@ -2505,8 +2744,26 @@ void MDev_EMAC_HW_init(void)
 
     if (!ThisUVE.initedEMAC)
     {
+#ifdef CONFIG_EMAC_PHY_RESTART_AN
+        MHal_EMAC_write_phy(phyaddr, MII_BMCR, 0x1000UL);
+        MHal_EMAC_write_phy(phyaddr, MII_BMCR, 0x1000UL);
+        //MHal_EMAC_write_phy(phyaddr, MII_BMCR, 0x1200UL);
+#else
         MHal_EMAC_write_phy(phyaddr, MII_BMCR, 0x9000UL);
         MHal_EMAC_write_phy(phyaddr, MII_BMCR, 0x1000UL);
+#endif /* CONFIG_EMAC_PHY_RESTART_AN */
+
+#if defined (SOFTWARE_TX_FLOW_CONTROL)
+        MHal_EMAC_write_phy(phyaddr, MII_ADVERTISE, 0xDE1UL); //BIT0|BIT5~8|BIT10|BIT11 //pause disable transmit, enable receive
+#endif
+#if !defined( CONFIG_ETHERNET_ALBANY)
+        //force to set 10M on FPGA
+        MHal_EMAC_write_phy(phyaddr, MII_ADVERTISE, 0x0061UL);
+        MHal_EMAC_write_phy(phyaddr, MII_CTRL1000, 0x0000UL);
+        mdelay(10);
+        MHal_EMAC_write_phy(phyaddr, MII_BMCR, 0x1200UL);
+#endif
+
         // IMPORTANT: Run NegotiationPHY() before writing REG_ETH_CFG.
         uNegPhyVal = MHal_EMAC_NegotiationPHY();
         if(uNegPhyVal == 0x01UL)
@@ -2672,9 +2929,27 @@ static phys_addr_t MDev_EMAC_VarInit(void)
         }
     }
     ThisBCE.connected = 0;
-
+#if defined (SOFTWARE_TX_FLOW_CONTROL)
+    ThisBCE.sa2[0] = ETH_PAUSE_FRAME_DA_MAC[0];
+    ThisBCE.sa2[1] = ETH_PAUSE_FRAME_DA_MAC[1];
+    ThisBCE.sa2[2] = ETH_PAUSE_FRAME_DA_MAC[2];
+    ThisBCE.sa2[3] = ETH_PAUSE_FRAME_DA_MAC[3];
+    ThisBCE.sa2[4] = ETH_PAUSE_FRAME_DA_MAC[4];
+    ThisBCE.sa2[5] = ETH_PAUSE_FRAME_DA_MAC[5];
+#endif
     return (phys_addr_t)alloRAM_VA_BASE;
 }
+
+#ifdef CONFIG_NET_POLL_CONTROLLER
+static void MDev_EMAC_netpoll(struct net_device *dev)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	MDev_EMAC_interrupt(dev->irq, dev);
+	local_irq_restore(flags);
+}
+#endif
 
 //-------------------------------------------------------------------------------------------------
 // Initialize the ethernet interface
@@ -2691,6 +2966,10 @@ static const struct net_device_ops mstar_lan_netdev_ops = {
         .ndo_set_rx_mode        = MDev_EMAC_set_rx_mode,
         .ndo_do_ioctl           = MDev_EMAC_ioctl,
         .ndo_get_stats          = MDev_EMAC_stats,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+        .ndo_poll_controller    = MDev_EMAC_netpoll,
+#endif
+
 };
 
 static int MDev_EMAC_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
@@ -2698,13 +2977,6 @@ static int MDev_EMAC_get_settings(struct net_device *dev, struct ethtool_cmd *cm
     struct EMAC_private *LocPtr =(struct EMAC_private *) netdev_priv(dev);
 
     mii_ethtool_gset (&LocPtr->mii, cmd);
-
-	if (LocPtr->phy_media == PORT_FIBRE)
-	{
-	    //override media type since mii.c doesn't know //
-		cmd->supported = SUPPORTED_FIBRE;
-		cmd->port = PORT_FIBRE;
-	}
 
 	return 0;
 }
@@ -2764,6 +3036,7 @@ static ssize_t dlist_info_store(struct device *dev, struct device_attribute *att
     {
         max_rx_packet_count=0;
         max_tx_packet_count=0;
+        min_tx_fifo_idle_count=0xffff;
     }
     return count;
 }
@@ -2827,6 +3100,12 @@ static ssize_t info_show(struct device *dev, struct device_attribute *attr, char
 #ifdef TX_SW_QUEUE
     str += scnprintf(str, end - str, "TX_SW_QUEUE enabled, TX_SW_QUEUE_SIZE=%d\n", TX_SW_QUEUE_SIZE);
 #endif
+#ifdef NEW_TX_QUEUE_128
+    str += scnprintf(str, end - str, "NEW_TX_QUEUE_128 enabled, NEW_TX_QUEUE_SIZE=%d\n",NEW_TX_QUEUE_SIZE);
+#endif
+#ifdef NEW_TX_QUEUE_INTERRUPT_THRESHOLD
+    str += scnprintf(str, end - str, "NEW_TX_QUEUE_INTERRUPT_THRESHOLD enabled\n");
+#endif
 
 	if (str > buf)
 		str--;
@@ -2846,12 +3125,12 @@ static ssize_t tx_sw_queue_info_show(struct device *dev, struct device_attribute
 #ifdef TX_SKB_PTR
     struct EMAC_private *LocPtr = (struct EMAC_private *) netdev_priv(emac_dev);
     int idleCount=0;
+
 #if defined(TX_SW_QUEUE)
 //    unsigned long flags=0;
-
 //    spin_lock_irqsave(LocPtr->lock,flags);
-    idleCount=MDev_EMAC_GetTXFIFOIdle();
-	str += scnprintf(str, end - str, "tx_wr[%d:%d], tx_rd[%d:%d], tx_cl[%d:%d]\ntx_swq_full_cnt=%d, max_tx_packet_count=%d\n",
+
+	str += scnprintf(str, end - str, "tx_wr[%d:%d], tx_rd[%d:%d], tx_cl[%d:%d]\ntx_swq_full_cnt=%d \nmax_tx_packet_count=%d\n",
 			LocPtr->tx_wrwrp,LocPtr->tx_wridx,
 			LocPtr->tx_rdwrp,LocPtr->tx_rdidx,
 			LocPtr->tx_clwrp,LocPtr->tx_clidx,
@@ -2860,11 +3139,13 @@ static ssize_t tx_sw_queue_info_show(struct device *dev, struct device_attribute
 
 //	spin_unlock_irqrestore(LocPtr->lock,flags);
 #endif
-	str += scnprintf(str, end - str, "netif_queue_stopped=%d, TX_FIFO_IDLE=%d\nirqcnt=%d, tx_irqcnt=%d, tx_bytes_per_timerbak=%d\n",
+    idleCount=MDev_EMAC_GetTXFIFOIdle();
+	str += scnprintf(str, end - str,
+	"netif_queue_stopped=%d \n idleCount=%d \n irqcnt=%d, tx_irqcnt=%d \n tx_bytes_per_timerbak=%d \n min_tx_fifo_idle_count=%d \n LocPtr->tx_wridx=%d\n",
 			netif_queue_stopped(emac_dev),
-			idleCount,LocPtr->irqcnt,
-			LocPtr->tx_irqcnt,
-			tx_bytes_per_timerbak);
+			idleCount, LocPtr->irqcnt, LocPtr->tx_irqcnt,
+			tx_bytes_per_timerbak,
+			min_tx_fifo_idle_count, LocPtr->tx_wridx);
 #endif
 
 	if (str > buf)
@@ -2923,13 +3204,70 @@ static ssize_t check_link_timedis_show(struct device *dev, struct device_attribu
 }
 DEVICE_ATTR(check_link_timedis, 0644, check_link_timedis_show, check_link_timedis_store);
 
+static ssize_t sw_led_flick_speed_store(struct device *dev, struct device_attribute *attr,const char *buf, size_t count)
+{
+    u32 input;
+
+    input = simple_strtoul(buf, NULL, 10);
+    g_emac_led_flick_speed = input;
+    return count;
+}
+static ssize_t sw_led_flick_speed_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    return sprintf(buf, "LED flick speed, the smaller the faster\n%d\n", g_emac_led_flick_speed);
+}
+DEVICE_ATTR(sw_led_flick_speed, 0644, sw_led_flick_speed_show, sw_led_flick_speed_store);
+
+extern void MHal_EMAC_phy_trunMax(void);
+extern void MHal_EMAC_trim_phy(void);
+static ssize_t turndrv_store(struct device *dev, struct device_attribute *attr,const char *buf, size_t count)
+{
+    u32 input;
+    if(!strncmp(buf, "0",strlen("0")))
+    {
+        MHal_EMAC_trim_phy();
+        return count;
+    }
+
+    if(!strncmp(buf, "max",strlen("max")))
+    {
+        MHal_EMAC_phy_trunMax();
+        return count;
+    }
+
+    if(!strncmp(buf, "f10t",strlen("10t")))
+    {
+        //force to set 10M on FPGA
+        MHal_EMAC_write_phy(phyaddr, MII_ADVERTISE, 0x0061UL);
+        mdelay(10);
+        MHal_EMAC_write_phy(phyaddr, MII_BMCR, 0x1200UL);
+        return count;
+    }
+    if(!strncmp(buf, "an",strlen("an")))
+    {
+        //force to set 10M on FPGA
+        MHal_EMAC_write_phy(phyaddr, MII_ADVERTISE, 0x01e1UL);
+        mdelay(10);
+        MHal_EMAC_write_phy(phyaddr, MII_BMCR, 0x1200UL);
+        return count;
+    }
+
+    input = simple_strtoul(buf, NULL, 10);
+
+    return count;
+}
+static ssize_t turndrv_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    return 0;
+}
+
+DEVICE_ATTR(turndrv, 0644, turndrv_show, turndrv_store);
 
 static int MDev_EMAC_setup (struct net_device *dev, unsigned long phy_type)
 {
     struct EMAC_private *LocPtr;
     static int already_initialized = 0;
     dma_addr_t dmaaddr;
-    u32 val;
     phys_addr_t RetAddr;
 #ifdef CONFIG_MSTAR_HW_TX_CHECKSUM
     u32 retval;
@@ -2939,6 +3277,13 @@ static int MDev_EMAC_setup (struct net_device *dev, unsigned long phy_type)
         return FALSE;
 
     LocPtr = (struct EMAC_private *) netdev_priv(dev);
+    if (LocPtr == NULL)
+    {
+        free_irq (dev->irq, dev);
+        EMAC_ERR("LocPtr fail\n");
+        return -ENOMEM;
+    }
+
 #if defined ISR_BOTTOM_HALF
     /*Init tx and rx tasks*/
     INIT_WORK(&LocPtr->rx_task, MDev_EMAC_bottom_rx_task);
@@ -2955,14 +3300,7 @@ static int MDev_EMAC_setup (struct net_device *dev, unsigned long phy_type)
         return FALSE;
     }
 
-    if (LocPtr == NULL)
-    {
-        free_irq (dev->irq, dev);
-        EMAC_ERR("LocPtr fail\n");
-        return -ENOMEM;
-    }
-
-    dev->base_addr = (long) REG_ADDR_BASE;
+    dev->base_addr = (long) (EMAC_RIU_REG_BASE+REG_BANK_EMAC0*0x200);
 
     MDev_EMAC_HW_init();
 #ifdef TX_SKB_PTR
@@ -2972,11 +3310,11 @@ static int MDev_EMAC_setup (struct net_device *dev, unsigned long phy_type)
 
         for (i=0;i<TX_RING_SIZE;i++)
         {
-            LocPtr->tx_swq[LocPtr->tx_wridx].used = 0;
-            LocPtr->tx_swq[LocPtr->tx_wridx].skb = 0;
-            LocPtr->tx_swq[LocPtr->tx_wridx].skb_physaddr = 0;
+            LocPtr->tx_swq[i].used = 0;
+            LocPtr->tx_swq[i].skb = 0;
+            LocPtr->tx_swq[i].skb_physaddr = 0;
         }
-        LocPtr->tx_rdidx = 0;
+        //LocPtr->tx_rdidx = 0;
         LocPtr->tx_wridx = 0;
     }
 #endif
@@ -3021,9 +3359,6 @@ static int MDev_EMAC_setup (struct net_device *dev, unsigned long phy_type)
     MDev_EMAC_update_mac_address (dev); // Program ethernet address into MAC //
     spin_lock_irq (LocPtr->lock);
     MHal_EMAC_enable_mdi ();
-    MHal_EMAC_read_phy (phyaddr, MII_USCR_REG, &val);
-    if ((val & (1 << 10)) == 0)   // DSCR bit 10 is 0 -- fiber mode //
-        LocPtr->phy_media = PORT_FIBRE;
 
     spin_unlock_irq (LocPtr->lock);
 
@@ -3048,11 +3383,28 @@ static int MDev_EMAC_setup (struct net_device *dev, unsigned long phy_type)
     MHal_EMAC_Read_JULIAN_0108();
     #endif
 
+	emac_dev->irq = irq_of_parse_and_map(dev->dev.of_node, 0);
+    if (!emac_dev->irq)
+    {
+        EMAC_ERR("Get irq number0 error from DTS\n");
+        return -EPROBE_DEFER;
+    }
+
     //Install the interrupt handler //
     //Notes: Modify linux/kernel/irq/manage.c  /* interrupt.h */
     if (request_irq(dev->irq, MDev_EMAC_interrupt, 0/*SA_INTERRUPT*/, dev->name, dev))
         return -EBUSY;
 
+#ifdef LAN_ESD_CARRIER_INTERRUPT
+    val = irq_of_parse_and_map(dev->dev.of_node, 1);
+    if (!val)
+    {
+        EMAC_ERR("Get irq number0 error from DTS\n");
+        return -EPROBE_DEFER;
+    }
+    if (request_irq(val/*INT_FIQ_LAN_ESD+32*/, MDev_EMAC_interrupt_cable_unplug, 0/*SA_INTERRUPT*/, dev->name, dev))
+        return -EBUSY;
+#endif
     //Determine current link speed //
     spin_lock_irq (LocPtr->lock);
     (void) MDev_EMAC_update_linkspeed (dev);
@@ -3066,6 +3418,8 @@ static int MDev_EMAC_setup (struct net_device *dev, unsigned long phy_type)
     device_create_file(LocPtr->mstar_class_emac_device, &dev_attr_check_link_time);
     device_create_file(LocPtr->mstar_class_emac_device, &dev_attr_check_link_timedis);
     device_create_file(LocPtr->mstar_class_emac_device, &dev_attr_info);
+    device_create_file(LocPtr->mstar_class_emac_device, &dev_attr_sw_led_flick_speed);
+    device_create_file(LocPtr->mstar_class_emac_device, &dev_attr_turndrv);
 #if 0//ajtest
     device_create_file(LocPtr->mstar_class_emac_device, &dev_attr_ajtest_recv_count);
 #endif
@@ -3116,8 +3470,9 @@ static int MDev_EMAC_SwReset(struct net_device *dev)
     MHal_EMAC_Write_CTL(oldCTL);
     MHal_EMAC_enable_mdi ();
     MDev_EMAC_update_mac_address (dev); // Program ethernet address into MAC //
-    MDev_EMAC_update_linkspeed (dev);
-    MHal_EMAC_Write_IER(IER_FOR_INT_JULIAN_D);
+    (void)MDev_EMAC_update_linkspeed (dev);
+    MHal_EMAC_Write_IDR(0xFFFFFFFF);
+    MHal_EMAC_Write_IER(gu32intrEnable);
     MDev_EMAC_start (dev);
     MDev_EMAC_set_rx_mode(dev);
     netif_start_queue (dev);
@@ -3143,20 +3498,32 @@ static struct of_device_id mstaremac_of_device_ids[] = {
 
 static int MDev_EMAC_probe (struct net_device *dev)
 {
-    int detected = -1;
+    int detected;
     /* Read the PHY ID registers - try all addresses */
     detected = MDev_EMAC_setup(dev, MII_URANUS_ID);
     return detected;
 }
 
 //-------------------------------------------------------------------------------------------------
-// EMAC Timer set for Receive function
+// EMAC Timer to detect cable pluged/unplugged
 //-------------------------------------------------------------------------------------------------
 static void MDev_EMAC_timer_callback(unsigned long value)
 {
     int ret = 0;
     struct EMAC_private *LocPtr = (struct EMAC_private *) netdev_priv(emac_dev);
     static u32 bmsr, time_count = 0;
+
+#if defined (SOFTWARE_TX_FLOW_CONTROL)
+    if (EMAC_FLOW_CTL_TMR == value)
+    {
+        netif_wake_queue((struct net_device *)emac_dev);
+        spin_lock_irq(&emac_flow_ctl_lock);
+        eth_pause_cmd_enable = 0;
+        spin_unlock_irq(&emac_flow_ctl_lock);
+        return;
+    }
+#endif
+
 #ifndef INT_JULIAN_D
     if (EMAC_RX_TMR == value)
     {
@@ -3196,6 +3563,12 @@ static void MDev_EMAC_timer_callback(unsigned long value)
             //EMAC_ERR("connected\n");
         }
 
+        if(g_emac_led_orange!=-1 && g_emac_led_green!=-1)
+        {
+            MDrv_GPIO_Set_High(g_emac_led_orange);
+            MDrv_GPIO_Set_High(g_emac_led_green);
+        }
+
         // Link status is latched, so read twice to get current value //
         MHal_EMAC_read_phy (phyaddr, MII_BMSR, &bmsr);
         MHal_EMAC_read_phy (phyaddr, MII_BMSR, &bmsr);
@@ -3211,6 +3584,13 @@ static void MDev_EMAC_timer_callback(unsigned long value)
         if(ThisBCE.connected) {
             ThisBCE.connected = 0;
         }
+
+        if(g_emac_led_orange!=-1 && g_emac_led_green!=-1)
+        {
+            MDrv_GPIO_Set_Low(g_emac_led_orange);
+            MDrv_GPIO_Set_Low(g_emac_led_green);
+        }
+
         // If disconnected is over 3 Sec, the real value of PHY's status register will report to application.
         if(time_count > CONFIG_DISCONNECT_DELAY_S*(HZ/gu32CheckLinkTimeDis)) {
             // Link status is latched, so read twice to get current value //
@@ -3337,9 +3717,10 @@ static void MDev_EMAC_Patch_PHY(void)
 }
 
 #ifdef RX_ZERO_COPY
+/*
 static int dequeue_rx_buffer(struct EMAC_private *p, struct sk_buff **pskb)
 {
-	p->rx_next = (p->rx_next + 1) % RX_RING_SIZE;
+	//p->rx_next = (p->rx_next + 1) % RX_RING_SIZE;
 	p->rx_current_fill--;
 	*pskb = __skb_dequeue(&p->rx_list);
 
@@ -3350,7 +3731,8 @@ static int dequeue_rx_buffer(struct EMAC_private *p, struct sk_buff **pskb)
 
 static int fill_rx_ring(struct net_device *netdev)
 {
-    struct EMAC_private *p = netdev_priv(netdev);
+    struct EMAC_private0 *p = netdev_priv(netdev);
+    printk("%s :current fill:%d\n",__func__, p->rx_current_fill);
 
 	while (p->rx_current_fill < RX_RING_SIZE)
 	{
@@ -3368,8 +3750,11 @@ static int fill_rx_ring(struct net_device *netdev)
 
 //	if (unlikely(gmac_debug))
 //		GMAC_DBG("%s Current fill:%d. rx next fill:%d\n",__func__, p->rx_current_fill, p->rx_next_fill);
+    printk("%s :  RX current fill:%d\n",__func__, p->rx_current_fill);
+
 	return p->rx_current_fill;
 }
+*/
 #endif /*GMAC_RX_ZERO_COPY*/
 
 
@@ -3396,12 +3781,14 @@ static int MDev_EMAC_init(struct platform_device *pdev)
         return -ENOMEM;
     }
 #ifdef RX_ZERO_COPY
-	skb_queue_head_init(&LocPtr->rx_list);
-	LocPtr->rx_next = 0;
-	LocPtr->rx_next_fill = 0;
-	LocPtr->rx_current_fill = 0;
-
-	fill_rx_ring(emac_dev);
+	//skb_queue_head_init(&LocPtr->rx_list);
+	//LocPtr->rx_next = 0;
+	//LocPtr->rx_next_fill = 0;
+	//LocPtr->rx_current_fill = 0;
+	//fill_rx_ring(emac_dev);
+#endif
+#if defined (NEW_TX_QUEUE_128)
+    MHal_EMAC_enable_new_TXQUEUE();
 #endif
 
 #if TX_THROUGHPUT_TEST
@@ -3421,7 +3808,7 @@ static int MDev_EMAC_init(struct platform_device *pdev)
     add_timer(&RX_timer);
 #endif
 
-    MHal_EMAC_Power_On_Clk(pdev->dev);
+    MHal_EMAC_Power_On_Clk(&pdev->dev);
 
     init_timer(&EMAC_timer);
     init_timer(&Link_timer);
@@ -3429,8 +3816,17 @@ static int MDev_EMAC_init(struct platform_device *pdev)
     EMAC_timer.data = EMAC_RX_TMR;
     EMAC_timer.function = MDev_EMAC_timer_callback;
     EMAC_timer.expires = jiffies;
+#if defined (SOFTWARE_TX_FLOW_CONTROL)
+    spin_lock_init (&emac_flow_ctl_lock);
+    spin_lock_irq(&emac_flow_ctl_lock);
+    eth_pause_cmd_enable = 0;
+    spin_unlock_irq(&emac_flow_ctl_lock);
 
-
+    init_timer(&EMAC_flow_ctl_timer);
+    EMAC_flow_ctl_timer.data = EMAC_FLOW_CTL_TMR;
+    EMAC_flow_ctl_timer.expires = jiffies;
+    EMAC_flow_ctl_timer.function = MDev_EMAC_timer_callback;  /* timer handler */
+#endif
     MHal_EMAC_Write_JULIAN_0100(JULIAN_100_VAL);
 
     if (0 > MDev_EMAC_ScanPhyAddr())
@@ -3438,17 +3834,11 @@ static int MDev_EMAC_init(struct platform_device *pdev)
 
     MDev_EMAC_Patch_PHY();
 
-    emac_dev->dev.of_node = pdev->dev.of_node;
-
-	emac_dev->irq = irq_of_parse_and_map(pdev->dev.of_node, 0);
-    if (!emac_dev->irq)
-    {
-        return -EPROBE_DEFER;
-    }
-
 #ifdef MSTAR_EMAC_NAPI
         netif_napi_add(emac_dev, &LocPtr->napi, MDev_EMAC_napi_poll, EMAC_NAPI_WEIGHT);
 #endif
+
+    emac_dev->dev.of_node = pdev->dev.of_node; //pass of_node to MDev_EMAC_setup()
 
     if (MDev_EMAC_probe (emac_dev))
         return -1;
@@ -3484,6 +3874,9 @@ static void MDev_EMAC_exit(void)
         unregister_netdev(emac_dev);
         free_netdev(emac_dev);
     }
+#if defined (SOFTWARE_TX_FLOW_CONTROL)
+    del_timer(&EMAC_flow_ctl_timer);
+#endif
 }
 
 static int mstar_emac_drv_suspend(struct platform_device *dev, pm_message_t state)
@@ -3507,6 +3900,11 @@ static int mstar_emac_drv_suspend(struct platform_device *dev, pm_message_t stat
 
     //MHal_EMAC_Power_On_Clk(dev->dev);
 
+    //corresponds with resume call MDev_EMAC_open
+#ifdef MSTAR_EMAC_NAPI
+    napi_disable(&LocPtr->napi);
+#endif
+
     //Disable Receiver and Transmitter //
     uRegVal = MHal_EMAC_Read_CTL();
     uRegVal &= ~(EMAC_TE | EMAC_RE);
@@ -3519,16 +3917,12 @@ static int mstar_emac_drv_suspend(struct platform_device *dev, pm_message_t stat
 
     // Disable PHY interrupt //
     MHal_EMAC_disable_phyirq ();
-#ifndef INT_JULIAN_D
-    //Disable MAC interrupts //
-    uRegVal = EMAC_INT_RCOM | IER_FOR_INT_JULIAN_D;
-    MHal_EMAC_Write_IDR(uRegVal);
-#else
-    MHal_EMAC_Write_IDR(IER_FOR_INT_JULIAN_D);
-#endif
+
+    MHal_EMAC_Write_IDR(0xFFFFFFFF);
+
 
     MDev_EMAC_SwReset(netdev);
-    MHal_EMAC_Power_Off_Clk(dev->dev);
+    MHal_EMAC_Power_Off_Clk(&dev->dev);
 #if defined(TX_SKB_PTR)
 #ifdef TX_SW_QUEUE
     _MDev_EMAC_tx_reset_TX_SW_QUEUE(netdev);
@@ -3542,7 +3936,7 @@ static int mstar_emac_drv_resume(struct platform_device *dev)
 {
     struct net_device *netdev=(struct net_device*)dev->dev.platform_data;
     struct EMAC_private *LocPtr;
-    u32 retval;
+
 #ifndef RX_ZERO_COPY
     phys_addr_t alloRAM_PA_BASE;
     phys_addr_t alloRAM_SIZE;
@@ -3557,7 +3951,7 @@ static int mstar_emac_drv_resume(struct platform_device *dev)
     LocPtr = (struct EMAC_private*) netdev_priv(netdev);;
     LocPtr->ep_flag &= ~EP_FLAG_SUSPENDING;
 
-    MHal_EMAC_Power_On_Clk(dev->dev);
+    MHal_EMAC_Power_On_Clk(&dev->dev);
 
     MHal_EMAC_Write_JULIAN_0100(JULIAN_100_VAL);
 
@@ -3586,9 +3980,6 @@ static int mstar_emac_drv_resume(struct platform_device *dev)
     MDev_EMAC_update_mac_address (netdev); // Program ethernet address into MAC //
     spin_lock_irq (LocPtr->lock);
     MHal_EMAC_enable_mdi ();
-    MHal_EMAC_read_phy (phyaddr, MII_USCR_REG, &retval);
-    if ((retval & (1 << 10)) == 0)   // DSCR bit 10 is 0 -- fiber mode //
-        LocPtr->phy_media = PORT_FIBRE;
 
     spin_unlock_irq (LocPtr->lock);
 
@@ -3612,18 +4003,44 @@ static int mstar_emac_drv_resume(struct platform_device *dev)
 static int mstar_emac_drv_probe(struct platform_device *pdev)
 {
     int retval=0;
+    unsigned int led_data;
 
     if( !(pdev->name) || strcmp(pdev->name,"Mstar-emac")
         || pdev->id!=0)
     {
         retval = -ENXIO;
     }
+
     retval = MDev_EMAC_init(pdev);
     if(!retval)
     {
         pdev->dev.platform_data=emac_dev;
     }
-	return retval;
+
+
+    if(!of_property_read_u32(pdev->dev.of_node, "led-orange", &led_data))
+    {
+        g_emac_led_orange = (unsigned char)led_data;
+        printk(KERN_ERR "[EMAC]Set emac_led_orange=%d\n",led_data);
+    }
+
+    if(!of_property_read_u32(pdev->dev.of_node, "led-green", &led_data))
+    {
+         g_emac_led_green = (unsigned char)led_data;
+         printk(KERN_ERR "[EMAC]Set emac_led_green=%d\n",led_data);
+    }
+
+    if(g_emac_led_orange!=-1)
+    {
+        MDrv_GPIO_Pad_Set(g_emac_led_orange);
+    }
+    if(g_emac_led_green!=-1)
+    {
+        MDrv_GPIO_Pad_Set(g_emac_led_green);
+    }
+
+
+    return retval;
 }
 
 static int mstar_emac_drv_remove(struct platform_device *pdev)
@@ -3634,7 +4051,7 @@ static int mstar_emac_drv_remove(struct platform_device *pdev)
         return -1;
     }
     MDev_EMAC_exit();
-    MHal_EMAC_Power_Off_Clk(pdev->dev);
+    MHal_EMAC_Power_Off_Clk(&pdev->dev);
 
     pdev->dev.platform_data=NULL;
     return 0;
@@ -3665,7 +4082,6 @@ static int __init mstar_emac_drv_init_module(void)
 
     emac_dev=NULL;
     retval = platform_driver_register(&Mstar_emac_driver);
-
     if (retval)
     {
         printk(KERN_INFO"Mstar_emac_driver register failed...\n");

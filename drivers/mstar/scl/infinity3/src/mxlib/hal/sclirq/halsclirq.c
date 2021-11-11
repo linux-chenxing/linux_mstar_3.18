@@ -94,9 +94,9 @@
 #define HAL_SCLIRQ_C
 
 #ifdef MSOS_TYPE_LINUX_KERNEL
-#include <linux/wait.h>
-#include <linux/irqreturn.h>
-#include <asm/div64.h>
+//#include <linux/wait.h>
+//#include <linux/irqreturn.h>
+//#include <asm/div64.h>
 #endif
 
 //-------------------------------------------------------------------------------------------------
@@ -111,6 +111,7 @@
 #include "halsclirq_utility.h"
 #include "drvsclirq_st.h"
 #include "halsclirq.h"
+#include "mdrv_scl_dbg.h"
 //-------------------------------------------------------------------------------------------------
 //  Driver Compiler Options
 //-------------------------------------------------------------------------------------------------
@@ -125,6 +126,7 @@
 //  Variable
 
 MS_U32 SCLIRQ_RIU_BASE = 0;
+MS_BOOL gblockdnr = 0;
 
 
 //-------------------------------------------------------------------------------------------------
@@ -165,9 +167,9 @@ MS_U64 Hal_SCLIRQ_Get_Flag(EN_SCLIRQ_SCTOP_TYPE enType, MS_U64 u64IRQ)
         u64Flag |= (MS_U64)(R4BYTE(u32Bank) & u32Mask);
     }
 
-    if(u64IRQ & 0x000000FF00000000)
+    if(u64IRQ & 0x0000FFFF00000000)
     {
-        u16Mask =  (MS_U16)((u64IRQ & 0x000000FF00000000)>>32);
+        u16Mask =  (MS_U16)((u64IRQ & 0x0000FFFF00000000)>>32);
         u64Flag |= (((MS_U64)(R2BYTE(u32Bank+4) & u16Mask))<<32);
 
     }
@@ -214,11 +216,36 @@ void Hal_SCLIRQ_Set_Clear(EN_SCLIRQ_SCTOP_TYPE enType, MS_U64 u64IRQ, MS_BOOL bE
         W2BYTEMSK(u32Bank+2, bEn ? u16Mask : 0, u16Mask);
     }
 
-    if(u64IRQ & 0xFF00000000)
+    if(u64IRQ & 0xFFFF00000000)
     {
-        u16Mask =  (MS_U16)((u64IRQ & 0xFF00000000)>>32);
+        u16Mask =  (MS_U16)((u64IRQ & 0xFFFF00000000)>>32);
         W2BYTEMSK(u32Bank+4, bEn ? u16Mask : 0, u16Mask);
     }
+}
+MS_U16 Hal_SCLIRQ_Get_RegVal(MS_U32 u32Reg)
+{
+    return R2BYTE(u32Reg);
+}
+void Hal_SCLIRQ_Set_Reg(MS_U32 u32Reg,MS_U16 u16Val,MS_U16 u16Mask)
+{
+    W2BYTEMSK(u32Reg,u16Val,u16Mask);
+}
+void Hal_SCLIRQ_SetDNRBypass(MS_BOOL bEn)
+{
+    static MS_U16 u16open = 0;
+    if(bEn)
+    {
+        u16open = R2BYTE(REG_VIP_MCNR_01_L);
+    }
+    if(!gblockdnr)
+    {
+        SCL_DBG(SCL_DBG_LV_DRVSCLIRQ()&EN_DBGMG_SCLIRQLEVEL_ELSE, "[SCLIRQ]DNR bypass:%hhd\n", bEn);
+        W2BYTEMSK(REG_VIP_MCNR_01_L, bEn ? 0 : u16open, BIT1|BIT2);//IOenable
+    }
+}
+void Hal_SCLIRQ_SetDNRLock(MS_BOOL bEn)
+{
+    gblockdnr = bEn;
 }
 
 void Hal_SCLIRQ_Set_Mask(EN_SCLIRQ_SCTOP_TYPE enType, MS_U64 u64IRQ, MS_BOOL bMask)
@@ -229,7 +256,7 @@ void Hal_SCLIRQ_Set_Mask(EN_SCLIRQ_SCTOP_TYPE enType, MS_U64 u64IRQ, MS_BOOL bMa
     switch(enType)
     {
         case EN_SCLIRQ_SCTOP_0:
-            u32Bank = REG_SCL0_10_L;
+            u32Bank = REG_SCL0_08_L;
             break;
 
         case EN_SCLIRQ_SCTOP_1:
@@ -240,7 +267,7 @@ void Hal_SCLIRQ_Set_Mask(EN_SCLIRQ_SCTOP_TYPE enType, MS_U64 u64IRQ, MS_BOOL bMa
             u32Bank = REG_SCL0_54_L;
             break;
         default:
-            u32Bank = REG_SCL0_10_L;
+            u32Bank = REG_SCL0_08_L;
             break;
     }
     if(u64IRQ & 0x0000FFFF)
@@ -257,9 +284,9 @@ void Hal_SCLIRQ_Set_Mask(EN_SCLIRQ_SCTOP_TYPE enType, MS_U64 u64IRQ, MS_BOOL bMa
         W2BYTEMSK(u32Bank+2, u16val, u16Mask);
     }
 
-    if(u64IRQ & 0xFF00000000)
+    if(u64IRQ & 0xFFFF00000000)
     {
-        u16Mask =  (MS_U16)((u64IRQ & 0xFF00000000)>>32);
+        u16Mask =  (MS_U16)((u64IRQ & 0xFFFF00000000)>>32);
         u16val = bMask ? u16Mask : 0;
         W2BYTEMSK(u32Bank+4, u16val, u16Mask);
     }

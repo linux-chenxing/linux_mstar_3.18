@@ -53,6 +53,7 @@ extern void MHal_GPIO_Pull_Low(U8 u8IndexGPIO);
 extern void MHal_GPIO_Set_High(U8 u8IndexGPIO);
 extern void MHal_GPIO_Set_Low(U8 u8IndexGPIO);
 extern void MHal_Enable_GPIO_INT(U8 u8IndexGPIO);
+extern int MHal_GPIO_To_Irq(U8 u8IndexGPIO);
 extern void MHal_GPIO_Set_POLARITY(U8 u8IndexGPIO,U8 reverse);
 extern void MHal_GPIO_PAD_32K_OUT(U8 u8Enable);
 

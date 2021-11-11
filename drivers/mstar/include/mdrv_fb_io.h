@@ -132,6 +132,36 @@
 */
 #define IOCTL_FB_SETGENERALCONFIG   _IO(G3D_IOC_MAGIC_INFINITY,35)
 
+/**
+* Used to set gop's inverse color, enable or disable, using type is unsigned char.
+*/
+#define IOCTL_FB_SETENABLEINVCOLOR  _IO(G3D_IOC_MAGIC_INFINITY,36)
+
+/**
+* Used to set AE configurations, using type is FB_GOP_INVCOLOR_AE_CONFIG.
+*/
+#define IOCTL_FB_SETAECONFIG        _IO(G3D_IOC_MAGIC_INFINITY,37)
+
+/**
+* Used to set Y threshlod to do inverse color, using type is unsigned long.
+*/
+#define IOCTL_FB_SETYTHRES          _IO(G3D_IOC_MAGIC_INFINITY,38)
+
+/**
+* Used to set Scaler configurations, using type is FB_GOP_INVCOLOR_SCALER_CONFIG.
+*/
+#define IOCTL_FB_SETSCALERCONFIG    _IO(G3D_IOC_MAGIC_INFINITY,39)
+
+/**
+* Used to trigger driver to update AE information from ISP driver and return value to user, using type is FB_GOP_INVCOLOR_AE_CONFIG.
+*/
+#define IOCTL_FB_AUTOUPDATEAE       _IO(G3D_IOC_MAGIC_INFINITY,40)
+
+/**
+* Used to set sw inverse table, using type is FB_GOP_SW_INV_TABLE.
+*/
+#define IOCTL_FB_SWINVTABLE       _IO(G3D_IOC_MAGIC_INFINITY,41)
+
 
 #endif //MDRV_FB_IO_H
 

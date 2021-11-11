@@ -36,6 +36,7 @@ void GOP_Pan_Display(int Screen, U32  FB_Start_Addr )
     U16 MIU_BUS      = MIU_BUS_ALIGN;
     U32 GOP_Reg_Base = 0;
     U16 GOP_Reg_DB   = 0;
+    int wait_count   = 0;
 
     // 1. Pan display works by changing framebuffer start address
 
@@ -74,6 +75,16 @@ void GOP_Pan_Display(int Screen, U32  FB_Start_Addr )
     OUTREGMSK16(GOP_Reg_Base+REG_GOP_7F, 0, GOP_BANK_DOUBLE_WR_MSK);
     OUTREGMSK16(GOP_Reg_Base+REG_GOP_7F, GOP_Reg_DB, (GOP_BANK_DOUBLE_WR_MSK|GOP_BANK_SEL_MSK));
     OUTREGMSK16(GOP_Reg_Base+REG_GOP_7F, 0, GOP_BANK_DOUBLE_WR_MSK);
+
+    while((INREGMSK16(GOP_Reg_Base+REG_GOP_7F, GOP_BANK_GOP0_WR_ACK_MSK)!=0))//wait double buffer write ack
+    {
+        wait_count++;
+        msleep(3);
+        if(wait_count>10)
+        {
+            break;
+        }
+    }
 
     GOPDBG ("[GOP]%s: out \n",__func__);
 }
@@ -206,6 +217,135 @@ void GOP_Setmode(
 
 }
 
+void GOP_Setmode_Stretch_H(
+    int bResume, int Screen,
+    int Panel_Width,int  Panel_Height,U32  FB_Start_Addr,
+    U32 Pixel_Format,U16 Bytes_Per_Pixel, int bInterlaceOut, int StretchRatio)
+{
+    U32 FB_add    = FB_Start_Addr;
+    U16 FB_WIDTH  = Panel_Width;
+    U16 FB_HEIGHT = Panel_Height;
+    U16 FB_Bytes_Per_Pixel   = Bytes_Per_Pixel;
+    U16 u16FrameBuffer_HSize = FB_WIDTH;
+    U16 u16FrameBuffer_VSize = FB_HEIGHT;
+    U16 u16FrameBuffer_Bytes_Per_Pixel = FB_Bytes_Per_Pixel;
+    U16 u16DispImage_HStart = 0;
+    U16 u16DispImage_HSize  = FB_WIDTH;
+    U16 u16DispImage_HEnd   = u16DispImage_HStart+u16DispImage_HSize;
+    U16 u16DispImage_VStart = 0;
+    U16 u16DispImage_VSize  = FB_HEIGHT;
+    U16 u16DispImage_VEnd   = u16DispImage_VStart+u16DispImage_VSize;
+    U32 s32BuffAddr    = 0;
+    U32 u32TempVal     = 0;
+    U32 GOP_Reg_Base   = 0;
+    U16 GOP_Reg_DB     = 0;
+    U16 MIU_BUS        = MIU_BUS_ALIGN;
+    U16 DISPLAY_Format = Pixel_Format;
+
+    // 1. GOP Hardware initial
+    // 2. GOP fetch framebuffer information
+    // 3. GOP Display Setting
+    // 4. Set Stretch Ratio for GOP Display
+
+
+    //GOPDBG ("GOP_Setmode Screen is %x.\r\n",Screen);
+    GOPDBG ("[GOP]%s: FB_Width    = [%d]\n",__func__,FB_WIDTH);
+    GOPDBG ("[GOP]%s: FB_Height   = [%d]\n",__func__,FB_HEIGHT);
+    GOPDBG ("[GOP]%s: FB_addr     = [0x%x]\n",__func__,FB_add);
+    GOPDBG ("[GOP]%s: FB_Format   = [%s]\n",__func__,PARSING_FB_FORMAT(DISPLAY_Format));
+    GOPDBG ("[GOP]%s: FB_BPP      = [%d]\n",__func__,FB_Bytes_Per_Pixel);
+    GOPDBG ("[GOP]%s: FB_StrRatio = [%x]\n",__func__,StretchRatio);
+
+    FB_add = (U32)Chip_Phys_to_MIU(FB_add);//map physical address to MIU address
+
+    /// GOP0_0 settings
+    GOP_Reg_DB = GOP_BANK_DOUBLE_WR_G0;
+    GOP_Reg_Base = mdrv_BASE_REG_GOP00_PA;
+
+    // GOP global settings
+    OUTREG16(GOP_Reg_Base+REG_GOP_00,GOP_SOFT_RESET|GOP_FIELD_INV);//reset
+    OUTREG16(GOP_Reg_Base+REG_GOP_00,GWIN_display_mode_progress|GOP_HS_MASK|GOP_ALPHA_INV|GOP_YUVOUT);//set Progress mode; mask Hsync; alpha inverse; YUV output
+    OUTREG16(GOP_Reg_Base+REG_GOP_01,GOP_REGDMA_INTERVAL_START|GOP_REGDMA_INTERVAL_END);
+    OUTREG16(GOP_Reg_Base+REG_GOP_02,GOP_BLINK_DISABLE);//close blink
+    OUTREG16(GOP_Reg_Base+REG_GOP_0A,0x0010);//insert fake rdy between hs & valid rdy
+    OUTREG16(GOP_Reg_Base+REG_GOP_0E,(Panel_Width >>1)+1);//miu efficiency = Stretch Window H size (unit:2 pixel) /2 +1
+    OUTREG16(GOP_Reg_Base+REG_GOP_0F,GOP_HSYNC_PIPE_DLY); //Hsync input pipe delay
+    OUTREGMSK16(GOP_Reg_Base+REG_GOP_19, GOP_BURST_LENGTH_MASK, GOP_BURST_LENGTH_MAX);// set gop dma burst length
+
+    // GOP display area global settings
+    OUTREG16(GOP_Reg_Base+REG_GOP_30,Panel_Width >>1); // Stretch Window H size (unit:2 pixel)
+    OUTREG16(GOP_Reg_Base+REG_GOP_31,Panel_Height);    // Stretch window V size
+    OUTREG16(GOP_Reg_Base+REG_GOP_32,GOP_STRETCH_HST); // Stretch Window H coordinate
+    OUTREG16(GOP_Reg_Base+REG_GOP_34,GOP_STRETCH_VST); // Stretch Window V coordinate
+    OUTREG16(GOP_Reg_Base+REG_GOP_35,GOP_STRETCH_HRATIO/StretchRatio); // Stretch H ratio, val=0x1000/StretchRatio
+    OUTREG16(GOP_Reg_Base+REG_GOP_36,GOP_STRETCH_VRATIO); // Stretch V ratio
+    OUTREG16(GOP_Reg_Base+REG_GOP_38,GOP_STRETCH_HINI); // Stretch H start value
+    OUTREG16(GOP_Reg_Base+REG_GOP_39,GOP_STRETCH_VINI); // Stretch V start value
+
+
+    /// GOP0_1 settings
+    GOP_Reg_Base = mdrv_BASE_REG_GOP01_PA;
+
+    // switch to subbank01 if there's no direct bank
+    if(mdrv_BASE_REG_GOP01_PA==mdrv_BASE_REG_GOP00_PA)
+    {
+        SwitchSubBank(1);
+    }
+
+    // gwin global settings
+    OUTREG16(GOP_Reg_Base+REG_GOP_00,DISPLAY_Format|GOP0_GWin0_Enable|GOP_PIXEL_ALPHA_EN);//set gop format; enable gwin; alpha mode initial
+
+
+    // framebuffer settings
+    // framebuffer starting address
+    s32BuffAddr = FB_add;
+    s32BuffAddr = s32BuffAddr&0xFFFFFFFF;
+    s32BuffAddr = s32BuffAddr>>MIU_BUS; // 128-bit unit = 16 bytes
+    OUTREG16(GOP_Reg_Base+REG_GOP_01,(s32BuffAddr&0xFFFF));
+    s32BuffAddr=s32BuffAddr>>0x10;
+    OUTREG16(GOP_Reg_Base+REG_GOP_02,(s32BuffAddr&0xFFFF));
+
+    // framebuffer pitch
+    OUTREG16(GOP_Reg_Base+REG_GOP_09,(u16FrameBuffer_HSize*u16FrameBuffer_Bytes_Per_Pixel)>>MIU_BUS);//bytes per line for gop framebuffer
+
+    // framebuffer size
+    u32TempVal=(u16FrameBuffer_HSize*u16FrameBuffer_VSize*u16FrameBuffer_Bytes_Per_Pixel)>>MIU_BUS;
+    OUTREG16(GOP_Reg_Base+REG_GOP_10,u32TempVal&0xFFFF);
+    u32TempVal=u32TempVal>>0x10;
+    OUTREG16(GOP_Reg_Base+REG_GOP_11,u32TempVal);
+
+    // framebuffer V start offset  (line)
+    OUTREG16(GOP_Reg_Base+REG_GOP_0C,0);
+    OUTREG16(GOP_Reg_Base+REG_GOP_0D,0);
+
+    // framebuffer H start offset  (pixel)
+    OUTREG16(GOP_Reg_Base+REG_GOP_0E,0);
+
+
+    // GOP display settings
+    // GWIN display area in panel : : H start postion and end information
+    u32TempVal=(u16DispImage_HStart*u16FrameBuffer_Bytes_Per_Pixel)>>MIU_BUS;
+    OUTREG16(GOP_Reg_Base+REG_GOP_04,u32TempVal); // H start
+    u32TempVal=(u16DispImage_HEnd*u16FrameBuffer_Bytes_Per_Pixel)>>MIU_BUS;
+    OUTREG16(GOP_Reg_Base+REG_GOP_05,u32TempVal); // H end
+
+    // GWIN  display area in panel : V start postion and end information
+    OUTREG16(GOP_Reg_Base+REG_GOP_06,u16DispImage_VStart); // V start line
+    OUTREG16(GOP_Reg_Base+REG_GOP_08,u16DispImage_VEnd); // V end line
+
+
+    // switch back to subbank00 if there's no direct bank
+    if(mdrv_BASE_REG_GOP01_PA==mdrv_BASE_REG_GOP00_PA)
+    {
+        SwitchSubBank(0);
+    }
+
+    // Double Buffer Write
+    OUTREGMSK16(GOP_Reg_Base+REG_GOP_7F, 0, GOP_BANK_DOUBLE_WR_MSK);
+    OUTREGMSK16(GOP_Reg_Base+REG_GOP_7F, GOP_Reg_DB, (GOP_BANK_DOUBLE_WR_MSK|GOP_BANK_SEL_MSK));
+    OUTREGMSK16(GOP_Reg_Base+REG_GOP_7F, 0, GOP_BANK_DOUBLE_WR_MSK);
+
+}
 
 
 void GOP_Set_OutFormat(int screen, int byuvoutput)
@@ -308,7 +448,7 @@ void GOP_Set_Color_Key(int screen, int bEn, int u8R, int u8G, int u8B)
     if(bEn)
     {
         OUTREGMSK16(GOP_Reg_Base+REG_GOP_00, GOP_RGB_TRANSPARENT_COLOR_ENABLE, GOP_RGB_TRANSPARENT_COLOR_MASK);
-        OUTREGMSK16(GOP_Reg_Base+REG_GOP_24, (u8B|(u8G<<8)), 0xFFFF);
+        OUTREG16(GOP_Reg_Base+REG_GOP_24, (u8B|(u8G<<8)));
         OUTREGMSK16(GOP_Reg_Base+REG_GOP_25,  u8R, 0x00FF);
     }
     else
@@ -533,7 +673,6 @@ void GOP_Set_Enable_GWIN(int screen, unsigned char bEn)
 void GOP_Get_Enable_GWIN(int screen, unsigned char *bEn)
 {
     unsigned long GOP_Reg_Base = 0;
-    unsigned char enGOP        = 0;
 
     // 1. GOP Get GWIN Enable/Disable
 
@@ -549,12 +688,10 @@ void GOP_Get_Enable_GWIN(int screen, unsigned char *bEn)
     if(INREGMSK16(GOP_Reg_Base+REG_GOP_00, GOP0_GWin0_Enable))
     {
         *bEn  = 1;
-        enGOP = 1;
     }
     else
     {
         *bEn  = 0;
-        enGOP = 0;
     }
 
     // switch back to subbank00 if there's no direct bank

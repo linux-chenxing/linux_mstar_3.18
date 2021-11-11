@@ -56,7 +56,11 @@
 #include <linux/of_device.h>
 #include <asm/io.h>
 #include <linux/clk-provider.h>
+#include <linux/mutex.h>
+#include <linux/spinlock.h>
 //#include "mst_devid.h"
+#include <linux/dma-mapping.h>
+#include <linux/dmapool.h>
 
 #include "ms_iic.h"
 #include "mhal_iic_reg.h"
@@ -69,7 +73,6 @@
 // Local defines & local structures
 ////////////////////////////////////////////////////////////////////////////////
 //define hwi2c ports
-#define HWI2C_PORTM                   4 //maximum support ports
 #define HWI2C_PORTS                   HAL_HWI2C_PORTS
 #define HWI2C_PORT0                   HAL_HWI2C_PORT0
 #define HWI2C_PORT1                   HAL_HWI2C_PORT1
@@ -78,6 +81,9 @@
 #define HWI2C_STARTDLY                5 //us
 #define HWI2C_STOPDLY                 5 //us
 //define mutex
+static DEFINE_MUTEX(i2cMutex);
+I2C_DMA HWI2C_DMA[HWI2C_PORTM];
+
 #define HWI2C_MUTEX_CREATE(_P_)          //g_s32HWI2CMutex[_P_] = MsOS_CreateMutex(E_MSOS_FIFO, (char*)gu8HWI2CMutexName[_P_] , MSOS_PROCESS_SHARED)
 #define HWI2C_MUTEX_LOCK(_P_)            //OS_OBTAIN_MUTEX(g_s32HWI2CMutex[_P_],MSOS_WAIT_FOREVER)
 #define HWI2C_MUTEX_UNLOCK(_P_)          //OS_RELEASE_MUTEX(g_s32HWI2CMutex[_P_])
@@ -129,17 +135,18 @@ struct mstar_i2c_dev {
 	u32 bus_clk_rate;
 	bool is_suspended;
 	int i2cgroup;
+	int i2cpadmux;
 };
 
 static BOOL _gbInit = FALSE;
 //static HWI2C_DbgLv _geDbgLv = E_HWI2C_DBGLV_ERR_ONLY;
 static HWI2C_State _geState = E_HWI2C_IDLE;
-static U32 g_u32StartDelay = HWI2C_STARTDLY, g_u32StopDelay = HWI2C_STOPDLY; 
+static U32 g_u32StartDelay = HWI2C_STARTDLY, g_u32StopDelay = HWI2C_STOPDLY;
 static HWI2C_ReadMode g_HWI2CReadMode[HWI2C_PORTS];
-static HWI2C_PORT g_HWI2CPort[HWI2C_PORTS];
+//static HWI2C_PORT g_HWI2CPort[HWI2C_PORTS];
 static U16 g_u16DelayFactor[HWI2C_PORTS];
 static BOOL g_bDMAEnable[HWI2C_PORTS];
-static U8 g_HWI2CPortIdx = HWI2C_PORT0;
+//static U8 g_HWI2CPortIdx = HWI2C_PORT0;
 ////////////////////////////////////////////////////////////////////////////////
 // Local Function
 ////////////////////////////////////////////////////////////////////////////////
@@ -198,11 +205,10 @@ BOOL _MDrv_HWI2C_GetPortRegOffset(U8 u8Port, U16 *pu16Offset)
 
     if(u8Port>=HWI2C_PORTS)
     {
-        HWI2C_DBG_ERR("Port index is >= max supported ports %d !\n",HWI2C_PORTS);
+        HWI2C_DBG_ERR("Port index is %d >= max supported ports %d !\n", u8Port, HWI2C_PORTS);
         return FALSE;
     }
-    HWI2C_DBG_INFO("g_HWI2CPort[%d] = 0x%02X\n", u8Port, (U8)g_HWI2CPort[u8Port]);
-    return HAL_HWI2C_SetPortRegOffset((HAL_HWI2C_PORT)g_HWI2CPort[u8Port],pu16Offset);
+    return HAL_HWI2C_SetPortRegOffset(u8Port,pu16Offset);
 }
 
 BOOL _MDrv_HWI2C_ReadBytes(U8 u8Port, U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAddr, U32 uSize, U8 *pData)
@@ -225,7 +231,7 @@ BOOL _MDrv_HWI2C_ReadBytes(U8 u8Port, U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAdd
     //check support port index
     if(u8Port>=HWI2C_PORTS)
     {
-        HWI2C_DBG_ERR("Port index is >= max supported ports %d !\n",HWI2C_PORTS);
+        HWI2C_DBG_ERR("Port index is %d >= max supported ports %d !\n", u8Port, HWI2C_PORTS);
         return FALSE;
     }
     //no meaning operation
@@ -236,12 +242,12 @@ BOOL _MDrv_HWI2C_ReadBytes(U8 u8Port, U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAdd
     }
 
     //configure port register offset ==> important
-/*    if(!_MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset))
+    if(!_MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset))
     {
         HWI2C_DBG_ERR("Port index error!\n");
         return FALSE;
     }
-*/
+
     if(g_bDMAEnable[u8Port])
     {
         _geState = E_HWI2C_DMA_READ_DATA;
@@ -253,11 +259,11 @@ BOOL _MDrv_HWI2C_ReadBytes(U8 u8Port, U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAdd
     pRegAddrBkp = pRegAddr;
     uSizeBkp = uSize;
     pDataBkp = pData;
-	
+
     while (u16Dummy--)
     {
         if((g_HWI2CReadMode[u8Port]!=E_HWI2C_READ_MODE_DIRECT) && (uAddrCnt>0)&& (pRegAddr))
-        {	
+        {
             HAL_HWI2C_Start(u16Offset);
             //add extral delay by user configuration
             MsOS_DelayTaskUs(g_u32StartDelay);
@@ -336,7 +342,7 @@ BOOL _MDrv_HWI2C_WriteBytes(U8 u8Port, U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAd
 {
     U8 u8SlaveID = LOW_BYTE(u16SlaveCfg);
     U16 u16Offset = 0x00;
-    
+
     U16 u16Dummy = I2C_ACCESS_DUMMY_TIME; // loop dummy
     BOOL bComplete = FALSE;
     U32 uAddrCntBkp,uSizeBkp;
@@ -353,7 +359,7 @@ BOOL _MDrv_HWI2C_WriteBytes(U8 u8Port, U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAd
     //check support port index
     if(u8Port>=HWI2C_PORTS)
     {
-        HWI2C_DBG_ERR("Port index is >= max supported ports %d !\n",HWI2C_PORTS);
+        HWI2C_DBG_ERR("Port index is %d >= max supported ports %d !\n", u8Port, HWI2C_PORTS);
         return FALSE;
     }
     //no meaning operation
@@ -364,12 +370,12 @@ BOOL _MDrv_HWI2C_WriteBytes(U8 u8Port, U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAd
     }
 
     //configure port register offset ==> important
-/*    if(!_MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset))
+    if(!_MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset))
     {
         HWI2C_DBG_ERR("Port index error!\n");
         return FALSE;
     }
-*/
+
     if(g_bDMAEnable[u8Port])
     {
         _geState = E_HWI2C_DMA_WRITE_DATA;
@@ -431,18 +437,23 @@ BOOL _MDrv_HWI2C_WriteBytes(U8 u8Port, U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAd
     return bComplete;
 }
 
-static BOOL _MDrv_HWI2C_SelectPort(int ePort)
+static BOOL _MDrv_HWI2C_SelectPort(HWI2C_PORT ePort)
 {
     U16 u16Offset = 0x00;
+    U8 u8Port = 0x00;
     BOOL bRet=TRUE;
-    
+
     HWI2C_DBG_FUNC();
 
-    //(2) Set pad mux for port number 
-    HAL_HWI2C_SelectPort(ePort);
+    //(1) Get port index by port number
+    if(!HAL_HWI2C_GetPortIdxByPort((HAL_HWI2C_PORT)ePort,&u8Port))
+        return FALSE;
+
+    //(2) Set pad mux for port number
+    bRet &= HAL_HWI2C_SelectPort((HAL_HWI2C_PORT)ePort);
 
     //(3) configure port register offset ==> important
-   // bRet &= _MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset);
+    bRet &= _MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset);
 
     //(4) master init
     bRet &= HAL_HWI2C_Master_Enable(u16Offset);
@@ -456,10 +467,11 @@ static BOOL _MDrv_HWI2C_SetClk(U8 u8Port, HWI2C_CLKSEL eClk)
 
     HWI2C_DBG_FUNC();
     HWI2C_DBG_INFO("Port%d clk: %u\n", u8Port, eClk);
+
     //check support port index
     if(u8Port>=HWI2C_PORTS)
     {
-        HWI2C_DBG_ERR("Port index is >= max supported ports %d !\n",HWI2C_PORTS);
+        HWI2C_DBG_ERR("Port index is %d >= max supported ports %d !\n", u8Port, HWI2C_PORTS);
         return FALSE;
     }
     //check support clock speed
@@ -470,13 +482,15 @@ static BOOL _MDrv_HWI2C_SetClk(U8 u8Port, HWI2C_CLKSEL eClk)
     }
 
     //configure port register offset ==> important
- /*   if(!_MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset))
+    if(!_MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset))
     {
         HWI2C_DBG_ERR("Port index error!\n");
         return FALSE;
     }
-*/
+
     g_u16DelayFactor[u8Port] = (U16)(1<<(eClk));
+    HWI2C_DBG_INFO("Port%d clk: %u offset:%d\n", u8Port, eClk, u16Offset);
+
     return HAL_HWI2C_SetClk(u16Offset,(HAL_HWI2C_CLKSEL)eClk);
 }
 
@@ -487,7 +501,7 @@ static BOOL _MDrv_HWI2C_SetReadMode(U8 u8Port, HWI2C_ReadMode eReadMode)
     //check support port index
     if(u8Port>=HWI2C_PORTS)
     {
-        HWI2C_DBG_ERR("Port index is >= max supported ports %d !\n",HWI2C_PORTS);
+        HWI2C_DBG_ERR("Port index is %d >= max supported ports %d !\n", u8Port, HWI2C_PORTS);
         return FALSE;
     }
     if(eReadMode>=E_HWI2C_READ_MODE_MAX)
@@ -502,7 +516,7 @@ static BOOL _MDrv_HWI2C_InitPort(HWI2C_UnitCfg *psCfg)
     U16 u16Offset = 0x00;
     BOOL bRet = TRUE;
     HWI2C_PortCfg stPortCfg;
-        
+
     HWI2C_DBG_FUNC();
 
     //(1) set default value for port variables
@@ -511,56 +525,53 @@ static BOOL _MDrv_HWI2C_InitPort(HWI2C_UnitCfg *psCfg)
         stPortCfg = psCfg->sCfgPort[u8PortIdx];
         if(stPortCfg.bEnable)
         {
-            if(_MDrv_HWI2C_SelectPort(psCfg->eGroup))
+            if(HAL_HWI2C_GetPortIdxByPort(stPortCfg.ePort,&u8Port) && _MDrv_HWI2C_SelectPort(stPortCfg.ePort))
             {
-                g_HWI2CPortIdx = stPortCfg.ePort;
                 //set clock speed
-                bRet &= _MDrv_HWI2C_SetClk(g_HWI2CPortIdx, stPortCfg.eSpeed);
+                bRet &= _MDrv_HWI2C_SetClk(u8Port, stPortCfg.eSpeed);
                 //set read mode
-                bRet &= _MDrv_HWI2C_SetReadMode(g_HWI2CPortIdx, stPortCfg.eReadMode);
+                bRet &= _MDrv_HWI2C_SetReadMode(u8Port, stPortCfg.eReadMode);
                 //get port index
-                bRet &= HAL_HWI2C_GetPortIdxByPort((HAL_HWI2C_PORT)stPortCfg.ePort,&u8Port);
-                //bRet &= _MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset);
+                bRet &= _MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset);
                 //master init
                 bRet &= HAL_HWI2C_Master_Enable(u16Offset);
                 //dma init
                 bRet &= HAL_HWI2C_DMA_Init(u16Offset,(HAL_HWI2C_PortCfg*)&stPortCfg);
                 g_bDMAEnable[u8Port] = stPortCfg.bDmaEnable;
                 //dump port information
-                HWI2C_DBG_INFO("Port:%u Index=%u\n",stPortCfg.ePort,u8Port);
-                HWI2C_DBG_INFO("Enable=%u\n",stPortCfg.bEnable);
-                HWI2C_DBG_INFO("DmaReadMode:%u\n",stPortCfg.eReadMode);
-                HWI2C_DBG_INFO("Speed:%u\n",stPortCfg.eSpeed);
-                HWI2C_DBG_INFO("DmaEnable:%u\n",stPortCfg.bDmaEnable);
-                HWI2C_DBG_INFO("DmaAddrMode:%u\n",stPortCfg.eDmaAddrMode);
-                HWI2C_DBG_INFO("DmaMiuCh:%u\n",stPortCfg.eDmaMiuCh);
-                HWI2C_DBG_INFO("DmaMiuPri:%u\n",stPortCfg.eDmaMiuPri);
-                HWI2C_DBG_INFO("DmaPhyAddr:%lx\n",stPortCfg.u32DmaPhyAddr);
+                pr_debug("Port:%u Index=%u\n",u8Port,stPortCfg.ePort);
+                pr_debug("Enable=%u\n",stPortCfg.bEnable);
+                pr_debug("DmaReadMode:%u\n",stPortCfg.eReadMode);
+                pr_debug("Speed:%u\n",stPortCfg.eSpeed);
+                pr_debug("DmaEnable:%u\n",stPortCfg.bDmaEnable);
+                pr_debug("DmaAddrMode:%u\n",stPortCfg.eDmaAddrMode);
+                pr_debug("DmaMiuCh:%u\n",stPortCfg.eDmaMiuCh);
+                pr_debug("DmaMiuPri:%u\n",stPortCfg.eDmaMiuPri);
+                pr_debug("DmaPhyAddr:%x\n",stPortCfg.u32DmaPhyAddr);
             }
         }
     }
 
     //(2) check initialized port : override above port configuration
-    if(_MDrv_HWI2C_SelectPort(psCfg->ePort))
+    if(HAL_HWI2C_GetPortIdxByPort(psCfg->ePort,&u8Port) && _MDrv_HWI2C_SelectPort(psCfg->ePort))
     {
         //set clock speed
-        bRet &=_MDrv_HWI2C_SetClk(g_HWI2CPortIdx,psCfg->eSpeed);
+        bRet &=_MDrv_HWI2C_SetClk(u8Port,psCfg->eSpeed);
         //set read mode
-        bRet &=_MDrv_HWI2C_SetReadMode(g_HWI2CPortIdx,psCfg->eReadMode);
+        bRet &=_MDrv_HWI2C_SetReadMode(u8Port,psCfg->eReadMode);
         //get port index
-        bRet &= HAL_HWI2C_GetPortIdxByPort((HAL_HWI2C_PORT)psCfg->ePort,&u8Port);
         //configure port register offset ==> important
-        //bRet &= _MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset);
+        bRet &= _MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset);
         //master init
         bRet &= HAL_HWI2C_Master_Enable(u16Offset);
     }
 
-    //(3) dump allocated port information 
-    for(u8PortIdx=0; u8PortIdx < HWI2C_PORTS; u8PortIdx++)
+    //(3) dump allocated port information
+    /*for(u8PortIdx=0; u8PortIdx < HWI2C_PORTS; u8PortIdx++)
     {
         HWI2C_DBG_INFO("HWI2C Allocated Port[%d] = 0x%02X\n",u8PortIdx,g_HWI2CPort[u8PortIdx]);
-    }
-  
+    }*/
+
     return bRet;
 }
 
@@ -577,31 +588,15 @@ static BOOL _MDrv_HWI2C_InitPort(HWI2C_UnitCfg *psCfg)
 BOOL MDrv_HWI2C_Init(HWI2C_UnitCfg *psCfg)
 {
     BOOL bRet = TRUE;
-    //U32 u32BaseAddr = REG_ARM_BASE;//, u32BaseSize;
     U8 u8Port=0;
 
     HWI2C_DBG_FUNC();
-	
-#if 0
-    if (_gbInit )//&& (psCfg->bRInit == 0))
-    {
-        HWI2C_DBG_INFO("HW I2C has been initialed!\n");
-        return TRUE;
-    }
-#endif
 
-
-	#if 0
-    //(1) get & set io base
-    if ((!psCfg) || (!MDrv_MMIO_GetBASE(&u32BaseAddr, &u32BaseSize, MS_MODULE_HWI2C)))
-        return FALSE;
-	#endif
-	
-    HAL_HWI2C_SetIOMapBase(psCfg->eBaseAddr,psCfg->eChipAddr,psCfg->eClkAddr);
+    HAL_HWI2C_SetIOMapBase(psCfg->eGroup,psCfg->eBaseAddr,psCfg->eChipAddr,psCfg->eClkAddr);
 
     //(2) Initialize pad mux and basic settings
-    HWI2C_DBG_INFO("Pinreg:%lx bit:%u enable:%u speed:%u\n",psCfg->sI2CPin.u32Reg, psCfg->sI2CPin.u8BitPos, psCfg->sI2CPin.bEnable,psCfg->eSpeed);
-    //bRet &= HAL_HWI2C_Init_Chip();
+    pr_debug("Pinreg:%x bit:%u enable:%u speed:%u\n",psCfg->sI2CPin.u32Reg, psCfg->sI2CPin.u8BitPos, psCfg->sI2CPin.bEnable,psCfg->eSpeed);
+    bRet &= HAL_HWI2C_Init_Chip();
     //(3) Initialize all port
     bRet &= _MDrv_HWI2C_InitPort(psCfg);
     //(4) Check final result
@@ -609,68 +604,86 @@ BOOL MDrv_HWI2C_Init(HWI2C_UnitCfg *psCfg)
     {
         HWI2C_DBG_ERR("I2C init fail!\n");
     }
-    
+
     //(5) Extra procedure to do after initialization
     HAL_HWI2C_Init_ExtraProc();
 
-    g_u32StartDelay = HWI2C_STARTDLY; 
-    g_u32StopDelay = HWI2C_STOPDLY; 
-    HWI2C_DBG_INFO("START default delay %d(us)\n",(int)g_u32StartDelay);
-    HWI2C_DBG_INFO("STOP default delay %d(us)\n",(int)g_u32StopDelay);
+    g_u32StartDelay = HWI2C_STARTDLY;
+    g_u32StopDelay = HWI2C_STOPDLY;
+    pr_debug("START default delay %d(us)\n",(int)g_u32StartDelay);
+    pr_debug("STOP default delay %d(us)\n",(int)g_u32StopDelay);
     _gbInit = TRUE;
 
-    HWI2C_DBG_INFO("HWI2C_MUTEX_CREATE!\n");
+    pr_debug("HWI2C_MUTEX_CREATE!\n");
     for(u8Port=0;u8Port<(U8)HWI2C_PORTS;u8Port++)
     {
         HWI2C_MUTEX_CREATE(u8Port);
     }
-    HWI2C_DBG_INFO("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&MDrv_HWI2C_Init&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&\n");
-    printk(KERN_WARNING"HWI2C: initialized");
+    pr_debug("HWI2C(%d): initialized\n", psCfg->eGroup);
     return bRet;
 }
 
-void MDrv_HW_IIC_Init(void *base,void *chipbase,int i2cgroup,void *clkbase)
+void MDrv_HW_IIC_Init(void *base,void *chipbase,int i2cgroup,void *clkbase, int i2cpadmux)
 {
 	HWI2C_UnitCfg pHwbuscfg[1];
 	U8 j;
-	
+
 	memset(pHwbuscfg, 0, sizeof(HWI2C_UnitCfg));
 
-#if 1	
+
+	HWI2C_DMA[i2cgroup].i2c_virt_addr = dma_alloc_coherent(NULL, 4096, &HWI2C_DMA[i2cgroup].i2c_dma_addr, GFP_KERNEL);
+    //We only initialze sCfgPort[0]
     for(j = 0 ; j < 1 ; j++)
     {
-    	
         pHwbuscfg[0].sCfgPort[j].bEnable = TRUE;
-        pHwbuscfg[0].sCfgPort[j].ePort = E_HAL_HWI2C_PORT0_1;
-        pHwbuscfg[0].sCfgPort[j].eSpeed= E_HWI2C_UVSLOW; //E_HAL_HWI2C_CLKSEL_VSLOW;//pIIC_Param->u8ClockIIC;//
+        //use default pad mode 1
+        if(i2cgroup==0)
+		{
+			if(i2cpadmux == 1)
+            	pHwbuscfg[0].sCfgPort[j].ePort = E_HAL_HWI2C_PORT0_1;
+			if(i2cpadmux == 2)
+            	pHwbuscfg[0].sCfgPort[j].ePort = E_HAL_HWI2C_PORT0_2;
+			if(i2cpadmux == 3)
+            	pHwbuscfg[0].sCfgPort[j].ePort = E_HAL_HWI2C_PORT0_3;
+        }else if(i2cgroup==1) {
+			if(i2cpadmux == 1)
+       	     	pHwbuscfg[0].sCfgPort[j].ePort = E_HAL_HWI2C_PORT1_1;
+			if(i2cpadmux == 2)
+       	     	pHwbuscfg[0].sCfgPort[j].ePort = E_HAL_HWI2C_PORT1_2;
+			if(i2cpadmux == 3)
+       	     	pHwbuscfg[0].sCfgPort[j].ePort = E_HAL_HWI2C_PORT1_3;
+        }else if(i2cgroup==2)
+            pHwbuscfg[0].sCfgPort[j].ePort = E_HAL_HWI2C_PORT2_1;
+        else if(i2cgroup==3)
+            pHwbuscfg[0].sCfgPort[j].ePort = E_HAL_HWI2C_PORT3_1;
+        pHwbuscfg[0].sCfgPort[j].eSpeed= E_HWI2C_NORMAL; //E_HAL_HWI2C_CLKSEL_VSLOW;//pIIC_Param->u8ClockIIC;//
         pHwbuscfg[0].sCfgPort[j].eReadMode = E_HWI2C_READ_MODE_DIRECT;//pIIC_Param->u8IICReadMode;//
-        pHwbuscfg[0].sCfgPort[j].bDmaEnable = FALSE;  //Use default setting
+        if(i2cgroup==0)
+			pHwbuscfg[0].sCfgPort[j].bDmaEnable = FALSE;  //Use default setting
+		else
+			pHwbuscfg[0].sCfgPort[j].bDmaEnable = TRUE;  //Use default setting
         pHwbuscfg[0].sCfgPort[j].eDmaAddrMode = E_HWI2C_DMA_ADDR_NORMAL;  //Use default setting
         pHwbuscfg[0].sCfgPort[j].eDmaMiuPri = E_HWI2C_DMA_PRI_LOW;  //Use default setting
         pHwbuscfg[0].sCfgPort[j].eDmaMiuCh = E_HWI2C_DMA_MIU_CH0;  //Use default setting
-        pHwbuscfg[0].sCfgPort[j].u32DmaPhyAddr = 0x00000000;  //Use default setting
+        pHwbuscfg[0].sCfgPort[j].u32DmaPhyAddr = HWI2C_DMA[i2cgroup].i2c_dma_addr;  //Use default setting
         j++;
     }
-#endif
 
-//#if 1
 	pHwbuscfg[0].sI2CPin.bEnable = FALSE;
 	pHwbuscfg[0].sI2CPin.u8BitPos = 0;
 	pHwbuscfg[0].sI2CPin.u32Reg = 0;
-	pHwbuscfg[0].eSpeed = E_HWI2C_UVSLOW; //E_HAL_HWI2C_CLKSEL_VSLOW;//pIIC_Param->u8ClockIIC;//
-    pHwbuscfg[0].ePort = E_HAL_HWI2C_PORT0_1;          /// port
-    pHwbuscfg[0].eReadMode = E_HWI2C_READ_MODE_DIRECT;//pIIC_Param->u8IICReadMode;//
+	pHwbuscfg[0].eSpeed = E_HWI2C_NORMAL; //E_HAL_HWI2C_CLKSEL_VSLOW;//pIIC_Param->u8ClockIIC;//
+    pHwbuscfg[0].ePort = pHwbuscfg[0].sCfgPort[0].ePort; /// port
+    pHwbuscfg[0].eReadMode = E_HWI2C_READ_MODE_DIRECT; //pIIC_Param->u8IICReadMode;//
     pHwbuscfg[0].eBaseAddr=(U32)base;
     pHwbuscfg[0].eChipAddr=(U32)chipbase;
     pHwbuscfg[0].eClkAddr=(U32)clkbase;
     pHwbuscfg[0].eGroup=i2cgroup;
-	
-//#endif
 
     MDrv_HWI2C_Init(&pHwbuscfg[0]);
 }
-
 EXPORT_SYMBOL(MDrv_HW_IIC_Init);
+
 ////////////////////////////////////////////////////////////////////////////////
 /// @brief \b Function  \b Name: MDrv_HWI2C_Start
 /// @brief \b Function  \b Description: send start bit
@@ -703,10 +716,10 @@ BOOL MDrv_HWI2C_Stop(U16 u16PortOffset)
 BOOL MDrv_HWI2C_GetPortIndex(HWI2C_PORT ePort, U8* pu8Port)
 {
     BOOL bRet=TRUE;
-    
+
     HWI2C_DBG_FUNC();
 
-    //(1) Get port index by port number 
+    //(1) Get port index by port number
     bRet &= HAL_HWI2C_GetPortIdxByPort((HAL_HWI2C_PORT)ePort, pu8Port);
     HWI2C_DBG_INFO("ePort:0x%02X, u8Port:0x%02X\n",(U8)ePort,(U8)*pu8Port);
 
@@ -731,7 +744,7 @@ BOOL MDrv_HWI2C_SelectPort(HWI2C_PORT ePort)
         return FALSE;
     return _MDrv_HWI2C_SelectPort(ePort);
 }
-
+#if 0
 ////////////////////////////////////////////////////////////////////////////////
 /// @brief \b Function  \b Name: MDrv_HWI2C_SetClk
 /// @brief \b Function  \b Description: Set HW I2C clock
@@ -754,7 +767,7 @@ BOOL MDrv_HWI2C_SetReadMode(HWI2C_ReadMode eReadMode)
 {
     return _MDrv_HWI2C_SetReadMode(g_HWI2CPortIdx, eReadMode);
 }
-
+#endif
 ////////////////////////////////////////////////////////////////////////////////
 /// @brief \b Function  \b Name: MDrv_HWI2C_ReadByte
 /// @brief \b Function  \b Description: read 1 byte data
@@ -799,15 +812,17 @@ BOOL MDrv_HWI2C_WriteBytes(U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAddr, U32 uSiz
     U8 u8Port;
 
     u8Port = HIGH_BYTE(u16SlaveCfg);
-	u8Port = g_HWI2CPortIdx;
+	//u8Port = g_HWI2CPortIdx;
     if(u8Port>=HWI2C_PORTS)
     {
-        HWI2C_DBG_ERR("Port index is >= max supported ports %d !\n",HWI2C_PORTS);
+        HWI2C_DBG_ERR("Port index is %d >= max supported ports %d !\n", u8Port, HWI2C_PORTS);
         return FALSE;
     }
-    HWI2C_MUTEX_LOCK(u8Port);
+    //HWI2C_MUTEX_LOCK(u8Port);
+	//mutex_lock(&i2cMutex);
     bRet = _MDrv_HWI2C_WriteBytes(u8Port,u16SlaveCfg,uAddrCnt,pRegAddr,uSize,pData);
-    HWI2C_MUTEX_UNLOCK(u8Port);
+   	//HWI2C_MUTEX_UNLOCK(u8Port);
+	//mutex_unlock(&i2cMutex);
     return bRet;
 }
 EXPORT_SYMBOL(MDrv_HWI2C_WriteBytes);
@@ -828,15 +843,17 @@ BOOL MDrv_HWI2C_ReadBytes(U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAddr, U32 uSize
     U8 u8Port;
 
     u8Port = HIGH_BYTE(u16SlaveCfg);
-	u8Port = g_HWI2CPortIdx;
+	//u8Port = g_HWI2CPortIdx;
     if(u8Port>=HWI2C_PORTS)
     {
-        HWI2C_DBG_ERR("Port index is >= max supported ports %d !\n",HWI2C_PORTS);
+        HWI2C_DBG_ERR("Port index is %d >= max supported ports %d !\n", u8Port, HWI2C_PORTS);
         return FALSE;
     }
-    HWI2C_MUTEX_LOCK(u8Port);
+    //HWI2C_MUTEX_LOCK(u8Port);
+	//mutex_lock(&i2cMutex);
     bRet = _MDrv_HWI2C_ReadBytes(u8Port,u16SlaveCfg,uAddrCnt,pRegAddr,uSize,pData);
-    HWI2C_MUTEX_UNLOCK(u8Port);
+    //HWI2C_MUTEX_UNLOCK(u8Port);
+	//mutex_unlock(&i2cMutex);
     return bRet;
 }
 EXPORT_SYMBOL(MDrv_HWI2C_ReadBytes);
@@ -874,15 +891,16 @@ EXPORT_SYMBOL(MDrv_HWI2C_ReadBytes);
 | length             | x |   | the byte to be readed from slave
 +------------------------------------------------------------------------------
 */
+char errBuf[4096];
+char *perrBuf;
+
 static int
-ms_i2c_xfer_read(struct i2c_msg *pmsg, u8 *pbuf, int length)
+ms_i2c_xfer_read(u8 u8Port, struct i2c_msg *pmsg, u8 *pbuf, int length)
 {
     BOOL ret = FALSE;
     u32 u32i = 0;
-    U8 u8Port = 0;
     U16 u16Offset = 0x00;
-    u8Port = 0; //HWI2C_PORT0;
-   
+
    if (NULL == pmsg)
    {
 	   printk(KERN_INFO
@@ -897,56 +915,76 @@ ms_i2c_xfer_read(struct i2c_msg *pmsg, u8 *pbuf, int length)
    }
 
    //configure port register offset ==> important
- /*   if(!_MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset))
+    if(!_MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset))
     {
         HWI2C_DBG_ERR("Port index error!\n");
         return FALSE;
     }
 
-*/
+	if(g_bDMAEnable[u8Port])
+    {
+		//pr_err("I2C read DMA: port = %#x\n", u8Port);
+        ret = MDrv_HWI2C_ReadBytes((u8Port<< 8)|(((pmsg->addr & I2C_BYTE_MASK) << 1) | ((pmsg->flags & I2C_M_RD) ? 1 : 0)), length, pbuf, length, pbuf);
+		if(ret==FALSE)
+		{
+			perrBuf = &errBuf[0];
+			memset(errBuf,0,4096);
 
-
-
-
-   /* ***** 1. Send start bit ***** */
-   if(!MDrv_HWI2C_Start(u16Offset))
-   {
-	   printk(KERN_INFO
-			 "ERROR: in ms_i2c_xfer_read: Send Start error \r\n");
+			for (u32i = 0; u32i < length; u32i++)
+			{
+				perrBuf += sprintf(perrBuf,"%#x ", *pbuf);
+				pbuf++;
+			}
+			pr_info("ERROR: Bus[%d] in ms_i2c_xfer_read: Slave dev NAK, Addr: %#x, Data: %s \r\n", (u16Offset/256),(((pmsg->addr & I2C_BYTE_MASK) << 1) | ((pmsg->flags & I2C_M_RD) ? 1 : 0)),errBuf);
+			return -ETIMEDOUT;
+		} else {
+			return 0;
+ 		}
+	}
+    /* ***** 1. Send start bit ***** */
+    if(!MDrv_HWI2C_Start(u16Offset))
+    {
+       printk(KERN_INFO
+    		 "ERROR: in ms_i2c_xfer_read: Send Start error \r\n");
        return -ETIMEDOUT;
 
-   }
-   // Delay for 1 SCL cycle 10us -> 4000T
-   udelay(5);
-   //LOOP_DELAY(8000); //20us
+    }
+    // Delay for 1 SCL cycle 10us -> 4000T
+    udelay(2);
+    //LOOP_DELAY(8000); //20us
 
-   /* ***** 2. Send slave id + read bit ***** */
-
-   if (!MDrv_HWI2C_Send_Byte(u16Offset, ((pmsg->addr & I2C_BYTE_MASK) << 1) |
-				   ((pmsg->flags & I2C_M_RD) ? 1 : 0)))
+    /* ***** 2. Send slave id + read bit ***** */
+    if (!MDrv_HWI2C_Send_Byte(u16Offset, ((pmsg->addr & I2C_BYTE_MASK) << 1) |
+    			   ((pmsg->flags & I2C_M_RD) ? 1 : 0)))
     {
-        printk(KERN_INFO
-              "ERROR: in ms_i2c_xfer_read: Send slave id error \r\n");
+
+		 perrBuf = &errBuf[0];
+		 memset(errBuf,0,4096);
+
+		 for (u32i = 0; u32i < length; u32i++)
+		 {
+			perrBuf += sprintf(perrBuf,"%#x ", *pbuf);
+            pbuf++;
+		 }
+		 pr_info("ERROR: Bus[%d] in ms_i2c_xfer_read: Slave dev NAK, Addr: %#x, Data: %s \r\n", (u16Offset/256),(((pmsg->addr & I2C_BYTE_MASK) << 1) | ((pmsg->flags & I2C_M_RD) ? 1 : 0)),errBuf);
+
         return -ETIMEDOUT;
     }
-   udelay(5);
+    udelay(1);
 
-   /* Read data */
-   for (u32i = 0; u32i < length; u32i++)
-   {
-	  /* ***** 6. Read byte data from slave ***** */
-	   if ((length-1) == u32i)
-	   {
-		   MDrv_HWI2C_NoAck(u16Offset);
-	   }
-	   ret = MDrv_HWI2C_Recv_Byte(u16Offset, pbuf);
-	   pbuf++;
-   }
-
-
+    /* Read data */
+    for (u32i = 0; u32i < length; u32i++)
+    {
+      /* ***** 6. Read byte data from slave ***** */
+       if ((length-1) == u32i)
+       {
+    	   MDrv_HWI2C_NoAck(u16Offset);
+       }
+       ret = MDrv_HWI2C_Recv_Byte(u16Offset, pbuf);
+       pbuf++;
+    }
 
     return 0;
-
 }
 
 /*
@@ -978,14 +1016,11 @@ ms_i2c_xfer_read(struct i2c_msg *pmsg, u8 *pbuf, int length)
 +------------------------------------------------------------------------------
 */
 static int
-ms_i2c_xfer_write(struct i2c_msg *pmsg, u8 *pbuf, int length)
+ms_i2c_xfer_write(u8 u8Port, struct i2c_msg *pmsg, u8 *pbuf, int length)
 {
     u32 u32i = 0;
-    U8 u8Port = 0;
     U16 u16Offset = 0x00;
     int ret = FALSE;
-    u8Port = 0;
-
 
     if (NULL == pmsg)
     {
@@ -1001,12 +1036,34 @@ ms_i2c_xfer_write(struct i2c_msg *pmsg, u8 *pbuf, int length)
     }
 
     //configure port register offset ==> important
-/*    if(!_MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset))
+    if(!_MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset))
     {
         HWI2C_DBG_ERR("Port index error!\n");
         return FALSE;
     }
-*/
+
+	if(g_bDMAEnable[u8Port])
+    {
+		//pr_err("I2C write DMA: port = %#x\n", u8Port);
+        ret = MDrv_HWI2C_WriteBytes((u8Port<< 8)|(((pmsg->addr & I2C_BYTE_MASK) << 1) | ((pmsg->flags & I2C_M_RD) ? 1 : 0)), length, pbuf, length, pbuf);
+		if(ret==FALSE)
+		{
+			perrBuf = &errBuf[0];
+			memset(errBuf,0,4096);
+
+			for (u32i = 0; u32i < length; u32i++)
+			{
+				perrBuf += sprintf(perrBuf,"%#x ", *pbuf);
+				pbuf++;
+			}
+			pr_info("ERROR: Bus[%d] in ms_i2c_xfer_write: Slave dev NAK, Addr: %#x, Data: %s \r\n", (u16Offset/256),(((pmsg->addr & I2C_BYTE_MASK) << 1) | ((pmsg->flags & I2C_M_RD) ? 1 : 0)),errBuf);
+			return -ETIMEDOUT;
+		}else{
+			return 0;
+		}
+    }
+
+
     /* ***** 1. Send start bit ***** */
     if(!MDrv_HWI2C_Start(u16Offset))
     {
@@ -1016,15 +1073,22 @@ ms_i2c_xfer_write(struct i2c_msg *pmsg, u8 *pbuf, int length)
     }
     // Delay for 1 SCL cycle 10us -> 4000T
     //LOOP_DELAY(8000); //20us
-    udelay(5);
-    
+    udelay(2);
+
     /* ***** 2. Send slave id + read bit ***** */
      if (!MDrv_HWI2C_Send_Byte(u16Offset, ((pmsg->addr & I2C_BYTE_MASK) << 1) |
                     ((pmsg->flags & I2C_M_RD) ? 1 : 0)))
      {
-         printk(KERN_INFO
-               "ERROR: in ms_i2c_xfer_write: Send slave id error \r\n");
 
+		 perrBuf = &errBuf[0];
+		 memset(errBuf,0,4096);
+
+		 for (u32i = 0; u32i < length; u32i++)
+		 {
+			perrBuf += sprintf(perrBuf,"%#x ", *pbuf);
+            pbuf++;
+		 }
+		 pr_info("ERROR: Bus[%d] in ms_i2c_xfer_write: Slave dev NAK, Addr: %#x, Data: %s \r\n", (u16Offset/256),(((pmsg->addr & I2C_BYTE_MASK) << 1) | ((pmsg->flags & I2C_M_RD) ? 1 : 0)),errBuf);
          return -ETIMEDOUT;
      }
 
@@ -1039,12 +1103,10 @@ ms_i2c_xfer_write(struct i2c_msg *pmsg, u8 *pbuf, int length)
         }
         else
         {
+			pr_info("ERROR: Bus[%d] in ms_i2c_xfer_write: Slave data NAK, Addr: %#x, Data: %#x \r\n", (u16Offset/256),(((pmsg->addr & I2C_BYTE_MASK) << 1) | ((pmsg->flags & I2C_M_RD) ? 1 : 0)),*pbuf);
             return -ETIMEDOUT;
         }
-
     }
-        //MDrv_HWI2C_Reset(u16Offset,TRUE);
-        //MDrv_HWI2C_Reset(u16Offset,FALSE);
 
     return ret;
 }
@@ -1077,12 +1139,9 @@ static int
 ms_i2c_xfer(struct i2c_adapter *padap, struct i2c_msg *pmsg, int num)
 {
     int i, err;
-//    U8 u8Port = 0;
     U16 u16Offset = 0x00;
 
-#if 1
-    printk(KERN_INFO "ms_i2c_xfer: processing %d messages:\n", num);
-#endif
+    HWI2C_DBG_INFO("ms_i2c_xfer: processing %d messages:\n", num);
 
     i = 0;
     err = 0;
@@ -1100,21 +1159,21 @@ ms_i2c_xfer(struct i2c_adapter *padap, struct i2c_msg *pmsg, int num)
         return -ENOTTY;
     }
 
+    //configure port register offset ==> important
+    if(!_MDrv_HWI2C_GetPortRegOffset(padap->nr,&u16Offset))
+    {
+        HWI2C_DBG_ERR("Port index error!\n");
+        return FALSE;
+    }
+
+	mutex_lock(&i2cMutex);
+	MDrv_HWI2C_Reset(u16Offset,TRUE);
+	udelay(1);
+    MDrv_HWI2C_Reset(u16Offset,FALSE);
+	udelay(1);
+
 /* in i2c-master_send or recv, the num is always 1,  */
 /* but use i2c_transfer() can set multiple message */
-
-#if 0
-for (i = 0; i < num; i++)
-{
-    printk(KERN_INFO " #%d: %sing %d byte%s %s 0x%02x\n", i,
-            pmsg1->flags & I2C_M_RD ? "read" : "writ",
-            pmsg1->len, pmsg1->len > 1 ? "s" : "",
-            pmsg1->flags & I2C_M_RD ? "from" : "to", pmsg1->addr);
-            pmsg1++;
-}
-#endif
-    for (i = 0; i < 40; i++)
-        udelay(100);
 
     for (i = 0; i < num; i++)
     {
@@ -1128,16 +1187,17 @@ for (i = 0; i < num; i++)
         if (pmsg->len && pmsg->buf) /* sanity check */
         {
             if (pmsg->flags & I2C_M_RD)
-                {
-                //return;
-                err = ms_i2c_xfer_read(pmsg, pmsg->buf, pmsg->len);
-                }
+                err = ms_i2c_xfer_read(padap->nr, pmsg, pmsg->buf, pmsg->len);
             else
-                err = ms_i2c_xfer_write(pmsg, pmsg->buf, pmsg->len);
-            MDrv_HWI2C_Stop(u16Offset);
-            if (err)
-                return err;
+                err = ms_i2c_xfer_write(padap->nr, pmsg, pmsg->buf, pmsg->len);
 
+            //MDrv_HWI2C_Stop(u16Offset);
+
+            if (err)
+			{
+				mutex_unlock(&i2cMutex);
+                return err;
+			}
         }
         pmsg++;        /* next message */
     }
@@ -1146,19 +1206,8 @@ for (i = 0; i < num; i++)
     /* finish the read/write, then issues the stop condition (P).
      * for repeat start, diposit stop, two start and one stop only
      */
-
-    //configure port register offset ==> important
-/*    if(!_MDrv_HWI2C_GetPortRegOffset(u8Port,&u16Offset))
-    {
-        HWI2C_DBG_ERR("Port index error!\n");
-        return FALSE;
-    }
-*/
     MDrv_HWI2C_Stop(u16Offset);
-    // MDrv_SW_IIC_Stop(BusCfg[0].u8ChIdx);
-    //mdrv_i2c_send_stop();
-    MDrv_HWI2C_Reset(u16Offset,TRUE);
-    MDrv_HWI2C_Reset(u16Offset,FALSE);
+	mutex_unlock(&i2cMutex);
     return i;
 }
 
@@ -1202,11 +1251,19 @@ static int mstar_i2c_probe(struct platform_device *pdev)
 	struct device_node	*node = pdev->dev.of_node;
 	int ret = 0;
 	int i2cgroup = 0;
+	int i2cpadmux = 1;
 	int num_parents, i;
     struct clk **iic_clks;
 
     num_parents = of_clk_get_parent_count(pdev->dev.of_node);
+    if(num_parents < 0)
+    {
+        printk( "[%s] Fail to get parent count! Error Number : %d\n", __func__, num_parents);
+        return -1;
+    }
     iic_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
+    if(!iic_clks)
+        return -ENOMEM;
 
     //enable all clk
     for(i = 0; i < num_parents; i++)
@@ -1214,27 +1271,33 @@ static int mstar_i2c_probe(struct platform_device *pdev)
         iic_clks[i] = of_clk_get(pdev->dev.of_node, i);
         if (IS_ERR(iic_clks[i]))
         {
-            printk( "[serflash_probe] Fail to get clk!\n" );
+            printk( "[%s] Fail to get clk!\n", __func__);
             kfree(iic_clks);
-            return -1;
+            return -ENOENT;
         }
         else
         {
             clk_prepare_enable(iic_clks[i]);
-            if(i == 0)  
+            if(i == 0)
 	            clk_set_rate(iic_clks[i], 12000000);
         }
     }
     kfree(iic_clks);
-	
-    HWI2C_DBG_INFO(" mstar_i2c_probe");
+
+    HWI2C_DBG_INFO(" mstar_i2c_probe\n");
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if(!res)
+	    return -ENOENT;
 	base = (void *)(IO_ADDRESS(res->start));
-	
+
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+    if(!res)
+        return -ENOENT;
 	chipbase = (void *)(IO_ADDRESS(res->start));
-	
+
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 2);
+    if(!res)
+        return -ENOENT;
 	clkbase = (void *)(IO_ADDRESS(res->start));
 
 	i2c_dev = devm_kzalloc(&pdev->dev, sizeof(*i2c_dev), GFP_KERNEL);
@@ -1247,11 +1310,15 @@ static int mstar_i2c_probe(struct platform_device *pdev)
 	i2c_dev->cont_id = pdev->id;
 	i2c_dev->dev = &pdev->dev;
 	i2c_dev->clkbase = clkbase;
-	
+
 	of_property_read_u32(node, "i2c-group", &i2cgroup);
-	i2cgroup = of_alias_get_id(pdev->dev.of_node, "iic");
-    HWI2C_DBG_INFO("i2cgroup=%d",i2cgroup);
+	//i2cgroup = of_alias_get_id(pdev->dev.of_node, "iic");
+    HWI2C_DBG_INFO("i2cgroup=%d\n",i2cgroup);
 	i2c_dev->i2cgroup = i2cgroup;
+
+	of_property_read_u32(node, "i2c-padmux", &i2cpadmux);
+    HWI2C_DBG_INFO("i2cpadmux=%d\n",i2cpadmux);
+	i2c_dev->i2cpadmux = i2cpadmux;
 
 	if (pdev->dev.of_node) {
 		const struct of_device_id *match;
@@ -1265,7 +1332,7 @@ static int mstar_i2c_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, i2c_dev);
 
-    MDrv_HW_IIC_Init(i2c_dev->base,i2c_dev->chipbase,i2cgroup,clkbase);
+    MDrv_HW_IIC_Init(i2c_dev->base,i2c_dev->chipbase,i2cgroup,clkbase, i2cpadmux);
 
 	//i2c_set_adapdata(&i2c_dev->adapter, i2c_dev);
 	i2c_dev->adapter.owner = THIS_MODULE;
@@ -1277,22 +1344,21 @@ static int mstar_i2c_probe(struct platform_device *pdev)
 	i2c_dev->adapter.algo = &sg_ms_i2c_algorithm;
 
 	i2c_dev->adapter.dev.parent = &pdev->dev;
-	i2c_dev->adapter.nr = pdev->id;
+	i2c_dev->adapter.nr = i2cgroup;
 	i2c_dev->adapter.dev.of_node = pdev->dev.of_node;
-    HWI2C_DBG_INFO(" i2c_dev->adapter.nr=%d",i2c_dev->adapter.nr);
+    HWI2C_DBG_INFO(" i2c_dev->adapter.nr=%d\n",i2c_dev->adapter.nr);
 	i2c_set_adapdata(&i2c_dev->adapter, i2c_dev);
 
 	ret = i2c_add_numbered_adapter(&i2c_dev->adapter);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to add I2C adapter\n");
-		goto out;	}
+		goto out;
+    }
 
 	return 0;
 
 out:
 	//clk_unprepare(i2c_dev->div_clk);
-
-
 	return ret;
 }
 
@@ -1303,7 +1369,7 @@ static int mstar_i2c_remove(struct platform_device *pdev)
 	return 0;
 }
 
-#ifdef CONFIG_PM
+#if 0
 static int mstar_i2c_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	struct mstar_i2c_dev *i2c_dev = platform_get_drvdata(pdev);
@@ -1365,7 +1431,7 @@ static int mstar_i2c_resume(struct platform_device *pdev)
         else
         {
             clk_prepare_enable(iic_clks[i]);
-            if(i == 0)  
+            if(i == 0)
 	            clk_set_rate(iic_clks[i], 12000000);
         }
         kfree(iic_clks);
@@ -1374,7 +1440,7 @@ static int mstar_i2c_resume(struct platform_device *pdev)
 
 	i2c_lock_adapter(&i2c_dev->adapter);
 
-    MDrv_HW_IIC_Init(i2c_dev->base,i2c_dev->chipbase,i2c_dev->i2cgroup,i2c_dev->clkbase);
+    MDrv_HW_IIC_Init(i2c_dev->base,i2c_dev->chipbase,i2c_dev->i2cgroup,i2c_dev->clkbase, i2c_dev->i2cpadmux);
 
 	i2c_dev->is_suspended = false;
 
@@ -1389,10 +1455,10 @@ MODULE_DEVICE_TABLE(of, mstar_i2c_of_match);
 static struct platform_driver mstar_i2c_driver = {
 	.probe   = mstar_i2c_probe,
 	.remove  = mstar_i2c_remove,
-#ifdef CONFIG_PM
+#if 0
     .suspend = mstar_i2c_suspend,
     .resume = mstar_i2c_resume,
-#endif	
+#endif
 	.driver  = {
 		.name  = "mstar-i2c",
 		.owner = THIS_MODULE,

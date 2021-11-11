@@ -53,27 +53,37 @@
 #include <linux/proc_fs.h>
 #include <linux/time.h>              //do_gettimeofday()
 #include "gop/mdrv_gop.h"
+#include "inv_color/mdrv_gop0_inv_color.h"
 #include "../include/ms_types.h"
 #include "../include/ms_platform.h"
 #include "../include/ms_msys.h"      //for dma_alloc_coherent
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
+#include <linux/kthread.h>
 
 #include "mdrv_fb_io.h"
 #include "mdrv_fb_st.h"
+#include "mdrv_isp_io_st.h"
 
 //--------------------------------------------------------------------------------------------------
 //  Defines
 //--------------------------------------------------------------------------------------------------
-#define FB_DEBUG 1  //0 for no debug message, 1 for normal debug message, 2 for more message
+#define FB_DEBUG 0  //0 for only error message, 1 for normal debug message, 2 for more message
 
-#if (FB_DEBUG==1)
-#define FBDBG(fmt, arg...)     printk(KERN_INFO fmt, ##arg)
+#if (FB_DEBUG==0)
+#define FBDBGERR(fmt, arg...)     printk(KERN_INFO fmt, ##arg)
+#define FBDBG(fmt, arg...)
+#define FBDBGMORE(fmt, arg...)
+#elif (FB_DEBUG==1)
+#define FBDBGERR(fmt, arg...)     printk(KERN_INFO fmt, ##arg)
+#define FBDBG(fmt, arg...)        printk(KERN_INFO fmt, ##arg)
 #define FBDBGMORE(fmt, arg...)
 #elif (FB_DEBUG==2)
-#define FBDBG(fmt, arg...)     printk(KERN_INFO fmt, ##arg)
-#define FBDBGMORE(fmt, arg...) printk(KERN_INFO fmt, ##arg)
+#define FBDBGERR(fmt, arg...)     printk(KERN_INFO fmt, ##arg)
+#define FBDBG(fmt, arg...)        printk(KERN_INFO fmt, ##arg)
+#define FBDBGMORE(fmt, arg...)    printk(KERN_INFO fmt, ##arg)
 #else
+#define FBDBGERR(fmt, arg...)
 #define FBDBG(fmt, arg...)
 #define FBDBGMORE(fmt, arg...)
 #endif
@@ -117,17 +127,96 @@ static int mdrvinfinityfb_remove(struct platform_device *dev);
 //  Global variable
 //--------------------------------------------------------------------------------------------------
 struct clk **gop_clks;                      /* clock define, one for palette sram clock, one for scaler fclk1 *///index=1 is scl_fclk
-int num_parents_clocks                = 0;  /* number of clocks*/
-static void *sg_pG3D_fb2_vir_addr1    = 0;  /* virtual address of frame buffer */
-static u_long sg_videomemorysize      = 0;  /* frame buffer size */
-dma_addr_t sg_G3D_fb2_bus_addr1       = 0;  /* physical address of frame buffer */
+int num_parents_clocks                   = 0;  /* number of clocks*/
+static void *sg_pG3D_fb2_vir_addr1       = 0;  /* virtual address of frame buffer */
+static u_long sg_videomemorysize         = 0;  /* frame buffer size */
+dma_addr_t sg_G3D_fb2_bus_addr1          = 0;  /* physical address of frame buffer */
 
-FB_GOP_GWIN_CONFIG genGWinInfo        ={0}; /* global variable to record gwin information */
-unsigned char genGWIN                 = 1;  /* global variable to record gwin is open or close *///open:1; close:0
-FB_GOP_ALPHA_CONFIG genGOPALPHA       ={0}; /* global variable to record alpha blending information */
-FB_GOP_COLORKEY_CONFIG genGOPCOLORKEY ={0}; /* global variable to record color key information */
+FB_GOP_GWIN_CONFIG genGWinInfo           ={0}; /* global variable to record gwin information */
+unsigned char genGWIN                    = 1;  /* global variable to record gwin is open or close *///open:1; close:0
+FB_GOP_ALPHA_CONFIG genGOPALPHA          ={0}; /* global variable to record alpha blending information */
+FB_GOP_COLORKEY_CONFIG genGOPCOLORKEY    ={0}; /* global variable to record color key information */
 
+unsigned char genInv_Color               = 0;  /* global variable to record inverse color is open or close *///open:1; close:0
+FB_GOP_INVCOLOR_AE_CONFIG genAE_info     ={0}; /* global variable to record AE information */
+unsigned long genY_Thres                 = 0;  /* global variable to record Y Threshold */
+FB_GOP_INVCOLOR_SCALER_CONFIG genSC_info ={0}; /* global variable to record Scaler information */
 
+FB_GOP_RESOLUTION_STRETCH_H_CONFIG genGOPGernelSettings={0}; /* global variable to record Stretch mode information */
+
+static struct task_struct *pSWupdateInvThread=NULL;
+unsigned char genTreadisError            = 0;
+
+static struct task_struct *pSWupdateInvDebugThread=NULL;
+
+//// {B, G, R, Alpha}
+static FB_GOP_PaletteEntry DefaultPaletteEntry[GOP_PALETTE_ENTRY_NUM] =
+{
+    {{  0,  0,  0,  0}}, {{  0,  0,128,  0}}, {{  0,128,  0,  0}}, {{  0,128,128,  0}},
+    {{128,  0,  0,  0}}, {{128,  0,128,  0}}, {{128,128,  0,  0}}, {{192,192,192,  0}},
+    {{192,220,192,  0}}, {{240,202,166,  0}}, {{  0, 32, 64,  0}}, {{  0, 32, 96,  0}},
+    {{  0, 32,128,  0}}, {{  0, 32,160,  0}}, {{  0, 32,192,  0}}, {{  0, 32,224,  0}},
+    {{  0, 64,  0,  0}}, {{  0, 64, 32,  0}}, {{  0, 64, 64,  0}}, {{  0, 64, 96,  0}},
+    {{  0, 64,128,  0}}, {{  0, 64,160,  0}}, {{  0, 64,192,  0}}, {{  0, 64,224,  0}},
+    {{  0, 96,  0,  0}}, {{  0, 96, 32,  0}}, {{  0, 96, 64,  0}}, {{  0, 96, 96,  0}},
+    {{  0, 96,128,  0}}, {{  0, 96,160,  0}}, {{  0, 96,192,  0}}, {{  0, 96,224,  0}},
+    {{  0,128,  0,  0}}, {{  0,128, 32,  0}}, {{  0,128, 64,  0}}, {{  0,128, 96,  0}},
+    {{  0,128,128,  0}}, {{  0,128,160,  0}}, {{  0,128,192,  0}}, {{  0,128,224,  0}},
+    {{  0,160,  0,  0}}, {{  0,160, 32,  0}}, {{  0,160, 64,  0}}, {{  0,160, 96,  0}},
+    {{  0,160,128,  0}}, {{  0,160,160,  0}}, {{  0,160,192,  0}}, {{  0,160,224,  0}},
+    {{  0,192,  0,  0}}, {{  0,192, 32,  0}}, {{  0,192, 64,  0}}, {{  0,192, 96,  0}},
+    {{  0,192,128,  0}}, {{  0,192,160,  0}}, {{  0,192,192,  0}}, {{  0,192,224,  0}},
+    {{  0,224,  0,  0}}, {{  0,224, 32,  0}}, {{  0,224, 64,  0}}, {{  0,224, 96,  0}},
+    {{  0,224,128,  0}}, {{  0,224,160,  0}}, {{  0,224,192,  0}}, {{  0,224,224,  0}},
+    {{ 64,  0,  0,  0}}, {{ 64,  0, 32,  0}}, {{ 64,  0, 64,  0}}, {{ 64,  0, 96,  0}},
+    {{ 64,  0,128,  0}}, {{ 64,  0,160,  0}}, {{ 64,  0,192,  0}}, {{ 64,  0,224,  0}},
+    {{ 64, 32,  0,  0}}, {{ 64, 32, 32,  0}}, {{ 64, 32, 64,  0}}, {{ 64, 32, 96,  0}},
+    {{ 64, 32,128,  0}}, {{ 64, 32,160,  0}}, {{ 64, 32,192,  0}}, {{ 64, 32,224,  0}},
+    {{ 64, 64,  0,  0}}, {{ 64, 64, 32,  0}}, {{ 64, 64, 64,  0}}, {{ 64, 64, 96,  0}},
+    {{ 64, 64,128,  0}}, {{ 64, 64,160,  0}}, {{ 64, 64,192,  0}}, {{ 64, 64,224,  0}},
+    {{ 64, 96,  0,  0}}, {{ 64, 96, 32,  0}}, {{ 64, 96, 64,  0}}, {{ 64, 96, 96,  0}},
+    {{ 64, 96,128,  0}}, {{ 64, 96,160,  0}}, {{ 64, 96,192,  0}}, {{ 64, 96,224,  0}},
+    {{ 64,128,  0,  0}}, {{ 64,128, 32,  0}}, {{ 64,128, 64,  0}}, {{ 64,128, 96,  0}},
+    {{ 64,128,128,  0}}, {{ 64,128,160,  0}}, {{ 64,128,192,  0}}, {{ 64,128,224,  0}},
+    {{ 64,160,  0,  0}}, {{ 64,160, 32,  0}}, {{ 64,160, 64,  0}}, {{ 64,160, 96,  0}},
+    {{ 64,160,128,  0}}, {{ 64,160,160,  0}}, {{ 64,160,192,  0}}, {{ 64,160,224,  0}},
+    {{ 64,192,  0,  0}}, {{ 64,192, 32,  0}}, {{ 64,192, 64,  0}}, {{ 64,192, 96,  0}},
+    {{ 64,192,128,  0}}, {{ 64,192,160,  0}}, {{ 64,192,192,  0}}, {{ 64,192,224,  0}},
+    {{ 64,224,  0,  0}}, {{ 64,224, 32,  0}}, {{ 64,224, 64,  0}}, {{ 64,224, 96,  0}},
+    {{ 64,224,128,  0}}, {{ 64,224,160,  0}}, {{ 64,224,192,  0}}, {{ 64,224,224,  0}},
+    {{128,  0,  0,  0}}, {{128,  0, 32,  0}}, {{128,  0, 64,  0}}, {{128,  0, 96,  0}},
+    {{128,  0,128,  0}}, {{128,  0,160,  0}}, {{128,  0,192,  0}}, {{128,  0,224,  0}},
+    {{128, 32,  0,  0}}, {{128, 32, 32,  0}}, {{128, 32, 64,  0}}, {{128, 32, 96,  0}},
+    {{128, 32,128,  0}}, {{128, 32,160,  0}}, {{128, 32,192,  0}}, {{128, 32,224,  0}},
+    {{128, 64,  0,  0}}, {{128, 64, 32,  0}}, {{128, 64, 64,  0}}, {{128, 64, 96,  0}},
+    {{128, 64,128,  0}}, {{128, 64,160,  0}}, {{128, 64,192,  0}}, {{128, 64,224,  0}},
+    {{128, 96,  0,  0}}, {{128, 96, 32,  0}}, {{128, 96, 64,  0}}, {{128, 96, 96,  0}},
+    {{128, 96,128,  0}}, {{128, 96,160,  0}}, {{128, 96,192,  0}}, {{128, 96,224,  0}},
+    {{128,128,  0,  0}}, {{128,128, 32,  0}}, {{128,128, 64,  0}}, {{128,128, 96,  0}},
+    {{128,128,128,  0}}, {{128,128,160,  0}}, {{128,128,192,  0}}, {{128,128,224,  0}},
+    {{128,160,  0,  0}}, {{128,160, 32,  0}}, {{128,160, 64,  0}}, {{128,160, 96,  0}},
+    {{128,160,128,  0}}, {{128,160,160,  0}}, {{128,160,192,  0}}, {{128,160,224,  0}},
+    {{128,192,  0,  0}}, {{128,192, 32,  0}}, {{128,192, 64,  0}}, {{128,192, 96,  0}},
+    {{128,192,128,  0}}, {{128,192,160,  0}}, {{128,192,192,  0}}, {{128,192,224,  0}},
+    {{128,224,  0,  0}}, {{128,224, 32,  0}}, {{128,224, 64,  0}}, {{128,224, 96,  0}},
+    {{128,224,128,  0}}, {{128,224,160,  0}}, {{128,224,192,  0}}, {{128,224,224,  0}},
+    {{192,  0,  0,  0}}, {{192,  0, 32,  0}}, {{192,  0, 64,  0}}, {{192,  0, 96,  0}},
+    {{192,  0,128,  0}}, {{192,  0,160,  0}}, {{192,  0,192,  0}}, {{192,  0,224,  0}},
+    {{192, 32,  0,  0}}, {{192, 32, 32,  0}}, {{192, 32, 64,  0}}, {{192, 32, 96,  0}},
+    {{192, 32,128,  0}}, {{192, 32,160,  0}}, {{192, 32,192,  0}}, {{192, 32,224,  0}},
+    {{192, 64,  0,  0}}, {{192, 64, 32,  0}}, {{192, 64, 64,  0}}, {{192, 64, 96,  0}},
+    {{192, 64,128,  0}}, {{192, 64,160,  0}}, {{192, 64,192,  0}}, {{192, 64,224,  0}},
+    {{192, 96,  0,  0}}, {{192, 96, 32,  0}}, {{192, 96, 64,  0}}, {{192, 96, 96,  0}},
+    {{192, 96,128,  0}}, {{192, 96,160,  0}}, {{192, 96,192,  0}}, {{192, 96,224,  0}},
+    {{192,128,  0,  0}}, {{192,128, 32,  0}}, {{192,128, 64,  0}}, {{192,128, 96,  0}},
+    {{192,128,128,  0}}, {{192,128,160,  0}}, {{192,128,192,  0}}, {{192,128,224,  0}},
+    {{192,160,  0,  0}}, {{192,160, 32,  0}}, {{192,160, 64,  0}}, {{192,160, 96,  0}},
+    {{192,160,128,  0}}, {{192,160,160,  0}}, {{192,160,192,  0}}, {{192,160,224,  0}},
+    {{192,192,  0,  0}}, {{192,192, 32,  0}}, {{192,192, 64,  0}}, {{192,192, 96,  0}},
+    {{192,192,128,  0}}, {{192,192,160,  0}}, {{240,251,255,  0}}, {{164,160,160,  0}},
+    {{128,128,128,  0}}, {{  0,  0,255,  0}}, {{  0,255,  0,  0}}, {{  0,255,255,  0}},
+    {{255,  0,  0,  0}}, {{255,  0,255,  0}}, {{255,255,  0,  0}}, {{255,255,255,  0}}
+ };
 
 
 FB_GOP_PaletteEntry stGOPCurrentPalInfo[GOP_PALETTE_ENTRY_NUM]={};

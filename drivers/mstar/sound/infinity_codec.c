@@ -60,6 +60,7 @@ static u16 codec_reg_backup[AUD_REG_LEN] =
   0,     //AUD_PLAYBACK_DPGA
   0,   //AUD_CAPTURE_DPGA
   0,   //AUD_MIC_GAIN
+  0,   //AUD_MICPRE_GAIN,
   0,   //AUD_LINEIN_GAIN
   0,   //AUD_DIGMIC_PWR
   0,   //AUD_DBG_SINERATE
@@ -75,6 +76,7 @@ static u16 codec_reg[AUD_REG_LEN] =
   0,     //AUD_PLAYBACK_DPGA
   0,   //AUD_CAPTURE_DPGA
   0,   //AUD_MIC_GAIN
+  0,   //AUD_MICPRE_GAIN,
   0,   //AUD_LINEIN_GAIN
   0,   //AUD_DIGMIC_PWR
   0,   //AUD_DBG_SINERATE
@@ -86,8 +88,6 @@ static struct infinity_pcm_dma_data infinity_pcm_dma_wr[] =
   {
     .name		= "DMA writer",
     .channel	= BACH_DMA_WRITER1,
-    //.dma_addr	= NULL,
-    //.dma_size	= 0,
   },
 };
 
@@ -96,10 +96,13 @@ static struct infinity_pcm_dma_data infinity_pcm_dma_rd[] =
   {
     .name		= "DMA reader",
     .channel	= BACH_DMA_READER1,
-    //.dma_addr	= NULL,
-    //.dma_size	= 0,
   },
 };
+
+#ifdef CONFIG_OF
+static int nGpio=-1;
+static int nOn=0;
+#endif
 
 static int snd_soc_codec_update_bits(
 	struct snd_soc_codec *codec, unsigned int reg,
@@ -286,19 +289,17 @@ static int infinity_soc_codec_probe(struct snd_soc_codec *codec)
 
    AUD_PRINTF(CODEC_LEVEL, "%s: codec = %s\n", __FUNCTION__, dev_name(codec->dev));
 
-  //TODO: Add chip Initialization
+  //chip Initialization
   InfinitySysInit();
   AUD_PRINTF(TRACE_LEVEL, "Init system register\n");
 
+  //init codec array
   for (i = 0; i < AUD_REG_LEN; i++)
   {
     snd_soc_write(codec, i, codec_reg_backup[i]);
   }
 
-  //snd_soc_dapm_disable_pin(&codec->dapm, "DMARD1");
-  //snd_soc_dapm_disable_pin(&codec->dapm, "DMARD2");
-  //snd_soc_dapm_sync(&codec->dapm);
-  //memcpy(codec_reg_backup, codec_reg, sizeof(codec_reg));
+
 
   return 0;
 }
@@ -387,15 +388,15 @@ int infinity_codec_write(struct snd_soc_codec *codec, unsigned int reg, unsigned
 
     if (value == 0)
     {
-        //TODO: Switch Mux to DMA Reader
+        //Switch Mux to DMA Reader
       InfinitySetMux2(BACH_MUX2_MMC1,1);
       InfinityDmaSetRate(BACH_DMA_READER1,InfinityRateFromU32(InfinityDmaGetRate(BACH_DMA_READER1)));
     }
     else if (value == 1)
     {
-      //TODO: Switch Mux to ADC Input
+      //Switch Mux to ADC Input
       InfinitySetMux2(BACH_MUX2_MMC1,0);
-      //if (snd_soc_dapm_get_pin_status(&codec->dapm, "DMAWR"))
+
       if(InfinityDmaIsWork(BACH_DMA_WRITER1))
       {
         //Set the same sample rate with dma writer
@@ -454,7 +455,27 @@ int infinity_codec_write(struct snd_soc_codec *codec, unsigned int reg, unsigned
     }
     if ((codec_reg[reg] ^ value) & 0x2)
     {
+#ifdef CONFIG_OF
+		if(nGpio!=-1)
+		{
+		    if(!(value & 0x2))
+		    {
+                gpio_direction_output(nGpio,!nOn);
+		    }
+		}
+#endif
         (value & 0x2) ? InfinityOpenAtop(BACH_ATOP_LINEOUT) : InfinityCloseAtop(BACH_ATOP_LINEOUT);
+#ifdef CONFIG_OF
+		if(nGpio!=-1)
+		{
+
+		    if(value & 0x2)
+		    {
+                gpio_direction_output(nGpio,nOn);
+		    }
+		}
+#endif
+        infinity_audio_clk_disable(codec,1);
     }
     break;
 
@@ -479,11 +500,15 @@ int infinity_codec_write(struct snd_soc_codec *codec, unsigned int reg, unsigned
     break;
   case AUD_MIC_GAIN:
     AUD_PRINTF(TRACE_LEVEL, "Setup MIC gain = %d\n", value);
-    InfinityAtopMicGain(value);
+    InfinityAtopAdcGain(value,BACH_ATOP_MIC);
+    break;
+  case AUD_MICPRE_GAIN:
+    AUD_PRINTF(TRACE_LEVEL, "Setup MIC PRE gain = %d\n", value);
+    InfinityAtopMicPreGain(value);
     break;
   case AUD_LINEIN_GAIN:
     AUD_PRINTF(TRACE_LEVEL, "Setup LineIn gain = %d\n", value);
-    InfinityAtopLineInGain(value);
+    InfinityAtopAdcGain(value,BACH_ATOP_LINEIN);
     break;
   case AUD_DIGMIC_PWR:
     AUD_PRINTF(TRACE_LEVEL,"AUD_DIGMIC_PWR value = %d\n",value);
@@ -532,10 +557,10 @@ int infinity_codec_write(struct snd_soc_codec *codec, unsigned int reg, unsigned
 static const unsigned int infinity_dpga_tlv[] =
 {
   TLV_DB_RANGE_HEAD(1),
-  0, 76, TLV_DB_LINEAR_ITEM(-64, 12),
+  0, 94, TLV_DB_LINEAR_ITEM(-64, 30),
 };
 
-static const char *infinity_chip[]     = {"iNfinity_2.0"};
+static const char *infinity_chip[]     = {"iNfinity3_0.0"};
 
 static const struct soc_enum infinity_chip_enum =
   SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, 1, infinity_chip);
@@ -547,9 +572,10 @@ static const struct snd_kcontrol_new infinity_snd_controls[] =
   //TODO: Modify according volume or gain level
   SOC_ENUM(CHIP_VERSION, infinity_chip_enum),
 
-  SOC_SINGLE_TLV(MAIN_PLAYBACK_VOLUME, AUD_PLAYBACK_DPGA, 0, 76, 0, infinity_dpga_tlv),
-  SOC_SINGLE_TLV(MAIN_CAPTURE_VOLUME, AUD_CAPTURE_DPGA, 0, 76, 0, infinity_dpga_tlv),
-  SOC_SINGLE_TLV(MIC_GAIN_SELECTION, AUD_MIC_GAIN, 0, 31, 0, NULL),
+  SOC_SINGLE_TLV(MAIN_PLAYBACK_VOLUME, AUD_PLAYBACK_DPGA, 0, 94, 0, infinity_dpga_tlv),
+  SOC_SINGLE_TLV(MAIN_CAPTURE_VOLUME, AUD_CAPTURE_DPGA, 0, 94, 0, infinity_dpga_tlv),
+  SOC_SINGLE_TLV(MICIN_GAIN_LEVEL, AUD_MIC_GAIN, 0, 7, 0, NULL),
+  SOC_SINGLE_TLV(MICIN_PREGAIN_LEVEL, AUD_MICPRE_GAIN, 0, 3, 0, NULL),
   SOC_SINGLE_TLV(LINEIN_GAIN_LEVEL, AUD_LINEIN_GAIN, 0, 7, 0, NULL),
   SOC_SINGLE_TLV(SINEGEN_GAIN_LEVEL, AUD_DBG_SINEGAIN, 0, 4, 0, NULL),
   SOC_SINGLE_RANGE(SINEGEN_RATE_SELECT, AUD_DBG_SINERATE, 0, 0, 10, 0)
@@ -578,24 +604,18 @@ static const struct snd_soc_dapm_widget infinity_dapm_widgets[] =
   SND_SOC_DAPM_MUX(MAIN_PLAYBACK_MUX, SND_SOC_NOPM, 0, 0, &infinity_output_mux_controls),
 
   SND_SOC_DAPM_OUTPUT("LINEOUT"),
-  //SND_SOC_DAPM_OUTPUT("HPOUT"),
 
-  //SND_SOC_DAPM_AIF_OUT("DMAWR1", "Sub Capture",  0, SND_SOC_NOPM, 0, 0),
   SND_SOC_DAPM_AIF_OUT("DMAWR", "Main Capture",   0, SND_SOC_NOPM, 0, 0),
-  //SND_SOC_DAPM_AIF_IN("DMARD1",  "Main Playback", 0, SND_SOC_NOPM, 0, 0),
-  //SND_SOC_DAPM_AIF_IN("DMARD2",  "Sub Playback",  0, SND_SOC_NOPM, 0, 0),
+  SND_SOC_DAPM_AIF_IN("DMARD", "Main Playback",   0, SND_SOC_NOPM, 0, 0),
   SND_SOC_DAPM_AIF_IN("DIGMIC", NULL,   0, AUD_DIGMIC_PWR, 0, 0),
+  SND_SOC_DAPM_SIGGEN("SINEGEN"),
 
-  SND_SOC_DAPM_INPUT("DMARD"),
+  //SND_SOC_DAPM_INPUT("DMARD"),
   SND_SOC_DAPM_INPUT("LINEIN"),
   SND_SOC_DAPM_INPUT("MICIN"),
 
-
   SND_SOC_DAPM_DAC("DAC",   NULL, AUD_ATOP_PWR, 1, 0),
-  //SND_SOC_DAPM_DAC("Hp Amp",NULL, AUD_ATOP_PWR, 1, 0),
   SND_SOC_DAPM_ADC("ADC",   NULL, AUD_ATOP_PWR, 0, 0),
-  //SND_SOC_DAPM_ADC("Mic Bias", NULL, AUD_ATOP_PWR, 2, 0),
-  //SND_SOC_DAPM_MICBIAS("Mic Bias", AUD_ATOP_PWR, 5, 0),
 
   SND_SOC_DAPM_PGA("Main Playback DPGA", AUD_DPGA_PWR, 0, 0, NULL, 0),
   SND_SOC_DAPM_PGA("Main Capture DPGA",  AUD_DPGA_PWR, 1, 0, NULL, 0),
@@ -613,14 +633,12 @@ static const struct snd_soc_dapm_route infinity_codec_routes[] =
 #else
   {"Main Playback Mux", "ADC In",     "ADC"},
 #endif
-  {"Main Playback Mux", "Sine Gen",   "DMARD"},
+  {"Main Playback Mux", "Sine Gen",   "SINEGEN"},
   {"Main Playback DPGA", NULL, "Main Playback Mux"},
 
   {"DAC",     NULL, "Main Playback DPGA"},
-  //{"Hp Amp",  NULL, "Main Playback DPGA"},
 
   {"LINEOUT", NULL, "DAC"},
- // {"HPOUT",   NULL, "Hp Amp"},
 
   {"DMAWR", NULL, "Main Capture DPGA"},
 #ifdef DIGMIC_EN
@@ -642,61 +660,79 @@ static struct snd_soc_codec_driver infinity_soc_codec_drv =
   .remove =   infinity_soc_codec_remove,
   .suspend =  infinity_soc_codec_suspend,
   .resume =   infinity_soc_codec_resume,
-
-  //.idle_bias_off = TRUE,
-
   .write = infinity_codec_write,
   .read  = infinity_codec_read,
-  //.reg_cache_size = sizeof(codec_reg);
-  //.reg_word_size = 1,
+
   .dapm_widgets = infinity_dapm_widgets,
   .num_dapm_widgets = ARRAY_SIZE(infinity_dapm_widgets),
   .dapm_routes = infinity_codec_routes,
   .num_dapm_routes = ARRAY_SIZE(infinity_codec_routes),
   .controls =	infinity_snd_controls,
   .num_controls = ARRAY_SIZE(infinity_snd_controls),
-  //.reg_cache_size = WM8994_MAX_REGISTER,
-  //.volatile_register = wm8994_soc_volatile,
 };
 
 static int infinity_codec_probe(struct platform_device *pdev)
 {
 
   u32 val;
-	int ret;
+  int ret;
+  u32 array[2];
   struct device_node *node = pdev->dev.of_node; //(struct device_node *)platform_get_drvdata(pdev);
 
   AUD_PRINTF(TRACE_LEVEL, "%s enter\r\n", __FUNCTION__);
 
 
-	ret = of_property_read_u32(node, "playback-volume-level", &val);
-	if (ret == 0)
-	{
+  ret = of_property_read_u32(node, "playback-volume-level", &val);
+  if (ret == 0)
+  {
     AUD_PRINTF(TRACE_LEVEL, "Get playback-volume-level = %d\n", val);
     codec_reg_backup[AUD_PLAYBACK_DPGA] = val;
-	}
+  }
 
-	ret = of_property_read_u32(node, "capture-volume-level", &val);
-	if (ret == 0)
-	{
+  ret = of_property_read_u32(node, "capture-volume-level", &val);
+  if (ret == 0)
+  {
     AUD_PRINTF(TRACE_LEVEL, "Get capture-volume-level = %d\n", val);
     codec_reg_backup[AUD_CAPTURE_DPGA] = val;
-	}
+  }
 
-	ret = of_property_read_u32(node, "micin-gain-sel", &val);
-	if (ret == 0)
-	{
-    AUD_PRINTF(TRACE_LEVEL, "Get micin-gain-sel = %d\n", val);
+  ret = of_property_read_u32(node, "micin-gain-level", &val);
+  if (ret == 0)
+  {
+    AUD_PRINTF(TRACE_LEVEL, "Get micin-gain-level = %d\n", val);
     codec_reg_backup[AUD_MIC_GAIN] = val;
-	}
+  }
 
-	ret = of_property_read_u32(node, "linein-gain-level", &val);
-	if (ret == 0)
-	{
+  ret = of_property_read_u32(node, "micin-pregain-level", &val);
+  if (ret == 0)
+  {
+    AUD_PRINTF(TRACE_LEVEL, "Get micin-pregain-level = %d\n", val);
+    codec_reg_backup[AUD_MICPRE_GAIN] = val;
+  }
+
+  ret = of_property_read_u32(node, "linein-gain-level", &val);
+  if (ret == 0)
+  {
     AUD_PRINTF(TRACE_LEVEL, "Get linein-gain-level = %d\n", val);
     codec_reg_backup[AUD_LINEIN_GAIN] = val;
-	}
+  }
 
+  //  enable for line-out
+  ret = of_property_read_u32_array(node, "amp-gpio", array, 2 );
+  if (ret == 0)
+  {
+	ret = gpio_request(array[0],"amp-gpio");
+	if(ret == 0)
+	{
+	  nGpio = array[0];
+	  nOn = array[1];
+		//gpio_direction_output(array[0],array[1]);
+	  gpio_direction_output(nGpio,!nOn);
+      AUD_PRINTF(TRACE_LEVEL, "Get amp-gpio = %d %d\n", array[0], array[1]);
+	}
+	else
+	  nGpio = -1;
+  }
 
   //dev_set_name(&pdev->dev, "infinity-codec");
 
@@ -742,7 +778,7 @@ static int __init infinity_codec_init(void)
     return -ENOMEM;
   }
 
-  np = of_find_compatible_node(NULL, NULL, "mstar,infinity-audio");
+  np = of_find_compatible_node(NULL, NULL, "mstar,infinity3-audio");
   if (np)
   {
     infinity_codec_device->dev.of_node = of_node_get(np);
@@ -777,7 +813,8 @@ module_init(infinity_codec_init);
 module_exit(infinity_codec_exit);
 
 #endif
+MODULE_LICENSE("GPL");
 
 /* Module information */
-MODULE_AUTHOR("Roger Lai, roger.lai@mstarsemi.com");
-MODULE_DESCRIPTION("Infinity Bach Audio ALSA SoC Codec");
+MODULE_AUTHOR("Trevor Wu, trevor.wu@mstarsemi.com");
+MODULE_DESCRIPTION("Infinity3 Bach Audio ALSA SoC Codec");

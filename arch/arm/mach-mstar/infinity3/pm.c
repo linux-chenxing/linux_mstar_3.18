@@ -10,29 +10,29 @@
 #define HERE    printk(KERN_ERR"%s: %d\n",__FILE__,__LINE__)
 
 extern void infinity_suspend_imi(void);
-static void (*infinity_suspend_imi_fn)(void);
+static void (*mstar_suspend_imi_fn)(void);
 static void __iomem *suspend_imi_vbase;
 
-static int infinity_suspend_ready(unsigned long ret)
+static int mstar_suspend_ready(unsigned long ret)
 {
-    infinity_suspend_imi_fn = fncpy(suspend_imi_vbase, (void*)&infinity_suspend_imi, 0x1000);
+    mstar_suspend_imi_fn = fncpy(suspend_imi_vbase, (void*)&infinity_suspend_imi, 0x1000);
 
     //flush cache to ensure memory is updated before self-refresh
     __cpuc_flush_kern_all();
     //flush tlb to ensure following translation is all in tlb
     local_flush_tlb_all();
-    infinity_suspend_imi_fn();
+    mstar_suspend_imi_fn();
     return 0;
 }
 
-static int infinity_suspend_enter(suspend_state_t state)
+static int mstar_suspend_enter(suspend_state_t state)
 {
     FIN;
     switch (state) 
     {
         case PM_SUSPEND_MEM:
             printk(KERN_INFO "state = PM_SUSPEND_MEM\n");
-            cpu_suspend(0, infinity_suspend_ready);
+            cpu_suspend(0, mstar_suspend_ready);
             break;
         default:
             return -EINVAL;
@@ -41,18 +41,18 @@ static int infinity_suspend_enter(suspend_state_t state)
     return 0;
 }
 
-struct platform_suspend_ops infinity_suspend_ops = {
-    .enter    = infinity_suspend_enter,
+struct platform_suspend_ops mstar_suspend_ops = {
+    .enter    = mstar_suspend_enter,
     .valid    = suspend_valid_only_mem,
 };
 
 
-int __init infinity_pm_init(void)
+int __init mstar_pm_init(void)
 {
     unsigned int resume_pbase = virt_to_phys(cpu_resume);
     suspend_imi_vbase = __arm_ioremap_exec(0xA0010000, 0x1000, false);  //put suspend code at IMI offset 64K;
 
-    suspend_set_ops(&infinity_suspend_ops);
+    suspend_set_ops(&mstar_suspend_ops);
 
     OUTREG16(0x1F001CEC, (resume_pbase & 0xFFFF));
     OUTREG16(0x1F001CF0, ((resume_pbase >> 16) & 0xFFFF));

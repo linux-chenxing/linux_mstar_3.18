@@ -27,8 +27,8 @@ extern void MDrv_GPIO_Pad_Odn(U8 u8IndexGPIO);
 
 
 //#define IRCUT_DEBUG  1
-int mGpioNum=78;
-int mIntNum=182;
+u32 mGpioNum=78;
+u32 mIntNum=182;
 #ifdef IRCUT_DEBUG
 #define IRCUT_DBG(fmt, arg...) printk(KERN_INFO fmt, ##arg)
 #else
@@ -52,7 +52,10 @@ static irqreturn_t ircut_handler(int irq, struct uio_info *dev_info)
     IRCUT_DBG("ms_ircut_level=%d\n",level);
     IRCUT_DBG("ms_ircut_level irq=%d\n",irq);
     data = irq_get_irq_data(irq);
-    data->chip->irq_set_type(data, level?1:0);
+    //data->chip->irq_set_type(data, level?1:0);
+    if(!data)
+        return -ENODEV;
+    data->chip->irq_set_type(data, level?IRQ_TYPE_EDGE_FALLING:IRQ_TYPE_EDGE_RISING);
 
     return IRQ_HANDLED;
 }
@@ -74,7 +77,11 @@ static int ms_ircut_probe(struct platform_device *pdev)
 		printk("Error:[infinity-ircut] No device match found\n");
 		return -ENODEV;
 	}
-    of_property_read_u32(node, "ircut-gpio-num", &mGpioNum);
+
+	if (of_property_read_u32(node, "ircut-gpio-num", &mGpioNum)) {
+		pr_err("%s get failed\n", "ircut-gpio-num");
+		return -ENODEV;
+	}
     IRCUT_DBG("11111111 u8GpioNum=%d\n",mGpioNum);
 
 	MDrv_GPIO_Pad_Set(mGpioNum);
@@ -99,6 +106,7 @@ static int ms_ircut_probe(struct platform_device *pdev)
     if(info->mem[0].addr == 0)
     {
         IRCUT_ERR("Invalid memory resource\n");
+        kfree(info);
         return -ENOMEM;
     }
 
@@ -116,6 +124,7 @@ static int ms_ircut_probe(struct platform_device *pdev)
         IRCUT_ERR("uio_register failed %d\n",ret);
         //iounmap(info->mem[0].internal_addr);
        // printk("uio_register failed %d\n",ret);
+        kfree(info);
         return -ENODEV;
     }
     platform_set_drvdata(pdev, info);

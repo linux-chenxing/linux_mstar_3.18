@@ -99,6 +99,8 @@
 //-------------------------------------------------------------------------------------------------
 //  DEFINE
 //-------------------------------------------------------------------------------------------------
+#define SCLTASKHANDLERMAX                     5
+#define SCLTASKIDMAX                     2
 #define SCLDMA_DBG_Thread                   0
 #define DoubleBufferDefaultSet              0  // 0 close 1 open
 #define DoubleBufferStatus                  gbDBStatus
@@ -122,7 +124,7 @@
                                                              (client & 0xFF)          | \
                                                              ((irqnum & 0xFF) << 8)   | \
                                                              ((mode & 0xFF)<<16))
-
+#define MAX_BUFFER_COUNT 4
 //-------------------------------------------------------------------------------------------------
 //  ENUM
 //-------------------------------------------------------------------------------------------------
@@ -161,9 +163,9 @@ typedef enum
 {
     E_SCLDMA_1_FRM_W = 0,
     E_SCLDMA_1_SNP_W = 1,
-    E_SCLDMA_1_IMI_W = 2,
-    E_SCLDMA_2_FRM_W = 3,
-    E_SCLDMA_2_FRM2_W = 4,
+    E_SCLDMA_2_FRM_W = 2,
+    E_SCLDMA_2_FRM2_W = 3,
+    E_SCLDMA_1_IMI_W = 4,
     E_SCLDMA_2_IMI_W = 5,
     E_SCLDMA_3_FRM_R = 6,
     E_SCLDMA_3_FRM_W = 7,
@@ -257,12 +259,15 @@ typedef enum
 {
     E_SCLDMA_FLAG_NEXT_ON   = 0x01, // for non double buffer mode, if active wait for blanking
     E_SCLDMA_FLAG_BLANKING  = 0x02, // if reset dma,active id is temporarily state, need to handle until first frame done.
-    E_SCLDMA_FLAG_DMATRIGON = 0x03, // already not use
     E_SCLDMA_FLAG_DMAOFF    = 0x04, // ref E_SCLDMA_ACTIVE_BUFFER_OFF,dma off
     E_SCLDMA_FLAG_ACTIVE    = 0x08, // ref E_SCLDMA_ACTIVE_BUFFER_ACT,dma act
     E_SCLDMA_FLAG_EVERDMAON = 0x10, // like E_SCLDMA_ACTIVE_BUFFER_OMX_RINGFULL
     E_SCLDMA_FLAG_FRMIN     = 0x20, // this frame is integrate.
     E_SCLDMA_FLAG_FRMDONE   = 0x40, // dma done.(idle)
+    E_SCLDMA_FLAG_FRMIGNORE = 0x80, // dma done but ignore.
+    E_SCLDMA_FLAG_DROP      = 0x100, // set drop this frame
+    E_SCLDMA_FLAG_NEXT_OFF  = 0x200, // for non double buffer mode, if active wait for blanking
+    E_SCLDMA_FLAG_DMAFORCEOFF = 0x400, // ref E_SCLDMA_ACTIVE_BUFFER_OFF,dma off
 }EN_SCLDMA_FLAG_TYPE;
 
 typedef enum
@@ -298,7 +303,8 @@ typedef struct
 typedef struct
 {
     MS_BOOL flag;
-    MS_S32 s32Taskid;
+    MS_S32 s32Taskid[SCLTASKIDMAX];
+    MS_S32 s32HandlerId[SCLTASKHANDLERMAX];
     MSOS_ST_TASKSTRUCT sttask;
 }ST_SCLDMA_THREAD_CONFIG;
 
@@ -332,9 +338,9 @@ typedef struct
     EN_SCLDMA_RW_MODE_TYPE enRWMode;
     EN_SCLDMA_COLOR_TYPE enColor;
     EN_SCLDMA_BUFFER_MODE_TYPE enBuffMode;
-    MS_U32 u32Base_Y[4];
-    MS_U32 u32Base_C[4];
-    MS_U32 u32Base_V[4];
+    MS_U32 u32Base_Y[MAX_BUFFER_COUNT];
+    MS_U32 u32Base_C[MAX_BUFFER_COUNT];
+    MS_U32 u32Base_V[MAX_BUFFER_COUNT];
     MS_U8  u8MaxIdx;
     MS_U16 u16Width;
     MS_U16 u16Height;
@@ -376,7 +382,7 @@ typedef struct
     EN_SCLDMA_RW_MODE_TYPE enRWMode;
     ST_SCLDMA_ONOFF_CONFIG stOnOff;
     MS_U8       u8ISPcount;
-    MS_U32      u32FRMDoneTime;
+    MS_U64      u64FRMDoneTime;
 }ST_SCLDMA_ACTIVE_BUFFER_CONFIG;
 typedef struct
 {
@@ -412,14 +418,14 @@ typedef struct
     MS_BOOL bDMAOnOff[E_SCLDMA_CLIENT_NUM];
     MS_BOOL bDMAidx[E_SCLDMA_CLIENT_NUM];
     MS_BOOL bMaxid[E_SCLDMA_CLIENT_NUM];
-    MS_BOOL bDmaflag[E_SCLDMA_CLIENT_NUM];//bit0 next time off , bit 1 blanking ,bit 2 DMAonoff, bit3 no DMA on
+    MS_U16 bDmaflag[E_SCLDMA_CLIENT_NUM];//bit0 next time off , bit 1 blanking ,bit 2 DMAonoff, bit3 no DMA on
     MS_U64 u64mask;
     EN_SCLDMA_COLOR_TYPE enColor[E_SCLDMA_CLIENT_NUM];
-    MS_U32 u32Base_Y[E_SCLDMA_CLIENT_NUM][4];
-    MS_U32 u32Base_C[E_SCLDMA_CLIENT_NUM][4];
-    MS_U32 u32Base_V[E_SCLDMA_CLIENT_NUM][4];
-    MS_BOOL u16FrameWidth[E_SCLDMA_CLIENT_NUM];
-    MS_BOOL u16FrameHeight[E_SCLDMA_CLIENT_NUM];
+    MS_U32 u32Base_Y[E_SCLDMA_CLIENT_NUM][MAX_BUFFER_COUNT];
+    MS_U32 u32Base_C[E_SCLDMA_CLIENT_NUM][MAX_BUFFER_COUNT];
+    MS_U32 u32Base_V[E_SCLDMA_CLIENT_NUM][MAX_BUFFER_COUNT];
+    MS_U16 u16FrameWidth[E_SCLDMA_CLIENT_NUM];
+    MS_U16 u16FrameHeight[E_SCLDMA_CLIENT_NUM];
 #if SCLDMA_IRQ_EN
     MS_S32 s32IrqTaskid;
     MS_S32 s32IrqEventId;
@@ -434,11 +440,20 @@ typedef struct
     MS_U32 u32Trigcount;
     EN_SCLDMA_COLOR_TYPE enColor;
     EN_SCLDMA_BUFFER_MODE_TYPE enBuffMode;
-    MS_U32 u32Base_Y[4];
-    MS_U32 u32Base_C[4];
-    MS_U32 u32Base_V[4];
+    MS_U32 u32Base_Y[MAX_BUFFER_COUNT];
+    MS_U32 u32Base_C[MAX_BUFFER_COUNT];
+    MS_U32 u32Base_V[MAX_BUFFER_COUNT];
     MS_U8  u8MaxIdx;
     MS_U8  bDMAEn;
+    MS_U8  bDMAReadIdx;
+    MS_U8  bDMAWriteIdx;
+    MS_U8  bDMAFlag;
+    MS_U8  bSendPoll;
+    MS_U32 u32FrameDoneTime;
+    MS_U32 u32SendTime;
+    MS_U8  u8Count;
+    MS_U8  u8ResetCount;
+    MS_U8  u8DMAErrCount;
 }ST_SCLDMA_ATTR_TYPE;
 //-------------------------------------------------------------------------------------------------
 //  Prototype

@@ -20,6 +20,7 @@
 /******************************************************************************/
 /*                           Header Files                                     */
 /* ****************************************************************************/
+#ifdef MSOS_TYPE_LINUX_KERNEL
 #include <linux/time.h>
 #include <linux/delay.h>
 #include <linux/string.h>
@@ -30,15 +31,26 @@
 #include <linux/interrupt.h>
 #include <linux/jiffies.h>
 #include <linux/fs.h>
+#include <linux/clk.h>
+#include <linux/clk-provider.h>
 #include <linux/wait.h>
 #include <linux/poll.h>
+#include <linux/workqueue.h>
+#include <asm/uaccess.h>
+#include <linux/platform_device.h>
 #include <linux/vmalloc.h>          /* seems do not need this */
+#include <linux/of.h>
+#include <linux/of_irq.h>
+#include <linux/of_address.h>
+#endif
 #include "MsCommon.h"
 #include "MsTypes.h"
 #include "MsIRQ.h"
 #include "MsOS.h"
 #include "halCHIP.h"
-
+#include "mdrv_scl_dbg.h"
+#include "mdrv_vip_st.h"
+#include "mdrv_vip.h"
 
 /********************************************************************************/
 /*                           Macro                                              */
@@ -104,6 +116,15 @@ typedef struct
 
 static MsOS_Mutex_Info          _MsOS_Mutex_Info[MSOS_MUTEX_MAX];
 static MsOS_Spinlock_Info       _MsOS_Spinlock_Info[MSOS_SPINLOCK_MAX];
+unsigned char gu8SclFrameDelay;
+unsigned char gbDigitalZoomDropMode = 0;
+E_VIPSetRule_TYPE genVIPSetRule;
+#define SCL_IRQID_Default 0x54
+#define CMDQ_IRQID_Default 0x51
+MS_BOOL gbInit = FALSE;
+
+static MS_U32 gSCLIRQID[E_SCLIRQ_MAX] = {SCL_IRQID_Default,(SCL_IRQID_Default+38),(SCL_IRQID_Default+39)}; //INT_IRQ_AU_SYSTEM;
+static MS_U32 gCMDQIRQID[E_CMDQIRQ_MAX] = {CMDQ_IRQID_Default,(CMDQ_IRQID_Default+35),(CMDQ_IRQID_Default+36)}; //INT_IRQ_AU_SYSTEM;
 
 static                          DEFINE_SPINLOCK(_MsOS_Mutex_Mutex);
 #define MUTEX_MUTEX_LOCK()      spin_lock(&_MsOS_Mutex_Mutex)
@@ -117,8 +138,26 @@ typedef struct
     MS_BOOL             bUsed;
     struct task_struct* pstThreadInfo;
 } MsOS_Task_Info;
+typedef struct
+{
+    MS_BOOL             bUsed;
+    MSOS_ST_WORKQUEUE*  pstWorkQueueInfo;
+} MsOS_WorkQueue_Info;
+typedef struct
+{
+    MS_BOOL             bUsed;
+    MSOS_ST_WORK        stWorkEventInfo;
+} MsOS_WorkEvent_Info;
+typedef struct
+{
+    MS_BOOL             bUsed;
+    MSOS_ST_TASKLET     stTaskletInfo;
+} MsOS_Tasklet_Info;
 
 static MsOS_Task_Info   _MsOS_Task_Info[MSOS_TASK_MAX];
+static MsOS_WorkQueue_Info   _MsOS_WorkQueue_Info[MSOS_WORKQUEUE_MAX];
+static MsOS_WorkEvent_Info   _MsOS_WorkEvent_Info[MSOS_WORK_MAX];
+static MsOS_Tasklet_Info   _MsOS_Tasklet_Info[MSOS_TASKLET_MAX];
 
 #ifdef MSOS_MUTEX_USE_SEM
 struct semaphore _MsOS_Task_Mutex;
@@ -141,8 +180,18 @@ typedef struct
     wait_queue_head_t           stSemaphore;
     // pthread_cond_t              stSemaphore; // ?????????????
 } MsOS_EventGroup_Info;
+typedef struct
+{
+    MS_BOOL                     bUsed;
+    MS_U32                      u32EventGroup;
+    MS_U8                       u8Wpoint;
+    MS_U8                       u8Rpoint;
+} MsOS_RingEventGroup_Info;
 
 static MsOS_EventGroup_Info     _MsOS_EventGroup_Info[MSOS_EVENTGROUP_MAX];
+#if USE_RTK
+static MsOS_RingEventGroup_Info     _MsOS_RingEventGroup_Info[MSOS_EVENTGROUP_MAX];
+#endif
 static                          DEFINE_SPINLOCK(_MsOS_EventGroup_Mutex);
 #define EVENT_MUTEX_LOCK()      spin_lock(&_MsOS_EventGroup_Mutex)
 #define EVENT_MUTEX_UNLOCK()    spin_unlock(&_MsOS_EventGroup_Mutex)
@@ -183,10 +232,10 @@ MS_U32 MsOS_GetSystemTime (void)
 }
 MS_U64 MsOS_GetSystemTimeStamp (void)
 {
-    struct timeval         tv;
+    struct timespec         tv;
     MS_U64 u64TimeStamp;
-    do_gettimeofday(&tv);
-    u64TimeStamp =(MS_U64)tv.tv_sec* 1000000ULL+ (MS_U64)tv.tv_usec;
+    do_posix_clock_monotonic_gettime(&tv);
+    u64TimeStamp =(MS_U64)tv.tv_sec* 1000000ULL+ (MS_U64)(tv.tv_nsec/1000LL);
     return u64TimeStamp;
 }
 
@@ -208,43 +257,8 @@ void MsOS_DelayTask (MS_U32 u32Ms)
 
 void MsOS_DelayTaskUs (MS_U32 u32Us)
 {
-    struct timespec TS1, TS2;
-    getnstimeofday(&TS1);
-    getnstimeofday(&TS2);
-
-    while((TS2.tv_nsec - TS1.tv_nsec)< (u32Us * 1000UL))
-    {
-        getnstimeofday(&TS2);
-    }
-#if 0
-    struct timespec req, rem;
-
-    req.tv_sec = 0;
-    req.tv_nsec = (long) (u32Us*1000UL);
-
-    while(1)
-    {
-        int err;
-
-        err = nanosleep(&req, &rem);
-        if(err==-1)
-        {
-            #if 0
-            switch(errno)
-            {
-                case EINTR:
-                    req.tv_sec = rem.tv_sec;
-                    req.tv_nsec = rem.tv_nsec;
-                    continue;
-                default:
-                    printk("nanosleep is interrupted: %d\n", errno);
-            }
-            #endif
-        }
-
-        break;
-    }
-#endif
+        //sleep in spinlock will cause deadlock
+    udelay(u32Us);
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -439,7 +453,6 @@ MS_S32 MsOS_CreateSpinlock ( MsOSAttribute eAttribute, char *pMutexName1, MS_U32
     MS_S32 s32Id, s32LstUnused = MSOS_SPINLOCK_MAX;
     MS_U8 pMutexName[MAX_MUTEX_NAME_LENGTH];
     MS_U32 u32MaxLen;
-
     if (NULL == pMutexName1)
     {
         return -1;
@@ -636,6 +649,52 @@ MS_BOOL MsOS_ObtainMutex (MS_S32 s32MutexId, MS_U32 u32WaitMs)
 /// @return FALSE : fail
 /// @note   Only the owner thread of the mutex can unlock it.
 //-------------------------------------------------------------------------------------------------
+char * MsOS_CheckMutex(char *str,char *end)
+{
+    MS_S32 s32MutexId;
+    for(s32MutexId=0;s32MutexId<MSOS_MUTEX_MAX;s32MutexId++)
+    {
+        if((_MsOS_Mutex_Info[s32MutexId].bUsed))
+        {
+            #ifdef MSOS_MUTEX_USE_SEM
+            if(_MsOS_Mutex_Info[s32MutexId].stMutex.count==0)
+            {
+                str += MsOS_scnprintf(str, end - str, "%s Lock\n",_MsOS_Mutex_Info[s32MutexId].u8Name);
+            }
+            else
+            {
+                str += MsOS_scnprintf(str, end - str, "%s UnLock\n",_MsOS_Mutex_Info[s32MutexId].u8Name);
+            }
+            #else
+            if(spin_is_locked(&(_MsOS_Mutex_Info[s32MutexId].stMutex)))
+            {
+                str += MsOS_scnprintf(str, end - str, "%s Lock\n",_MsOS_Mutex_Info[s32MutexId].u8Name);
+            }
+            else
+            {
+                str += MsOS_scnprintf(str, end - str, "%s UnLock\n",_MsOS_Mutex_Info[s32MutexId].u8Name);
+            }
+
+            #endif
+        }
+    }
+    for(s32MutexId=0;s32MutexId<MSOS_SPINLOCK_MAX;s32MutexId++)
+    {
+        if((_MsOS_Spinlock_Info[s32MutexId].bUsed))
+        {
+            if(spin_is_locked(&(_MsOS_Spinlock_Info[s32MutexId].stMutex)))
+            {
+                str += MsOS_scnprintf(str, end - str, "%s SpinLock\n",_MsOS_Spinlock_Info[s32MutexId].u8Name);
+            }
+            else
+            {
+                str += MsOS_scnprintf(str, end - str, "%s SpinUnLock\n",_MsOS_Spinlock_Info[s32MutexId].u8Name);
+            }
+
+        }
+    }
+    return str;
+}
 MS_BOOL MsOS_ReleaseMutex_IRQ (MS_S32 s32MutexId)
 {
     if ( (s32MutexId & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
@@ -666,11 +725,53 @@ MS_BOOL MsOS_ReleaseMutex (MS_S32 s32MutexId)
 #ifdef MSOS_MUTEX_USE_SEM
     up(&(_MsOS_Mutex_Info[s32MutexId].stMutex));
 #else
-    spin_unlock(&(_MsOS_Mutex_Info[s32MutexId].stMutex));
+    if(spin_is_locked(&(_MsOS_Mutex_Info[s32MutexId].stMutex)))
+    {
+        spin_unlock(&(_MsOS_Mutex_Info[s32MutexId].stMutex));
+    }
 #endif
 
     return TRUE;
 }
+MS_BOOL MsOS_ReleaseMutexAll (void)
+{
+    MS_S32 s32Id;
+    MS_BOOL bRet = 1;
+    for(s32Id=0;s32Id<MSOS_MUTEX_MAX;s32Id++)
+    {
+        if(TRUE == _MsOS_Mutex_Info[s32Id].bUsed)
+        {
+#ifdef MSOS_MUTEX_USE_SEM
+            if((_MsOS_Mutex_Info[s32Id].stMutex.count==0))
+#else
+            if(spin_is_locked(&(_MsOS_Mutex_Info[s32Id].stMutex)))
+#endif
+            {
+                bRet =0;
+                SCL_ERR("[MSOS]Mutex Not free %lx %s \n",s32Id,_MsOS_Mutex_Info[s32Id].u8Name);
+                #ifdef MSOS_MUTEX_USE_SEM
+                    up(&(_MsOS_Mutex_Info[s32Id].stMutex));
+                #else
+                    spin_unlock(&(_MsOS_Mutex_Info[s32Id].stMutex));
+                #endif
+            }
+        }
+    }
+    for(s32Id=0;s32Id<MSOS_SPINLOCK_MAX;s32Id++)
+    {
+        if(TRUE == _MsOS_Spinlock_Info[s32Id].bUsed)
+        {
+            bRet =0;
+            if(spin_is_locked(&(_MsOS_Spinlock_Info[s32Id].stMutex)))
+            {
+                SCL_ERR("[MSOS]spinlock Not free %lx %s \n",s32Id,_MsOS_Spinlock_Info[s32Id].u8Name);
+                spin_unlock_irq(&(_MsOS_Spinlock_Info[s32Id].stMutex));
+            }
+        }
+    }
+    return bRet;
+}
+
 
 //-------------------------------------------------------------------------------------------------
 // Get a mutex informaton
@@ -708,21 +809,6 @@ MS_BOOL MsOS_InfoMutex (MS_S32 s32MutexId, MsOSAttribute *peAttribute, char *pMu
 
 
 
-MS_U32 MsOS_PA2KSEG1_1(MS_U32 addr)
-{
-
-    // miu0
-    if ((0x00000000 <= addr) && (HAL_MIU1_BASE > addr))
-    {
-        return ((MS_U32)(addr) | (0x40000000));
-    }
-    // miu1
-    if ((HAL_MIU1_BASE <= addr) && (((MS_U64)HAL_MIU1_BASE * 2) > (MS_U64)addr))
-    {
-        return ((addr & ~(HAL_MIU1_BASE)) | 0xD0000000);
-    }
-    return 0;
-}
 
 
 void MsOS_FlushMemory(void)
@@ -758,19 +844,47 @@ MSOS_ST_TASKSTRUCT MsOS_GetTaskinfo(MS_S32 s32Id)
     stTask.pThread = _MsOS_Task_Info[(s32Id&0xFFFF)].pstThreadInfo;
     return stTask;
 }
-void MsOS_SetUserNice(MSOS_ST_TASKSTRUCT stTask, long nice)
+void MsOS_SetUserNice(MSOS_ST_TASKSTRUCT *stTask, long nice)
 {
-    set_user_nice(stTask.pThread,nice);
+    set_user_nice(stTask->pThread,nice);
 }
-int MsOS_GetUserNice(MSOS_ST_TASKSTRUCT stTask)
+int MsOS_GetUserNice(MSOS_ST_TASKSTRUCT *stTask)
 {
-    return (int)task_nice(stTask.pThread);
+    return (int)task_nice(stTask->pThread);
+}
+MS_BOOL MsOS_SleepTaskWork(MS_S32 s32TaskId)
+{
+    if ( (s32TaskId & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
+    {
+        return FALSE;
+    }
+    else
+    {
+        s32TaskId &= MSOS_ID_MASK;
+    }
+    set_current_state(TASK_INTERRUPTIBLE);
+    schedule();
+    //schedule_timeout_interruptible(msecs_to_jiffies(10000));
+    return 1;
+}
+MS_BOOL MsOS_SetTaskWork(MS_S32 s32TaskId)
+{
+    if ( (s32TaskId & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
+    {
+        return FALSE;
+    }
+    else
+    {
+        s32TaskId &= MSOS_ID_MASK;
+    }
+    wake_up_process(_MsOS_Task_Info[s32TaskId].pstThreadInfo);
+    return 1;
 }
 
 MS_S32 MsOS_CreateTask (TaskEntry pTaskEntry,
                      MS_U32 u32TaskEntryData,
                      MS_BOOL bAutoStart,
-                     char *pTaskName)
+                     const char *pTaskName)
 {
     // @FIXME:
     //     (1) eTaskPriority: Task priority is ignored here
@@ -833,15 +947,51 @@ MS_BOOL MsOS_DeleteTask (MS_S32 s32TaskId)
 #endif
     return TRUE;
 }
-
-
+int MsOS_GetIrqIDSCL(E_SCLIRQ_TYPE enType)
+{
+    return gSCLIRQID[enType];
+}
+int MsOS_GetIrqIDCMDQ(E_CMDQIRQ_TYPE enType)
+{
+    return gCMDQIRQID[enType];
+}
+int MsOS_SetSclIrqIDFormSys(MSOS_ST_PLATFORMDEVICE *pdev,unsigned char u8idx,E_SCLIRQ_TYPE enType)
+{
+    unsigned int SCL_IRQ_ID = 0; //INT_IRQ_AU_SYSTEM;
+    SCL_IRQ_ID  = of_irq_to_resource(pdev->dev.of_node, u8idx, NULL);
+    if (!SCL_IRQ_ID)
+    {
+        SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[MSOS] Can't Get SCL_IRQ\n");
+        return -EINVAL;
+    }
+    else
+    {
+        SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[MSOS] Get resource SCL_IRQ = 0x%x\n",SCL_IRQ_ID);
+        gSCLIRQID[enType] = SCL_IRQ_ID;
+    }
+    return 0;
+}
+int MsOS_SetCmdqIrqIDFormSys(MSOS_ST_PLATFORMDEVICE *pdev,unsigned char u8idx,E_CMDQIRQ_TYPE enType)
+{
+    unsigned int CMDQ_IRQ_ID = 0; //INT_IRQ_AU_SYSTEM;
+    CMDQ_IRQ_ID = of_irq_to_resource(pdev->dev.of_node, u8idx, NULL);
+    if (!CMDQ_IRQ_ID)
+    {
+        SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[MSOS] Can't Get CMDQ_IRQ\n");
+        return -EINVAL;
+    }
+    else
+    {
+        SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[MSOS] Get resource CMDQ_IRQ = 0x%x\n",CMDQ_IRQ_ID);
+        gCMDQIRQID[enType] = CMDQ_IRQ_ID;
+    }
+    return 0;
+}
 
 MS_BOOL MsOS_Init (void)
 {
     MS_U32 u32I;
-    static MS_BOOL bInit = FALSE;
-
-    if(bInit)
+    if(gbInit)
     {
         return TRUE;
     }
@@ -860,11 +1010,12 @@ MS_BOOL MsOS_Init (void)
 
     // Even Group
     spin_lock_init(&_MsOS_EventGroup_Mutex);
+    EVENT_MUTEX_LOCK();
     for( u32I=0; u32I<MSOS_EVENTGROUP_MAX; u32I++)
     {
         _MsOS_EventGroup_Info[u32I].bUsed = FALSE;
     }
-
+    EVENT_MUTEX_UNLOCK();
     //
     // Timer
     //
@@ -877,10 +1028,15 @@ MS_BOOL MsOS_Init (void)
         _MsOS_Timer_Info[u32I].first = 0;
         init_timer(&(_MsOS_Timer_Info[u32I].timer));
     }
-
-    bInit = TRUE;
+    gu8SclFrameDelay = 0;
+    gbInit = TRUE;
 
     return TRUE;
+}
+void MsOS_Exit (void)
+{
+    gbInit = 0;
+    gu8SclFrameDelay = 0;
 }
 
 
@@ -896,19 +1052,15 @@ MS_BOOL MsOS_Init (void)
 MS_S32 MsOS_CreateEventGroup (char *pEventName)
 {
     MS_S32 s32Id;
-
     EVENT_MUTEX_LOCK();
     for(s32Id=0; s32Id<MSOS_EVENTGROUP_MAX; s32Id++)
     {
         if(_MsOS_EventGroup_Info[s32Id].bUsed == FALSE)
         {
+            init_waitqueue_head(&_MsOS_EventGroup_Info[s32Id].stSemaphore);
+            _MsOS_EventGroup_Info[s32Id].bUsed = TRUE;
             break;
         }
-    }
-    if(s32Id < MSOS_EVENTGROUP_MAX)
-    {
-        _MsOS_EventGroup_Info[s32Id].bUsed = TRUE;
-        _MsOS_EventGroup_Info[s32Id].u32EventGroup= 0;
     }
     EVENT_MUTEX_UNLOCK();
 
@@ -917,11 +1069,39 @@ MS_S32 MsOS_CreateEventGroup (char *pEventName)
         return -1;
     }
     spin_lock_init(&_MsOS_EventGroup_Info[s32Id].stMutexEvent);
-    init_waitqueue_head(&_MsOS_EventGroup_Info[s32Id].stSemaphore);
+    spin_lock_irq(&_MsOS_EventGroup_Info[s32Id].stMutexEvent);
+    _MsOS_EventGroup_Info[s32Id].u32EventGroup= 0;
+    spin_unlock_irq(&_MsOS_EventGroup_Info[s32Id].stMutexEvent);
     s32Id |= MSOS_ID_PREFIX;
     return s32Id;
 }
+#if USE_RTK
+MS_BOOL MsOS_CreateEventGroupRing (MS_U8 u8Id)
+{
+    EVENT_MUTEX_LOCK();
+    if(_MsOS_RingEventGroup_Info[u8Id].bUsed == TRUE)
+    {
+        return 0;
+    }
+    if(u8Id < MSOS_EVENTGROUP_MAX)
+    {
+        spin_lock(&_MsOS_EventGroup_Info[u8Id].stMutexEvent);
+        _MsOS_RingEventGroup_Info[u8Id].bUsed = TRUE;
+        _MsOS_RingEventGroup_Info[u8Id].u32EventGroup= 0;
+        _MsOS_RingEventGroup_Info[u8Id].u8Rpoint= 0;
+        _MsOS_RingEventGroup_Info[u8Id].u8Wpoint= 0;
+        spin_unlock(&_MsOS_EventGroup_Info[u8Id].stMutexEvent);
+    }
+    EVENT_MUTEX_UNLOCK();
 
+    if(u8Id >= MSOS_EVENTGROUP_MAX)
+    {
+        return 0;
+    }
+    u8Id |= MSOS_ID_PREFIX;
+    return 1;
+}
+#endif
 //-------------------------------------------------------------------------------------------------
 /// Delete the event group
 /// @param  s32EventGroupId \b IN: event group ID
@@ -930,6 +1110,20 @@ MS_S32 MsOS_CreateEventGroup (char *pEventName)
 /// @note event group that are being waited on must not be deleted
 //-------------------------------------------------------------------------------------------------
 MS_BOOL MsOS_DeleteEventGroup (MS_S32 s32EventGroupId)
+{
+
+    // PTH_RET_CHK(pthread_mutex_destroy(&_MsOS_EventGroup_Info[s32EventGroupId].stMutex));
+    EVENT_MUTEX_LOCK();
+    spin_lock_irq(&_MsOS_EventGroup_Info[s32EventGroupId].stMutexEvent);
+    init_waitqueue_head(&_MsOS_EventGroup_Info[s32EventGroupId].stSemaphore);
+    _MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup= 0;
+    _MsOS_EventGroup_Info[s32EventGroupId].bUsed = FALSE;
+    spin_unlock_irq(&_MsOS_EventGroup_Info[s32EventGroupId].stMutexEvent);
+    EVENT_MUTEX_UNLOCK();
+    return TRUE;
+}
+#if USE_RTK
+MS_BOOL MsOS_DeleteEventGroupRing (MS_S32 s32EventGroupId)
 {
     if ( (s32EventGroupId & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
     {
@@ -940,15 +1134,12 @@ MS_BOOL MsOS_DeleteEventGroup (MS_S32 s32EventGroupId)
         s32EventGroupId &= MSOS_ID_MASK;
     }
 
-    init_waitqueue_head(&_MsOS_EventGroup_Info[s32EventGroupId].stSemaphore);
-    // PTH_RET_CHK(pthread_mutex_destroy(&_MsOS_EventGroup_Info[s32EventGroupId].stMutex));
     EVENT_MUTEX_LOCK();
-    _MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup= 0;
-    _MsOS_EventGroup_Info[s32EventGroupId].bUsed = FALSE;
+    MsOS_Memset(&_MsOS_RingEventGroup_Info[s32EventGroupId],0,sizeof(MsOS_RingEventGroup_Info));
     EVENT_MUTEX_UNLOCK();
     return TRUE;
 }
-
+#endif
 
 //-------------------------------------------------------------------------------------------------
 /// Set the event flag (bitwise OR w/ current value) in the specified event group
@@ -968,7 +1159,6 @@ MS_BOOL MsOS_SetEvent_IRQ (MS_S32 s32EventGroupId, MS_U32 u32EventFlag)
     {
         s32EventGroupId &= MSOS_ID_MASK;
     }
-
     spin_lock_irq(&_MsOS_EventGroup_Info[s32EventGroupId].stMutexEvent);
     SET_FLAG(_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup, u32EventFlag);
     spin_unlock_irq(&_MsOS_EventGroup_Info[s32EventGroupId].stMutexEvent);
@@ -992,7 +1182,51 @@ MS_BOOL MsOS_SetEvent (MS_S32 s32EventGroupId, MS_U32 u32EventFlag)
     wake_up(&_MsOS_EventGroup_Info[s32EventGroupId].stSemaphore);
     return TRUE;
 }
-
+#if USE_RTK
+MS_BOOL MsOS_SetEventRing (MS_S32 s32EventGroupId)
+{
+    SET_FLAG(_MsOS_RingEventGroup_Info[s32EventGroupId].u32EventGroup,
+        (MS_U32)(0x1 << _MsOS_RingEventGroup_Info[s32EventGroupId].u8Wpoint));
+    _MsOS_RingEventGroup_Info[s32EventGroupId].u8Wpoint++;
+    if(_MsOS_RingEventGroup_Info[s32EventGroupId].u8Wpoint>=32)
+    {
+        _MsOS_RingEventGroup_Info[s32EventGroupId].u8Wpoint = 0;
+    }
+    if(_MsOS_RingEventGroup_Info[s32EventGroupId].u8Wpoint == _MsOS_RingEventGroup_Info[s32EventGroupId].u8Rpoint)
+    {
+        SCL_ERR("SetEventRingBIT FULL W:%hhd ,R:%hhd\n",_MsOS_RingEventGroup_Info[s32EventGroupId].u8Wpoint,
+            _MsOS_RingEventGroup_Info[s32EventGroupId].u8Rpoint);
+    }
+    return TRUE;
+}
+MS_U32 MsOS_GetandClearEventRing(MS_U32 u32EventGroupId)
+{
+    MS_U32 u32Event = 0;
+    MS_U8 u8Count = 0;
+    u32Event = HAS_FLAG(_MsOS_RingEventGroup_Info[u32EventGroupId].u32EventGroup,
+        (MS_U32)(0x1 << _MsOS_RingEventGroup_Info[u32EventGroupId].u8Rpoint));
+    if(u32Event)
+    {
+        while(_MsOS_RingEventGroup_Info[u32EventGroupId].u8Rpoint != _MsOS_RingEventGroup_Info[u32EventGroupId].u8Wpoint)
+        {
+            RESET_FLAG(_MsOS_RingEventGroup_Info[u32EventGroupId].u32EventGroup,
+                (u32)(0x1 << _MsOS_RingEventGroup_Info[u32EventGroupId].u8Rpoint));
+            _MsOS_RingEventGroup_Info[u32EventGroupId].u8Rpoint++;
+            if(_MsOS_RingEventGroup_Info[u32EventGroupId].u8Rpoint>=32)
+            {
+                _MsOS_RingEventGroup_Info[u32EventGroupId].u8Rpoint = 0;
+            }
+            u8Count++;
+        }
+        if(u8Count >1)
+        {
+            SCL_ERR("GetEvent Count:%hhd IST too late\n",u8Count);
+        }
+        return u8Count;
+    }
+    return 0;
+}
+#endif
 MS_U32 MsOS_GetEvent(MS_S32 s32EventGroupId)
 {
     MS_U32 u32Event;
@@ -1005,7 +1239,7 @@ MS_U32 MsOS_GetEvent(MS_S32 s32EventGroupId)
         s32EventGroupId &= MSOS_ID_MASK;
     }
 
-    u32Event = HAS_FLAG(_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup, 0xFFFF);
+    u32Event = HAS_FLAG(_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup, 0xFFFFFFFF);
     return u32Event;
 }
 //-------------------------------------------------------------------------------------------------
@@ -1067,7 +1301,8 @@ MS_BOOL MsOS_WaitEvent (MS_S32 s32EventGroupId,
     MS_BOOL bAnd;
     MS_BOOL bClear;
     MS_BOOL bTimeout=0;
-
+    MS_U64 u64Time = 0;
+    MS_U64 u64DiffTime = 0;
     *pu32RetrievedEventFlag = 0;
 
     if (!u32WaitEventFlag)
@@ -1086,7 +1321,6 @@ MS_BOOL MsOS_WaitEvent (MS_S32 s32EventGroupId,
 
     bClear= ((E_AND_CLEAR== eWaitMode) || (E_OR_CLEAR== eWaitMode))? TRUE: FALSE;
     bAnd= ((E_AND== eWaitMode)|| (E_AND_CLEAR== eWaitMode))? TRUE: FALSE;
-
     do{
 /*
         *pu32RetrievedEventFlag= HAS_FLAG(_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup, u32WaitEventFlag);
@@ -1099,45 +1333,71 @@ MS_BOOL MsOS_WaitEvent (MS_S32 s32EventGroupId,
         {
             if (bAnd)
             {
-                wait_event(_MsOS_EventGroup_Info[s32EventGroupId].stSemaphore,
+                if(((_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup & u32WaitEventFlag) != u32WaitEventFlag))
+                {
+                    wait_event(_MsOS_EventGroup_Info[s32EventGroupId].stSemaphore,
                            ((_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup & u32WaitEventFlag) == u32WaitEventFlag));
+                }
+                else
+                {
+                    bTimeout = 1;
+                }
             }
             else
             {
-                //(printf("[DRVSCLDMA]%ld before Wait event:%lx @:%ld \n",u32WaitEventFlag,_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup & u32WaitEventFlag,MsOS_GetSystemTime()));
-                wait_event(_MsOS_EventGroup_Info[s32EventGroupId].stSemaphore,
+                if(((_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup & u32WaitEventFlag) == 0))
+                {
+                    wait_event(_MsOS_EventGroup_Info[s32EventGroupId].stSemaphore,
                            ((_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup & u32WaitEventFlag) != 0));
-                //(printf("[DRVSCLDMA]%ld After Wait event:%lx @:%ld \n",u32WaitEventFlag,MsOS_GetEvent(s32EventGroupId),MsOS_GetSystemTime()));
+                }
+                else
+                {
+                    bTimeout = 1;
+                }
             }
         }
         else
         {
             u32WaitMs = msecs_to_jiffies(u32WaitMs);
+            u64Time = MsOS_GetSystemTimeStamp();
             if (bAnd)
             {
-                bTimeout = wait_event_timeout(_MsOS_EventGroup_Info[s32EventGroupId].stSemaphore,
+                if(((_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup & u32WaitEventFlag) != u32WaitEventFlag))
+                {
+                    bTimeout = wait_event_timeout(_MsOS_EventGroup_Info[s32EventGroupId].stSemaphore,
                                    ((_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup & u32WaitEventFlag) == u32WaitEventFlag),
                                    u32WaitMs);
+                }
+                else
+                {
+                    bTimeout = 1;
+                }
             }
             else
             {
-                bTimeout = wait_event_timeout(_MsOS_EventGroup_Info[s32EventGroupId].stSemaphore,
+                if(((_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup & u32WaitEventFlag) == 0))
+                {
+                    bTimeout = wait_event_timeout(_MsOS_EventGroup_Info[s32EventGroupId].stSemaphore,
                                    ((_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup & u32WaitEventFlag) != 0),
                                    u32WaitMs);
+                }
+                else
+                {
+                    bTimeout = 1;
+                }
             }
+            u64DiffTime = MsOS_GetSystemTimeStamp() - u64Time;
+            if(!bTimeout)
+                SCL_DBGERR("[SCL_MSOS]wait timeout flag:%lx %llu\n",u32WaitEventFlag,u64DiffTime);
         }
-        if(!bTimeout)
-            *pu32RetrievedEventFlag= HAS_FLAG(_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup, u32WaitEventFlag);
-        else
-            printf("[SCL_MSOS]wait timeout\n");
+        *pu32RetrievedEventFlag= HAS_FLAG(_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup, u32WaitEventFlag);
     } while (0);
-
     bRet= (bAnd)? (*pu32RetrievedEventFlag== u32WaitEventFlag): (0!= *pu32RetrievedEventFlag);
     if (bRet && bClear)
     {
-        spin_lock(&_MsOS_EventGroup_Info[s32EventGroupId].stMutexEvent);
+        spin_lock_irq(&_MsOS_EventGroup_Info[s32EventGroupId].stMutexEvent);
         RESET_FLAG(_MsOS_EventGroup_Info[s32EventGroupId].u32EventGroup, *pu32RetrievedEventFlag);
-        spin_unlock(&_MsOS_EventGroup_Info[s32EventGroupId].stMutexEvent);
+        spin_unlock_irq(&_MsOS_EventGroup_Info[s32EventGroupId].stMutexEvent);
     }
     return bRet;
 }
@@ -1324,6 +1584,242 @@ MS_BOOL MsOS_StopTimer (MS_S32 s32TimerId)
         return FALSE;
     }
 }
+MS_S32 MsOS_CreateWorkQueueEvent(void * pTaskEntry)
+{
+    MS_S32 s32Id;
+    MUTEX_TASK_LOCK();
+
+    for( s32Id=0; s32Id<MSOS_WORK_MAX; s32Id++)
+    {
+        if(_MsOS_WorkEvent_Info[s32Id].bUsed == FALSE)
+        {
+            break;
+        }
+    }
+    if( s32Id >= MSOS_WORK_MAX)
+    {
+        return -1;
+    }
+
+    _MsOS_WorkEvent_Info[s32Id].bUsed = TRUE;
+    INIT_WORK(&_MsOS_WorkEvent_Info[s32Id].stWorkEventInfo, pTaskEntry);
+
+    MUTEX_TASK_UNLOCK();
+    s32Id |= MSOS_ID_PREFIX;
+    return s32Id;
+}
+
+MS_BOOL MsOS_DestroyWorkQueueTask(MS_S32 s32Id)
+{
+
+    if ( (s32Id & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
+    {
+        return FALSE;
+    }
+    else
+    {
+        s32Id &= MSOS_ID_MASK;
+    }
+    MUTEX_TASK_LOCK();
+    _MsOS_WorkQueue_Info[s32Id].bUsed = FALSE;
+    destroy_workqueue(_MsOS_WorkQueue_Info[s32Id].pstWorkQueueInfo);
+    _MsOS_WorkQueue_Info[s32Id].pstWorkQueueInfo = NULL;
+
+    MUTEX_TASK_UNLOCK();
+    return TRUE;
+}
+
+MS_S32 MsOS_CreateWorkQueueTask(char *pTaskName)
+{
+    MS_S32 s32Id;
+    MUTEX_TASK_LOCK();
+
+    for( s32Id=0; s32Id<MSOS_WORKQUEUE_MAX; s32Id++)
+    {
+        if(_MsOS_WorkQueue_Info[s32Id].bUsed == FALSE)
+        {
+            break;
+        }
+    }
+    if( s32Id >= MSOS_WORKQUEUE_MAX)
+    {
+        return -1;
+    }
+
+    _MsOS_WorkQueue_Info[s32Id].bUsed = TRUE;
+    _MsOS_WorkQueue_Info[s32Id].pstWorkQueueInfo = create_workqueue(pTaskName);
+
+    MUTEX_TASK_UNLOCK();
+    s32Id |= MSOS_ID_PREFIX;
+    return s32Id;
+}
+
+MS_BOOL MsOS_QueueWork(MS_BOOL bTask, MS_S32 s32TaskId, MS_S32 s32QueueId, MS_U32 u32WaitMs)
+{
+    MS_BOOL bRet;
+    if(bTask)
+    {
+        if ( (s32TaskId & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
+        {
+            return FALSE;
+        }
+        else
+        {
+            s32TaskId &= MSOS_ID_MASK;
+        }
+    }
+    if ( (s32QueueId & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
+    {
+        return FALSE;
+    }
+    else
+    {
+        s32QueueId &= MSOS_ID_MASK;
+    }
+    MUTEX_TASK_LOCK();
+    if(u32WaitMs)
+    {
+        u32WaitMs = msecs_to_jiffies(u32WaitMs);
+        if(bTask)
+        {
+            bRet = queue_delayed_work(_MsOS_WorkQueue_Info[s32TaskId].pstWorkQueueInfo ,
+                            to_delayed_work(&_MsOS_WorkEvent_Info[s32QueueId].stWorkEventInfo),
+                            u32WaitMs);
+        }
+        else
+        {
+            bRet = schedule_delayed_work(to_delayed_work(&_MsOS_WorkEvent_Info[s32QueueId].stWorkEventInfo), u32WaitMs);
+        }
+    }
+    else
+    {
+        if(bTask)
+        {
+            bRet = queue_work(_MsOS_WorkQueue_Info[s32TaskId].pstWorkQueueInfo ,
+                &_MsOS_WorkEvent_Info[s32QueueId].stWorkEventInfo);
+        }
+        else
+        {
+            bRet = schedule_work(&_MsOS_WorkEvent_Info[s32QueueId].stWorkEventInfo);
+        }
+    }
+    MUTEX_TASK_UNLOCK();
+    return bRet;
+}
+MS_BOOL MsOS_FlushWorkQueue(MS_BOOL bTask, MS_S32 s32TaskId)
+{
+    if(bTask)
+    {
+        if ( (s32TaskId & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
+        {
+            return FALSE;
+        }
+        else
+        {
+            s32TaskId &= MSOS_ID_MASK;
+        }
+    }
+    MUTEX_TASK_LOCK();
+    if(bTask)
+    {
+        flush_workqueue(_MsOS_WorkQueue_Info[s32TaskId].pstWorkQueueInfo);
+    }
+    else
+    {
+        flush_scheduled_work();
+    }
+    MUTEX_TASK_UNLOCK();
+    return TRUE;
+}
+MS_S32 MsOS_CreateTasklet(void * pTaskEntry,unsigned long u32data)
+{
+    MS_S32 s32Id;
+    MUTEX_TASK_LOCK();
+
+    for( s32Id=0; s32Id<MSOS_TASKLET_MAX; s32Id++)
+    {
+        if(_MsOS_Tasklet_Info[s32Id].bUsed == FALSE)
+        {
+            break;
+        }
+    }
+    if( s32Id >= MSOS_TASKLET_MAX)
+    {
+        return -1;
+    }
+
+    _MsOS_Tasklet_Info[s32Id].bUsed = TRUE;
+    tasklet_init(&_MsOS_Tasklet_Info[s32Id].stTaskletInfo, pTaskEntry,u32data);
+    MUTEX_TASK_UNLOCK();
+    s32Id |= MSOS_ID_PREFIX;
+    return s32Id;
+}
+MS_BOOL MsOS_DestroyTasklet(MS_S32 s32Id)
+{
+
+    if ( (s32Id & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
+    {
+        return FALSE;
+    }
+    else
+    {
+        s32Id &= MSOS_ID_MASK;
+    }
+    MUTEX_TASK_LOCK();
+    _MsOS_Tasklet_Info[s32Id].bUsed = FALSE;
+    tasklet_kill(&_MsOS_Tasklet_Info[s32Id].stTaskletInfo);
+
+    MUTEX_TASK_UNLOCK();
+    return TRUE;
+}
+MS_BOOL MsOS_EnableTasklet (MS_S32 s32Id)
+{
+    if ( (s32Id & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
+    {
+        return FALSE;
+    }
+    else
+    {
+        s32Id &= MSOS_ID_MASK;
+    }
+    MUTEX_TASK_LOCK();
+    tasklet_enable(&_MsOS_Tasklet_Info[s32Id].stTaskletInfo);
+    MUTEX_TASK_UNLOCK();
+    return TRUE;
+}
+MS_BOOL MsOS_DisableTasklet (MS_S32 s32Id)
+{
+    if ( (s32Id & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
+    {
+        return FALSE;
+    }
+    else
+    {
+        s32Id &= MSOS_ID_MASK;
+    }
+    MUTEX_TASK_LOCK();
+    tasklet_disable(&_MsOS_Tasklet_Info[s32Id].stTaskletInfo);
+    MUTEX_TASK_UNLOCK();
+    return TRUE;
+}
+MS_BOOL MsOS_TaskletWork(MS_S32 s32TaskId)
+{
+    MS_BOOL bRet = TRUE;
+    if ( (s32TaskId & MSOS_ID_PREFIX_MASK) != MSOS_ID_PREFIX )
+    {
+        return FALSE;
+    }
+    else
+    {
+        s32TaskId &= MSOS_ID_MASK;
+    }
+    MUTEX_TASK_LOCK();
+    tasklet_schedule(&_MsOS_Tasklet_Info[s32TaskId].stTaskletInfo);
+    MUTEX_TASK_UNLOCK();
+    return bRet;
+}
+
+// linux
 void* MsOS_Memalloc(size_t size, gfp_t flags)
 {
     return kmalloc(size, flags);
@@ -1347,4 +1843,75 @@ void* MsOS_Memcpy(void *pstCfg,const void *pstInformCfg,__kernel_size_t size)
 void* MsOS_Memset(void *pstCfg,int val,__kernel_size_t size)
 {
     return memset(pstCfg, val, size);
+}
+unsigned int MsOS_clk_get_enable_count(MSOS_ST_CLK * clk)
+{
+    return __clk_get_enable_count(clk);
+}
+
+MSOS_ST_CLK * MsOS_clk_get_parent_by_index(MSOS_ST_CLK * clk,MS_U8 index)
+{
+    return clk_get_parent_by_index(clk, index);
+}
+
+int MsOS_clk_set_parent(MSOS_ST_CLK *clk, MSOS_ST_CLK *parent)
+{
+    return clk_set_parent(clk, parent);
+}
+int MsOS_clk_prepare_enable(MSOS_ST_CLK *clk)
+{
+    return clk_prepare_enable(clk);
+}
+void MsOS_clk_disable_unprepare(MSOS_ST_CLK *clk)
+{
+    clk_disable_unprepare(clk);
+}
+unsigned long MsOS_clk_get_rate(MSOS_ST_CLK *clk)
+{
+    return __clk_get_rate(clk);
+}
+unsigned long MsOS_copy_from_user(void *to, __user const void *from, unsigned long n)
+{
+    return copy_from_user(to, from, n);
+}
+unsigned long MsOS_copy_to_user(void *to, const void __user *from, unsigned long n)
+{
+    return copy_to_user(to, from, n);
+}
+void MsOS_WaitForCPUWriteToDMem(void)
+{
+    Chip_Flush_MIU_Pipe();                          //wait for CPU write to mem
+}
+void MsOS_ChipFlushCacheRange(unsigned long u32Addr, unsigned long u32Size)
+{
+    Chip_Flush_Cache_Range(u32Addr,u32Size);                          //wait for CPU write to mem
+}
+unsigned char MsOS_GetSCLFrameDelay(void)
+{
+    return gu8SclFrameDelay;
+}
+void MsOS_SetSCLFrameDelay(unsigned char u8delay)
+{
+    gu8SclFrameDelay = u8delay;
+}
+E_VIPSetRule_TYPE MsOS_GetVIPSetRule(void)
+{
+    return genVIPSetRule;
+}
+void MsOS_SetVIPSetRule(E_VIPSetRule_TYPE EnSetRule)
+{
+    genVIPSetRule = EnSetRule;
+}
+MS_BOOL MsOS_GetHVSPDigitalZoomMode(void)
+{
+    return gbDigitalZoomDropMode;
+}
+void MsOS_SetHVSPDigitalZoomMode(MS_BOOL bDrop)
+{
+    gbDigitalZoomDropMode = bDrop;
+}
+
+void MsOS_CheckEachIPByCMDQIST(void)
+{
+    MDrv_VIP_CheckEachIPByCMDQIST();
 }

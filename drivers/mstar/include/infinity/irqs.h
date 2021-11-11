@@ -116,7 +116,7 @@
 #define INT_FIQ_ARM_TO_MCU51      (GIC_SPI_MS_FIQ_START + 18)
 #define INT_FIQ_DUMMY_19          (GIC_SPI_MS_FIQ_START + 19)
 #define INT_FIQ_DUMMY_20          (GIC_SPI_MS_FIQ_START + 20)
-#define INT_FIQ_LAN_ESN           (GIC_SPI_MS_FIQ_START + 21)
+#define INT_FIQ_LAN_ESD           (GIC_SPI_MS_FIQ_START + 21)
 #define INT_FIQ_XIU_TIMEOUT       (GIC_SPI_MS_FIQ_START + 22)
 #define INT_FIQ_SD_CDZ            (GIC_SPI_MS_FIQ_START + 23)
 #define INT_FIQ_SAR_GPIO_0        (GIC_SPI_MS_FIQ_START + 24)

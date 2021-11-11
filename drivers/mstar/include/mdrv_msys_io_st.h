@@ -63,6 +63,22 @@ typedef struct
     unsigned int VerChk_Size;
 } __attribute__ ((__packed__)) MSYS_TEMP_INFO;
 
+typedef struct
+{
+    unsigned int VerChk_Version;
+    unsigned long long udid;
+    unsigned int VerChk_Size;
+} __attribute__ ((__packed__)) MSYS_UDID_INFO;
+
+typedef struct
+{
+	unsigned int VerChk_Version;
+    char name[16];
+    unsigned int length;       //32 bit
+    unsigned long long kphy_src;   //Kernel Virtual Address src 64 bit
+    unsigned long long kphy_des; //Kernel Virtual Address des64 bit
+    unsigned int VerChk_Size;
+} __attribute__ ((__packed__)) MSYS_DMA_INFO;
 
 typedef struct
 {

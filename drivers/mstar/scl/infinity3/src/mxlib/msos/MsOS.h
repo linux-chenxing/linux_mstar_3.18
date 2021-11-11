@@ -53,6 +53,9 @@ extern "C"
     MSIF_OS
 
 #define MSOS_TASK_MAX           32//(32+120)
+#define MSOS_WORKQUEUE_MAX      8//(8)
+#define MSOS_WORK_MAX           32//(8)
+#define MSOS_TASKLET_MAX        32//(8)
 #define MSOS_MEMPOOL_MAX        (8+64)
 #define MSOS_FIXSIZE_MEMPOOL_MAX  (8)
 #define MSOS_SEMAPHORE_MAX      (32+150)
@@ -64,6 +67,13 @@ extern "C"
 
 #define MSOS_OS_MALLOC          (0x7654FFFF)
 #define MSOS_MALLOC_ID          (0x0000FFFF)
+#define SCL_DELAY2FRAMEINDOUBLEBUFFERMode 0
+#define SCL_DELAYFRAME (MsOS_GetSCLFrameDelay())
+#define ISZOOMDROPFRAME (MsOS_GetHVSPDigitalZoomMode())
+#define MIU0_BASE 0x20000000
+#define MIU0Vir_BASE 0xC0000000
+#define _Phys2Miu(phys) ((phys&MIU0_BASE) ? (unsigned long)(phys - MIU0_BASE) :(unsigned long)(phys))
+#define WDR_USE_CMDQ() MsOS_GetVIPSetRule()
 
 //-------------------------------------------------------------------------------------------------
 // Macros
@@ -292,7 +302,41 @@ typedef struct
     struct task_struct *pThread;
 }MSOS_ST_TASKSTRUCT;
 typedef struct clk MSOS_ST_CLK;
-
+typedef struct workqueue_struct MSOS_ST_WORKQUEUE;
+typedef struct work_struct MSOS_ST_WORK;
+typedef struct tasklet_struct MSOS_ST_TASKLET;
+typedef struct platform_device MSOS_ST_PLATFORMDEVICE;
+typedef enum
+{
+    E_VIPSetRule_Default  = 0,
+    E_VIPSetRule_CMDQAct  = 0x1,
+    E_VIPSetRule_CMDQCheck  = 0x2,
+    E_VIPSetRule_CMDQAll  = 0x4,
+    E_VIPSetRule_CMDQAllONLYSRAMCheck  = 0x8,
+    E_VIPSetRule_CMDQAllCheck  = 0x10,
+} E_VIPSetRule_TYPE;
+typedef enum
+{
+    E_SCLIRQ_SC0  = 0,
+    E_SCLIRQ_SC1  ,
+    E_SCLIRQ_SC2  ,
+    E_SCLIRQ_MAX  ,
+} E_SCLIRQ_TYPE;
+typedef enum
+{
+    E_CMDQIRQ_CMDQ0  = 0,
+    E_CMDQIRQ_CMDQ1  ,
+    E_CMDQIRQ_CMDQ2  ,
+    E_CMDQIRQ_MAX  ,
+} E_CMDQIRQ_TYPE;
+#define VIPSETRULE() (MsOS_GetVIPSetRule())
+#define VIPDEFAULTSETRULE E_VIPSetRule_CMDQAll
+//for OSD bug, need to set same clk freq with fclk1
+#define OSDinverseBug 1
+#define CLKDynamic 0
+#define USE_RTK         0
+#define USE_Utility 0
+#define VIR_RIUBASE 0xFD000000
 //-------------------------------------------------------------------------------------------------
 // Extern Functions
 //-------------------------------------------------------------------------------------------------
@@ -300,6 +344,7 @@ typedef struct clk MSOS_ST_CLK;
 // Init
 //
 MS_BOOL MsOS_Init (void);
+void MsOS_Exit (void);
 
 
 //
@@ -352,11 +397,18 @@ MS_BOOL MsOS_FreeFixSizeMemory (void *pAddress, MS_S32 s32PoolId);
 MS_S32 MsOS_CreateTask (TaskEntry pTaskEntry,
                         MS_U32 u32TaskEntryData,
                         MS_BOOL bAutoStart,
-                        char *pTaskName);
+                        const char *pTaskName);
 MSOS_ST_TASKSTRUCT MsOS_GetTaskinfo(MS_S32 s32Id);
-int MsOS_GetUserNice(MSOS_ST_TASKSTRUCT stTask);
-void MsOS_SetUserNice(MSOS_ST_TASKSTRUCT stTask, long nice);
+int MsOS_GetUserNice(MSOS_ST_TASKSTRUCT *stTask);
+void MsOS_SetUserNice(MSOS_ST_TASKSTRUCT *stTask, long nice);
 MS_BOOL MsOS_DeleteTask (MS_S32 s32TaskId);
+int MsOS_SetSclIrqIDFormSys(MSOS_ST_PLATFORMDEVICE *pdev,unsigned char u8idx,E_SCLIRQ_TYPE enType);
+int MsOS_SetCmdqIrqIDFormSys(MSOS_ST_PLATFORMDEVICE *pdev,unsigned char u8idx,E_CMDQIRQ_TYPE enType);
+int MsOS_GetIrqIDCMDQ(E_CMDQIRQ_TYPE enType);
+int MsOS_GetIrqIDSCL(E_SCLIRQ_TYPE enType);
+
+MS_BOOL MsOS_SetTaskWork(MS_S32 s32TaskId);
+MS_BOOL MsOS_SleepTaskWork(MS_S32 s32TaskId);
 
 void MsOS_YieldTask (void);
 
@@ -389,7 +441,9 @@ MS_BOOL MsOS_DeleteSpinlock (MS_S32 s32MutexId);
 MS_BOOL MsOS_ObtainMutex_IRQ(MS_S32 s32MutexId);
 MS_BOOL MsOS_ObtainMutex (MS_S32 s32MutexId, MS_U32 u32WaitMs);
 MS_BOOL MsOS_ReleaseMutex_IRQ (MS_S32 s32MutexId);
+char * MsOS_CheckMutex(char *str,char *end);
 MS_BOOL MsOS_ReleaseMutex (MS_S32 s32MutexId);
+MS_BOOL MsOS_ReleaseMutexAll (void);
 
 MS_BOOL MsOS_InfoMutex (MS_S32 s32MutexId, MsOSAttribute *peAttribute, char *pMutexName);
 
@@ -415,11 +469,16 @@ MS_BOOL MsOS_InfoSemaphore (MS_S32 s32SemaphoreId, MS_U32 *pu32Cnt, MsOSAttribut
 //
 MS_S32 MsOS_CreateEventGroup (char *pName);
 
+MS_BOOL MsOS_CreateEventGroupRing (MS_U8 u8Id);
+
 MS_BOOL MsOS_DeleteEventGroup (MS_S32 s32EventGroupId);
+MS_BOOL MsOS_DeleteEventGroupRing (MS_S32 s32EventGroupId);
 MS_BOOL MsOS_SetEvent_IRQ (MS_S32 s32EventGroupId, MS_U32 u32EventFlag);
 
 MS_BOOL MsOS_SetEvent (MS_S32 s32EventGroupId, MS_U32 u32EventFlag);
+MS_BOOL MsOS_SetEventRing (MS_S32 s32EventGroupId);
 MS_U32 MsOS_GetEvent(MS_S32 s32EventGroupId);
+MS_U32 MsOS_GetandClearEventRing(MS_U32 u32EventGroupId);
 MS_BOOL MsOS_ClearEventIRQ (MS_S32 s32EventGroupId, MS_U32 u32EventFlag);
 MS_BOOL MsOS_ClearEvent (MS_S32 s32EventGroupId, MS_U32 u32EventFlag);
 MS_BOOL MsOS_WaitEvent (MS_S32  s32EventGroupId,
@@ -462,11 +521,40 @@ MS_BOOL MsOS_ResetTimer (MS_S32     s32TimerId,
                          MS_U32     u32PeriodTimeMs,
                          MS_BOOL    bStartTimer);
 void* MsOS_Memalloc(size_t size, gfp_t flags);
+MS_BOOL MsOS_FlushWorkQueue(MS_BOOL bTask, MS_S32 s32TaskId);
+MS_BOOL MsOS_QueueWork(MS_BOOL bTask, MS_S32 s32TaskId, MS_S32 s32QueueId, MS_U32 u32WaitMs);
+MS_S32 MsOS_CreateWorkQueueTask(char *pTaskName);
+MS_BOOL MsOS_DestroyWorkQueueTask(MS_S32 s32Id);
+MS_S32 MsOS_CreateWorkQueueEvent(void * pTaskEntry);
+MS_BOOL MsOS_TaskletWork(MS_S32 s32TaskId);
+MS_BOOL MsOS_DisableTasklet (MS_S32 s32Id);
+MS_BOOL MsOS_EnableTasklet (MS_S32 s32Id);
+MS_BOOL MsOS_DestroyTasklet(MS_S32 s32Id);
+MS_S32 MsOS_CreateTasklet(void * pTaskEntry,unsigned long u32data);
 void MsOS_MemFree(void *pVirAddr);
 void* MsOS_VirMemalloc(size_t size);
 void MsOS_VirMemFree(void *pVirAddr);
 void* MsOS_Memcpy(void *pstCfg,const void *pstInformCfg,__kernel_size_t size);
 void* MsOS_Memset(void *pstCfg,int val,__kernel_size_t size);
+unsigned int MsOS_clk_get_enable_count(MSOS_ST_CLK * clk);
+MSOS_ST_CLK * MsOS_clk_get_parent_by_index(MSOS_ST_CLK * clk,MS_U8 index);
+int MsOS_clk_set_parent(MSOS_ST_CLK *clk, MSOS_ST_CLK *parent);
+int MsOS_clk_prepare_enable(MSOS_ST_CLK *clk);
+void MsOS_clk_disable_unprepare(MSOS_ST_CLK *clk);
+unsigned long MsOS_clk_get_rate(MSOS_ST_CLK *clk);
+unsigned long MsOS_copy_from_user(void *to, __user const void  *from, unsigned long n);
+unsigned long MsOS_copy_to_user(void *to, const void __user *from, unsigned long n);
+void MsOS_WaitForCPUWriteToDMem(void);
+void MsOS_ChipFlushCacheRange(unsigned long u32Addr, unsigned long u32Size);
+unsigned char MsOS_GetSCLFrameDelay(void);
+E_VIPSetRule_TYPE MsOS_GetVIPSetRule(void);
+void MsOS_SetVIPSetRule(E_VIPSetRule_TYPE EnSetRule);
+void MsOS_SetHVSPDigitalZoomMode(MS_BOOL bDrop);
+MS_BOOL MsOS_GetHVSPDigitalZoomMode(void);
+
+void MsOS_SetSCLFrameDelay(unsigned char u8delay);
+void MsOS_CheckEachIPByCMDQIST(void);
+
 //
 // System time
 //
@@ -811,6 +899,7 @@ void   MsOS_ReadMemory(void);
 
 #if defined (MSOS_TYPE_LINUX_KERNEL)
 #define printf(_fmt, _args...)        printk(KERN_WARNING _fmt, ## _args)
+#define MsOS_scnprintf(buf, size, _fmt, _args...)        scnprintf(buf, size, _fmt, ## _args)
 //#define printf printk
 #elif defined (MSOS_TYPE_CE)
 

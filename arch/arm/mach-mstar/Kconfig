@@ -2,8 +2,6 @@ menuconfig ARCH_MSTAR
     bool "MStar ARM SoCs"
 
 if ARCH_MSTAR
-
-
 config ARCH_CEDRIC
     bool "SoC Cedric (ARCH_MULTI_V7)" if ARCH_MULTI_V7
     select SOC_BUS
@@ -69,6 +67,12 @@ config MS_ARMV7_XIP
     bool
     default y
 	depends on XIP_KERNEL
+
+config MSTAR_CHIP_NAME
+    string
+    default "infinity3" if ARCH_INFINITY3
+    default "infinity" if ARCH_INFINITY
+    default "chicago" if ARCH_CHICAGO
 
 endif
 

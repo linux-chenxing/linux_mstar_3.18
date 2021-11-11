@@ -78,16 +78,21 @@
                          x==IOCTL_HVSP_REQ_MEM_CONFIG        ?  "IOCTL_HVSP_REQ_MEM_CONFIG" : \
                          x==IOCTL_HVSP_SET_MISC_CONFIG       ?  "IOCTL_HVSP_SET_MISC_CONFIG" : \
                          x==IOCTL_HVSP_GET_PRIVATE_ID_CONFIG ?  "IOCTL_HVSP_GET_PRIVATE_ID_CONFIG" : \
+                         x==IOCTL_HVSP_GET_INFORM_CONFIG ?  "IOCTL_HVSP_GET_INFORM_CONFIG" : \
+                         x==IOCTL_HVSP_SET_PRIMASK_CONFIG ?  "IOCTL_HVSP_SET_PRIMASK_CONFIG" : \
+                         x==IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG ?  "IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG" : \
                                                                 "UNKNOWN")
 
 #define FHDWidth   1920
 #define FHDHeight  1080
-
+#define _3MWidth   2048
+#define _3MHeight  1536
 //-------------------------------------------------------------------------------------------------
 
 #define _ms_hvsp1_mem_bus_to_miu(x) (x-0x2000000)
 #define CMDQIRQ_ID
 #define SCLIRQ_ID
+#define CIIROPEN gbCIIR
 //-------------------------------------------------------------------------------------------------
 
 int mdrv_ms_hvsp1_open(struct inode *inode, struct file *filp);
@@ -100,24 +105,23 @@ static int mdrv_ms_hvsp1_resume(struct platform_device *dev);
 static unsigned int mdrv_ms_hvsp1_poll(struct file *filp, struct poll_table_struct *wait);
 
 //-------------------------------------------------------------------------------------------------
-
-dma_addr_t  sg_hvsp1_dnr_bus_addr = 0;
-static u_long sg_hvsp1_dnr_size = 1920*1080*2*2 ;
-static void *sg_hvsp1_dnr_vir_addr = NULL;
-const static char* KEY_DMEM_SCL_DNR="SCL_DNR";
-unsigned int SCL_IRQ_ID = 0; //INT_IRQ_AU_SYSTEM;
-unsigned int CMDQ_IRQ_ID = 0; //INT_IRQ_AU_SYSTEM;
-unsigned int gu8DNRBufferReadyNum=0;//extern
+static u_long sg_hvsp1_mcnr_size = 1920*1080*2*2 ;
+dma_addr_t  sg_hvsp1_mcnr_yc_bus_addr = 0;
+static void *sg_hvsp1_mcnr_yc_vir_addr = NULL;
+const static char* KEY_DMEM_SCL_MCNR_YC="SCL_MCNR_YC";
+dma_addr_t  sg_hvsp1_mcnr_ciir_bus_addr = 0;
+static void *sg_hvsp1_mcnr_ciir_vir_addr = NULL;
+const static char* KEY_DMEM_SCL_MCNR_CIIR="SCL_MCNR_CIIR";
+dma_addr_t  sg_hvsp1_mcnr_m_bus_addr = 0;
+static void *sg_hvsp1_mcnr_m_vir_addr = NULL;
+const static char* KEY_DMEM_SCL_MCNR_M="SCL_MCNR_M";
+unsigned int gu8FrameBufferReadyNum=0;//extern
 unsigned char gbdbgmessage[EN_DBGMG_NUM_CONFIG];//extern
 #if CONFIG_OF
 unsigned int gbProbeAlready = 0;//extern
 #endif
-static u_long sg_hvsp1_release_dnr_size;
-static void *sg_hvsp1_release_dnr_vir_addr = NULL;
-dma_addr_t sg_hvsp1_release_dnr_bus_addr;
-int gVSyncCount=0;
-int gMonitorErrCount = 0;
-
+dma_addr_t sg_hvsp1_release_mcnr_size;
+unsigned char gbCIIR;
 //-------------------------------------------------------------------------------------------------
 typedef struct
 {
@@ -134,7 +138,7 @@ typedef struct
     struct cdev cdev;
     struct file_operations fops;
     ST_MDRV_HVSP_CLK_CONFIG stclk;
-	struct device *devicenode;
+    struct device *devicenode;
 }ST_DEV_HVSP;
 
 static ST_DEV_HVSP _dev_ms_hvsp1 =
@@ -168,16 +172,16 @@ static const struct of_device_id ms_hvsp1_of_match_table[] =
 
 static struct platform_driver st_ms_hvsp1_driver =
 {
-	.probe 		= mdrv_ms_hvsp1_probe,
-	.remove 	= mdrv_ms_hvsp1_remove,
+    .probe      = mdrv_ms_hvsp1_probe,
+    .remove     = mdrv_ms_hvsp1_remove,
     .suspend    = mdrv_ms_hvsp1_suspend,
     .resume     = mdrv_ms_hvsp1_resume,
-	.driver =
-	{
-		.name	= MDRV_NAME_HVSP,
+    .driver =
+    {
+        .name   = MDRV_NAME_HVSP,
         .owner  = THIS_MODULE,
         .of_match_table = of_match_ptr(ms_hvsp1_of_match_table),
-	},
+    },
 };
 
 static u64 ms_hvsp1_dma_mask = 0xffffffffUL;
@@ -192,6 +196,7 @@ static struct platform_device st_ms_hvsp1_device =
         .coherent_dma_mask = 0xffffffffUL
     }
 };
+MS_U8 gu8first;
 
 //-------------------------------------------------------------------------------------------------
 // internal function
@@ -362,10 +367,6 @@ void _mdrv_hvsp1_CloseTestPatternByISPTgen(void)
 
 }
 
-unsigned long _mdrv_hvsp1_HWMonitor(unsigned char u8flag)
-{
-    return MDrv_HVSP_HWMonitor(u8flag);
-}
 unsigned char _mdrv_hvsp1_InputVSyncMonitor(void)
 {
     if(MDrv_HVSP_InputVSyncMonitor())
@@ -380,9 +381,9 @@ unsigned char _mdrv_hvsp1_InputVSyncMonitor(void)
 
 static ssize_t ptgen_call_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
 {
-	if(NULL!=buf)
-	{
-		const char *str = buf;
+    if(NULL!=buf)
+    {
+        const char *str = buf;
         if((int)*str == 49)    //input 1  echo 1 >ptgen_call
         {
             SCL_ERR( "[HVSP1]ptgen_call_store OK %d\n",(int)*str);
@@ -404,94 +405,18 @@ static ssize_t ptgen_call_store(struct device *dev, struct device_attribute *att
             _mdrv_hvsp1_OpenInputTestPatternAndTgen();
         }
         return n;
-	}
+    }
 
-	return 0;
+    return 0;
 }
 static ssize_t ptgen_call_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf,"0:close\n1:open static ptgen\n2:open dynamic ptgen\n3:open scl time gen pattern");
+    return sprintf(buf,"0:close\n1:open static ptgen\n2:open dynamic ptgen\n3:open scl time gen pattern");
 }
 
 static DEVICE_ATTR(ptgen,0644, ptgen_call_show, ptgen_call_store);
 
-static int ms_hvsp1_MonitorThread(void *arg)
-{
-    unsigned long u32Stime = 0,u32difftime = 0;
-    u32Stime = MsOS_GetSystemTime();
-    _mdrv_hvsp1_HWMonitor(gstThCfg.flag);
-    while(gstThCfg.flag)
-    {
-        if(_mdrv_hvsp1_InputVSyncMonitor())
-        {
-            gVSyncCount++;
-            gMonitorErrCount += _mdrv_hvsp1_HWMonitor(gstThCfg.flag);
-            u32difftime     = MsOS_Timer_DiffTimeFromNow(u32Stime);
-        }
-    }
-    SCL_ERR( "[HVSP1]vsync count:%d MonitorErrCount:%d\n       average:%hd (ms/frm)\n"
-        ,gVSyncCount,gMonitorErrCount,(short)(u32difftime/gVSyncCount));
-    kthread_stop(gstThCfg.pThread);
-    gstThCfg.pThread = NULL;
-    return 0;
-}
-static ssize_t monitorHW_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	return MDrv_HVSP_monitorHWShow(buf,gVSyncCount,gMonitorErrCount);
-}
-void _mdrv_hvsp1_CreateMonitorTask(unsigned char u8MonitorFlag)
-{
-    const char *pName = {"HVSP_THREAD"};
-    gstThCfg.flag   = u8MonitorFlag;
-    gVSyncCount    = 0;
-    gMonitorErrCount  = 0;
-    gstThCfg.pThread = kthread_create(ms_hvsp1_MonitorThread,(void *)&gVSyncCount,pName);
-    if (IS_ERR(gstThCfg.pThread))
-    {
-        gstThCfg.pThread = NULL;
-        SCL_ERR( "[HVSP1]Fail:creat thread\n");
-    }
-    else
-    {
-        wake_up_process(gstThCfg.pThread );
-    }
-}
-static ssize_t monitorHW_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
-{
-	if(NULL!=buf)
-	{
-		const char *str = buf;
-        if((int)*str == 49)    //input 1  echo 1 >crop monitor
-        {
-            _mdrv_hvsp1_CreateMonitorTask(EN_MDRV_HVSP_MONITOR_CROPCHECK);
-        }
-        else if((int)*str == 50)    //input 2  echo 2 >dma monitor
-        {
-            _mdrv_hvsp1_CreateMonitorTask(EN_MDRV_HVSP_MONITOR_DMA1FRMCHECK);
-        }
-        else if((int)*str == 51)    //input 2  echo 3 >dma monitor
-        {
-            _mdrv_hvsp1_CreateMonitorTask(EN_MDRV_HVSP_MONITOR_DMA1SNPCHECK);
-        }
-        else if((int)*str == 52)    //input 2  echo 4 >dma monitor
-        {
-            _mdrv_hvsp1_CreateMonitorTask(EN_MDRV_HVSP_MONITOR_DMA2FRMCHECK);
-        }
-        else if((int)*str == 53)    //input 2  echo 5 >dma monitor
-        {
-            _mdrv_hvsp1_CreateMonitorTask(EN_MDRV_HVSP_MONITOR_DMA3FRMCHECK);
-        }
-        else if((int)*str == 48)
-        {
-            gstThCfg.flag =0 ;
-        }
-        return n;
-	}
 
-	return 0;
-}
-
-static DEVICE_ATTR(monitorHW,0644, monitorHW_show, monitorHW_store);
 
 static ssize_t check_clk_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -502,9 +427,9 @@ static ssize_t check_clk_show(struct device *dev, struct device_attribute *attr,
 
 static ssize_t check_clk_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
 {
-	if(NULL!=buf)
-	{
-		const char *str = buf;
+    if(NULL!=buf)
+    {
+        const char *str = buf;
         if((int)*str == 49)    //input 1
         {
             SCL_ERR( "[CLK]open force mode %d\n",(int)*str);
@@ -525,6 +450,11 @@ static ssize_t check_clk_store(struct device *dev, struct device_attribute *attr
             SCL_ERR( "[CLK]fclk1 med %d\n",(int)*str);
             MDrv_HVSP_SetCLKRate(_dev_ms_hvsp1.stclk.fclk1,1);
         }
+        else if((int)*str == 69)  //input E
+        {
+            SCL_ERR( "[CLK]fclk1 216 %d\n",(int)*str);
+            MDrv_HVSP_SetCLKRate(_dev_ms_hvsp1.stclk.fclk1,2);
+        }
         else if((int)*str == 52)  //input 4
         {
             SCL_ERR( "[CLK]fclk1 open %d\n",(int)*str);
@@ -537,13 +467,18 @@ static ssize_t check_clk_store(struct device *dev, struct device_attribute *attr
         }
         else if((int)*str == 54)  //input 6
         {
-            SCL_ERR( "[CLK]fclk2 max %d\n",(int)*str);
+            SCL_ERR( "[CLK]fclk2 172 %d\n",(int)*str);
             MDrv_HVSP_SetCLKRate(_dev_ms_hvsp1.stclk.fclk2,0);
         }
         else if((int)*str == 55)  //input 7
         {
-            SCL_ERR( "[CLK]fclk2 med %d\n",(int)*str);
+            SCL_ERR( "[CLK]fclk2 86 %d\n",(int)*str);
             MDrv_HVSP_SetCLKRate(_dev_ms_hvsp1.stclk.fclk2,1);
+        }
+        else if((int)*str == 70)  //input F
+        {
+            SCL_ERR( "[CLK]fclk2 216 %d\n",(int)*str);
+            MDrv_HVSP_SetCLKRate(_dev_ms_hvsp1.stclk.fclk2,2);
         }
         else if((int)*str == 56)  //input 8
         {
@@ -596,101 +531,131 @@ static ssize_t check_clk_store(struct device *dev, struct device_attribute *attr
             MDrv_HVSP_SetCLKOnOff(_dev_ms_hvsp1.stclk.odclk,0);
         }
         return n;
-	}
+    }
 
-	return 0;
+    return 0;
 }
 
 
 static DEVICE_ATTR(clk,0644, check_clk_show, check_clk_store);
 static ssize_t check_osd_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
 {
-	if(NULL!=buf)
-	{
+    if(NULL!=buf)
+    {
         MDrv_HVSP_OsdStore(buf,E_MDRV_HVSP_ID_1);
         return n;
-	}
+    }
 
-	return 0;
+    return 0;
 }
 static ssize_t check_osd_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	return MDrv_HVSP_OsdShow(buf);
+    return MDrv_HVSP_OsdShow(buf);
 }
 static DEVICE_ATTR(osd,0644, check_osd_show, check_osd_store);
+static ssize_t check_od_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    return MDrv_HVSP_OdShow(buf);
+}
+static DEVICE_ATTR(od,0444, check_od_show, NULL);
 static ssize_t check_fbmg_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
 {
-    ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG stFbMgCfg;
     const char *str = buf;
-	if(NULL!=buf)
-	{
+    if(NULL!=buf)
+    {
         //if(!)
         if((int)*str == 49)    //input 1
         {
-            SCL_ERR( "[OSD]open OSD %d\n",(int)*str);
-            stFbMgCfg.enSet = EN_IOCTL_HVSP_FBMG_SET_LDCPATH_ON;
-            MDrv_HVSP_SetFbManageConfig(stFbMgCfg.enSet);
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_LDCPATH_ON);
         }
         else if((int)*str == 50)  //input 2
         {
-            SCL_ERR( "[OSD]Set OSD before %d\n",(int)*str);
-            stFbMgCfg.enSet = EN_IOCTL_HVSP_FBMG_SET_LDCPATH_OFF;
-            MDrv_HVSP_SetFbManageConfig(stFbMgCfg.enSet);
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_LDCPATH_OFF);
         }
         else if((int)*str == 51)  //input 3
         {
-            SCL_ERR( "[OSD]Set OSD After %d\n",(int)*str);
-            stFbMgCfg.enSet = EN_IOCTL_HVSP_FBMG_SET_DNR_Read_ON;
-            MDrv_HVSP_SetFbManageConfig(stFbMgCfg.enSet);
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_DNR_Read_ON);
         }
         else if((int)*str == 52)  //input 4
         {
-            SCL_ERR( "[OSD]Set OSD Bypass %d\n",(int)*str);
-            stFbMgCfg.enSet= EN_IOCTL_HVSP_FBMG_SET_DNR_Read_OFF;
-            MDrv_HVSP_SetFbManageConfig(stFbMgCfg.enSet);
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_DNR_Read_OFF);
         }
         else if((int)*str == 53)  //input 5
         {
-            SCL_ERR( "[OSD]Set OSD Bypass Off %d\n",(int)*str);
-            stFbMgCfg.enSet = EN_IOCTL_HVSP_FBMG_SET_DNR_Write_ON;
-            MDrv_HVSP_SetFbManageConfig(stFbMgCfg.enSet);
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_DNR_Write_ON);
         }
         else if((int)*str == 54)  //input 6
         {
-            SCL_ERR( "[OSD]Set OSD WTM Bypass %d\n",(int)*str);
-            stFbMgCfg.enSet = EN_IOCTL_HVSP_FBMG_SET_DNR_Write_OFF;
-            MDrv_HVSP_SetFbManageConfig(stFbMgCfg.enSet);
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_DNR_Write_OFF);
         }
         else if((int)*str == 55)  //input 7
         {
-            SCL_ERR( "[OSD]Set OSD WTM Bypass Off %d\n",(int)*str);
-            stFbMgCfg.enSet = EN_IOCTL_HVSP_FBMG_SET_DNR_BUFFER_1;
-            MDrv_HVSP_SetFbManageConfig(stFbMgCfg.enSet);
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_DNR_BUFFER_1);
         }
         else if((int)*str == 56)  //input 8
         {
-            SCL_ERR( "[OSD]Set OSD WTM Bypass Off %d\n",(int)*str);
-            stFbMgCfg.enSet = EN_IOCTL_HVSP_FBMG_SET_DNR_BUFFER_2;
-            MDrv_HVSP_SetFbManageConfig(stFbMgCfg.enSet);
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_DNR_BUFFER_2);
         }
         else if((int)*str == 57)  //input 9
         {
-            SCL_ERR( "[OSD]Set OSD WTM Bypass Off %d\n",(int)*str);
-            stFbMgCfg.enSet = EN_IOCTL_HVSP_FBMG_SET_UNLOCK;
-            MDrv_HVSP_SetFbManageConfig(stFbMgCfg.enSet);
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_UNLOCK);
         }
-        return n;
-	}
+        else if((int)*str == 65)  //input A
+        {
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_PRVCROP_ON);
+        }
+        else if((int)*str == 66)  //input B
+        {
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_PRVCROP_OFF);
+        }
+        else if((int)*str == 67)  //input C
+        {
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            gbCIIR = 1;
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_CIIR_ON);
+        }
+        else if((int)*str == 68)  //input D
+        {
+            SCL_ERR( "[FB]Set %d\n",(int)*str);
+            gbCIIR = 0;
+            MDrv_HVSP_SetFbManageConfig(EN_MDRV_HVSP_FBMG_SET_CIIR_OFF);
+        }
 
-	return 0;
+
+        return n;
+    }
+
+    return 0;
 }
 static ssize_t check_fbmg_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	return MDrv_HVSP_FBMGShow(buf);
+    return MDrv_HVSP_FBMGShow(buf);
 }
 
 static DEVICE_ATTR(fbmg,0644, check_fbmg_show, check_fbmg_store);
 
+static ssize_t check_SCIQ_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
+{
+    MDrv_HVSP_SCIQStore(buf,E_MDRV_HVSP_ID_1);
+    return n;
+}
+static ssize_t check_SCIQ_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    return MDrv_HVSP_SCIQShow(buf,E_MDRV_HVSP_ID_1);
+}
+
+static DEVICE_ATTR(SCIQ,0644, check_SCIQ_show, check_SCIQ_store);
 
 static ssize_t check_proc_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -698,13 +663,20 @@ static ssize_t check_proc_show(struct device *dev, struct device_attribute *attr
 }
 static DEVICE_ATTR(proc,0444, check_proc_show, NULL);
 
+static ssize_t check_ints_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    return MDrv_HVSP_IntsShow(buf);
+}
+static DEVICE_ATTR(ints,0444, check_ints_show, NULL);
+
+
 static ssize_t check_dbgmg_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
     return MDrv_HVSP_DbgmgFlagShow(buf);
 }
 static unsigned char _mdrv_hvsp1_Changebuf2hex(int u32num)
 {
-    unsigned char u8level;
+    unsigned char u8level = 0;
     if(u32num==10)
     {
         u8level = 1;
@@ -802,9 +774,9 @@ static unsigned char _mdrv_hvsp1_Changebuf2hex(int u32num)
 
 static ssize_t check_dbgmg_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
 {
-	if(NULL!=buf)
-	{
-		const char *str = buf;
+    if(NULL!=buf)
+    {
+        const char *str = buf;
         unsigned char u8level;
         SCL_ERR( "[HVSP1]check_dbgmg_store OK %d\n",(int)*str);
         SCL_ERR( "[HVSP1]check_dbgmg_store level %d\n",(int)*(str+1));
@@ -888,12 +860,34 @@ static ssize_t check_dbgmg_store(struct device *dev, struct device_attribute *at
             Set_DBGMG_FLAG(EN_DBGMG_PRIORITY_CONFIG,1);
         }
         return n;
-	}
+    }
 
-	return 0;
+    return 0;
 }
 
 static DEVICE_ATTR(dbgmg,0644, check_dbgmg_show, check_dbgmg_store);
+static ssize_t check_lock_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    return MDrv_HVSP_LockShow(buf);
+}
+static ssize_t check_lock_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
+{
+    if(NULL!=buf)
+    {
+        const char *str = buf;
+        if((int)*str == 76)    //input 1  echo L >
+        {
+            if(!MsOS_ReleaseMutexAll())
+            {
+                SCL_DBGERR("[HVSP]!!!!!!!!!!!!!!!!!!! HVSP Release Mutex fail\n");
+            }
+        }
+        return n;
+    }
+    return 0;
+}
+
+static DEVICE_ATTR(mutex,0644, check_lock_show, check_lock_store);
 
 static void* _ms_hvsp1_AllocDmem(const char* name, unsigned int size, dma_addr_t *addr)
 {
@@ -906,10 +900,8 @@ static void* _ms_hvsp1_AllocDmem(const char* name, unsigned int size, dma_addr_t
     }
     else
     {
-        gu8DNRBufferReadyNum = 1 + (SCL_DELAY2FRAMEINDOUBLEBUFFERMode);
-        sg_hvsp1_release_dnr_size       = sg_hvsp1_dnr_size;
-        sg_hvsp1_release_dnr_vir_addr   = sg_hvsp1_dnr_vir_addr;
-        sg_hvsp1_release_dnr_bus_addr   = sg_hvsp1_dnr_bus_addr;
+        gu8FrameBufferReadyNum = (Mdrv_HVSP_GetFrameBufferCountInformation());
+        sg_hvsp1_release_mcnr_size       = sg_hvsp1_mcnr_size;
     }
     *addr = dmem.phys;
     return (void *)((uintptr_t)dmem.kvirt);
@@ -925,38 +917,95 @@ static void _ms_hvsp1_FreeDmem(const char* name, unsigned int size, void *virt, 
     msys_release_dmem(&dmem);
 }
 
+void _ms_hvsp1_mem_freeYCbuffer(void)
+{
+    if(sg_hvsp1_mcnr_yc_vir_addr != 0)
+    {
+        SCL_DBG(SCL_DBG_LV_HVSP()&EN_DBGMG_HVSPLEVEL_HVSP1, "[HVSP1] YC free\n");
+        _ms_hvsp1_FreeDmem(KEY_DMEM_SCL_MCNR_YC,
+                  PAGE_ALIGN(sg_hvsp1_mcnr_size),
+                  sg_hvsp1_mcnr_yc_vir_addr,
+                  sg_hvsp1_mcnr_yc_bus_addr);
+
+        sg_hvsp1_mcnr_yc_vir_addr = 0;
+        sg_hvsp1_mcnr_yc_bus_addr = 0;
+        gu8FrameBufferReadyNum = 0;
+    }
+}
+void _ms_hvsp1_mem_freeMbuffer(void)
+{
+    if(sg_hvsp1_mcnr_m_vir_addr != 0)
+    {
+        SCL_DBG(SCL_DBG_LV_HVSP()&EN_DBGMG_HVSPLEVEL_HVSP1, "[HVSP1] Motion free\n");
+        _ms_hvsp1_FreeDmem(KEY_DMEM_SCL_MCNR_M,
+                  PAGE_ALIGN(sg_hvsp1_mcnr_size/4),
+                  sg_hvsp1_mcnr_m_vir_addr,
+                  sg_hvsp1_mcnr_m_bus_addr);
+
+        sg_hvsp1_mcnr_m_vir_addr = 0;
+        sg_hvsp1_mcnr_m_bus_addr = 0;
+    }
+}
+void _ms_hvsp1_mem_freeCIIRbuffer(void)
+{
+    if(sg_hvsp1_mcnr_ciir_vir_addr != 0)
+    {
+        SCL_DBG(SCL_DBG_LV_HVSP()&EN_DBGMG_HVSPLEVEL_HVSP1, "[HVSP1] CIIR free\n");
+        _ms_hvsp1_FreeDmem(KEY_DMEM_SCL_MCNR_CIIR,
+                  PAGE_ALIGN(sg_hvsp1_mcnr_size/2),
+                  sg_hvsp1_mcnr_ciir_vir_addr,
+                  sg_hvsp1_mcnr_ciir_bus_addr);
+
+        sg_hvsp1_mcnr_ciir_vir_addr = 0;
+        sg_hvsp1_mcnr_ciir_bus_addr = 0;
+    }
+}
 
 static int _ms_hvsp1_mem_allocate(void)
 {
     SCL_DBG(SCL_DBG_LV_HVSP()&EN_DBGMG_HVSPLEVEL_HVSP1, "[HVSP1] allocate memory\n");
 
-    if (!(sg_hvsp1_dnr_vir_addr = _ms_hvsp1_AllocDmem(KEY_DMEM_SCL_DNR,
-                                             PAGE_ALIGN(sg_hvsp1_dnr_size),
-                                             &sg_hvsp1_dnr_bus_addr)))
+    if (!(sg_hvsp1_mcnr_yc_vir_addr = _ms_hvsp1_AllocDmem(KEY_DMEM_SCL_MCNR_YC,
+                                             PAGE_ALIGN(sg_hvsp1_mcnr_size),
+                                             &sg_hvsp1_mcnr_yc_bus_addr)))
     {
-        SCL_ERR( "%s: unable to allocate screen memory\n", __FUNCTION__);
+        SCL_ERR( "%s: unable to allocate YC memory\n", __FUNCTION__);
         return 0;
     }
-    SCL_ERR( "[HVSP1]: DNR: Phy:%x  Vir:%x\n", sg_hvsp1_dnr_bus_addr, (u32)sg_hvsp1_dnr_vir_addr);
+    if (!(sg_hvsp1_mcnr_m_vir_addr = _ms_hvsp1_AllocDmem(KEY_DMEM_SCL_MCNR_M,
+                                             PAGE_ALIGN(sg_hvsp1_mcnr_size/4),
+                                             &sg_hvsp1_mcnr_m_bus_addr)))
+    {
+        SCL_ERR( "%s: unable to allocate Montion memory\n", __FUNCTION__);
+        _ms_hvsp1_mem_freeYCbuffer();
+        return 0;
+    }
+    if(CIIROPEN)
+    {
+        if (!(sg_hvsp1_mcnr_ciir_vir_addr = _ms_hvsp1_AllocDmem(KEY_DMEM_SCL_MCNR_CIIR,
+                                                 PAGE_ALIGN(sg_hvsp1_mcnr_size/2),
+                                                 &sg_hvsp1_mcnr_ciir_bus_addr)))
+        {
+            SCL_ERR( "%s: unable to allocate CIIR memory\n", __FUNCTION__);
+            return 0;
+        }
+        else
+        {
+            gu8FrameBufferReadyNum |= (Mdrv_HVSP_GetFrameBufferCountInformation()<<2);
+        }
+    }
 
-
+    SCL_ERR( "[HVSP1]: MCNR YC: Phy:%x  Vir:%x\n", sg_hvsp1_mcnr_yc_bus_addr, (u32)sg_hvsp1_mcnr_yc_vir_addr);
+    SCL_ERR( "[HVSP1]: MCNR CIIR: Phy:%x  Vir:%x\n", sg_hvsp1_mcnr_ciir_bus_addr, (u32)sg_hvsp1_mcnr_ciir_vir_addr);
+    SCL_ERR( "[HVSP1]: MCNR M: Phy:%x  Vir:%x\n", sg_hvsp1_mcnr_m_bus_addr, (u32)sg_hvsp1_mcnr_m_vir_addr);
     return 1;
 }
 
 static void _ms_hvsp1_mem_free(void)
 {
-    if(sg_hvsp1_dnr_vir_addr != 0)
-    {
-        SCL_DBG(SCL_DBG_LV_HVSP()&EN_DBGMG_HVSPLEVEL_HVSP1, "[HVSP1] mem free\n");
-        _ms_hvsp1_FreeDmem(KEY_DMEM_SCL_DNR,
-                  PAGE_ALIGN(sg_hvsp1_dnr_size),
-                  sg_hvsp1_dnr_vir_addr,
-                  sg_hvsp1_dnr_bus_addr);
-
-        sg_hvsp1_dnr_vir_addr = 0;
-        sg_hvsp1_dnr_bus_addr = 0;
-        gu8DNRBufferReadyNum = 0;
-    }
+    _ms_hvsp1_mem_freeYCbuffer();
+    _ms_hvsp1_mem_freeMbuffer();
+    _ms_hvsp1_mem_freeCIIRbuffer();
 }
 static int _ms_hvsp1_multiinstSet(EN_MDRV_MULTI_INST_CMD_TYPE enType, void *stCfg ,void *privatedata)
 {
@@ -981,41 +1030,39 @@ static int _ms_hvsp1_multiinstSet(EN_MDRV_MULTI_INST_CMD_TYPE enType, void *stCf
 //-------------------------------------------------------------------------------------------------
 // IOCtrl Driver interface functions
 //-------------------------------------------------------------------------------------------------
-ST_MDRV_HVSP_VERSIONCHK_CONFIG _mdrv_ms_hvsp1_io_fill_versionchkstruct
-(unsigned int u32StructSize,unsigned int u32VersionSize,unsigned int *pVersion)
+void _mdrv_ms_hvsp1_io_fill_versionchkstruct
+(unsigned int u32StructSize,unsigned int u32VersionSize,unsigned int *pVersion,ST_MDRV_HVSP_VERSIONCHK_CONFIG *stVersion)
 {
-    ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
-    stVersion.u32StructSize  = (unsigned int)u32StructSize;
-    stVersion.u32VersionSize = (unsigned int)u32VersionSize;
-    stVersion.pVersion      = (unsigned int *)pVersion;
-    return stVersion;
+    stVersion->u32StructSize  = (unsigned int)u32StructSize;
+    stVersion->u32VersionSize = (unsigned int)u32VersionSize;
+    stVersion->pVersion      = (unsigned int *)pVersion;
 }
-int _mdrv_ms_hvsp1_io_version_check(ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion)
+int _mdrv_ms_hvsp1_io_version_check(ST_MDRV_HVSP_VERSIONCHK_CONFIG *stVersion)
 {
-    if ( CHK_VERCHK_HEADER(stVersion.pVersion) )
+    if ( CHK_VERCHK_HEADER(stVersion->pVersion) )
     {
-        if( CHK_VERCHK_MAJORVERSION_LESS( stVersion.pVersion, IOCTL_HVSP_VERSION) )
+        if( CHK_VERCHK_MAJORVERSION_LESS( stVersion->pVersion, IOCTL_HVSP_VERSION) )
         {
 
             VERCHK_ERR("[HVSP1] Version(%04x) < %04x!!! \n",
-                *(stVersion.pVersion) & VERCHK_VERSION_MASK,
+                *(stVersion->pVersion) & VERCHK_VERSION_MASK,
                 IOCTL_HVSP_VERSION);
 
             return -EINVAL;
         }
         else
         {
-            if( CHK_VERCHK_SIZE( &stVersion.u32VersionSize, stVersion.u32StructSize) == 0 )
+            if( CHK_VERCHK_SIZE( &stVersion->u32VersionSize, stVersion->u32StructSize) == 0 )
             {
                 VERCHK_ERR("[HVSP1] Size(%04x) != %04x!!! \n",
-                    stVersion.u32StructSize,
-                    stVersion.u32VersionSize);
+                    stVersion->u32StructSize,
+                    stVersion->u32VersionSize);
 
                 return -EINVAL;
             }
             else
             {
-                SCL_DBG(SCL_DBG_LV_IOCTL()&EN_DBGMG_IOCTLEVEL_ELSE, "[HVSP1] Size(%d) \n",stVersion.u32StructSize );
+                SCL_DBG(SCL_DBG_LV_IOCTL()&EN_DBGMG_IOCTLEVEL_ELSE, "[HVSP1] Size(%d) \n",stVersion->u32StructSize );
                 return VersionCheckSuccess;
             }
         }
@@ -1050,14 +1097,14 @@ MS_BOOL _mdrv_hvsp1_CheckModifyMemSize(ST_IOCTL_HVSP_REQ_MEM_CONFIG *stReqMemCfg
     {
         stReqMemCfg->u32MemSize = (stReqMemCfg->u16Vsize) *(stReqMemCfg->u16Pitch) *4;
     }
-    if(Mdrv_HVSP_GetDNRBufferInformation()== 1)
+    if(Mdrv_HVSP_GetFrameBufferCountInformation()== 1)
     {
         SCL_ERR(
             "[HVSP1] Buffer is single, Vsize=%d, Pitch=%d\n",stReqMemCfg->u16Vsize, stReqMemCfg->u16Pitch);
         stReqMemCfg->u32MemSize = stReqMemCfg->u32MemSize /2 ;
     }
-    sg_hvsp1_dnr_size = stReqMemCfg->u32MemSize;
-    if(Mdrv_HVSP_GetDNRBufferInformation()== 1)
+    sg_hvsp1_mcnr_size = stReqMemCfg->u32MemSize;
+    if(Mdrv_HVSP_GetFrameBufferCountInformation()== 1)
     {
         if((unsigned long)(stReqMemCfg->u16Vsize * stReqMemCfg->u16Pitch * 2) > stReqMemCfg->u32MemSize)
         {
@@ -1077,39 +1124,55 @@ MS_BOOL _mdrv_hvsp1_CheckModifyMemSize(ST_IOCTL_HVSP_REQ_MEM_CONFIG *stReqMemCfg
     return 0;
 }
 
-void _mdrv_hvsp1_DNRBufferMemoryAllocate(void)
+void _mdrv_hvsp1_FrameBufferMemoryAllocate(void)
 {
-    if(gu8DNRBufferReadyNum == 0)
+    if(gu8FrameBufferReadyNum == 0)
     {
         _ms_hvsp1_mem_allocate();
-        MDrv_HVSP_SetMemoryAllocateReady(gu8DNRBufferReadyNum);
+        MDrv_HVSP_SetMemoryAllocateReady(gu8FrameBufferReadyNum);
     }
-    else if(gu8DNRBufferReadyNum != 0 && sg_hvsp1_dnr_size > sg_hvsp1_release_dnr_size)
+    else if(gu8FrameBufferReadyNum != 0 && sg_hvsp1_mcnr_size > sg_hvsp1_release_mcnr_size)
     {
         _ms_hvsp1_mem_free();
-        gu8DNRBufferReadyNum = 0;
+        gu8FrameBufferReadyNum = 0;
         _ms_hvsp1_mem_allocate();
-        MDrv_HVSP_SetMemoryAllocateReady((gu8DNRBufferReadyNum > 0) ? 1 :0);
+        MDrv_HVSP_SetMemoryAllocateReady((gu8FrameBufferReadyNum > 0) ? 1 :0);
     }
 }
-ST_MDRV_HVSP_IPM_CONFIG _mdrv_hvsp1_FillIPMStructForDriver(ST_IOCTL_HVSP_REQ_MEM_CONFIG stReqMemCfg)
+void _mdrv_hvsp1_FillIPMStructForDriver(ST_IOCTL_HVSP_REQ_MEM_CONFIG *stReqMemCfg,ST_MDRV_HVSP_IPM_CONFIG *stIPMCfg)
 {
-    ST_MDRV_HVSP_IPM_CONFIG stIPMCfg;
-    stIPMCfg.u16Height = stReqMemCfg.u16Vsize;
-    stIPMCfg.u16Width  = stReqMemCfg.u16Pitch;
-    stIPMCfg.u32MemSize = stReqMemCfg.u32MemSize;
-    if(gu8DNRBufferReadyNum)
+    stIPMCfg->u16Height = stReqMemCfg->u16Vsize;
+    stIPMCfg->u16Width  = stReqMemCfg->u16Pitch;
+    stIPMCfg->u32MemSize = stReqMemCfg->u32MemSize;
+    if(gu8FrameBufferReadyNum & 0x3)
     {
-        stIPMCfg.enRW       = E_IOCTL_HVSP_DNR_W;
-        sg_hvsp1_dnr_size   = stReqMemCfg.u32MemSize;
+        if((stIPMCfg->u16Height <= (FHDWidth)) && (stIPMCfg->u16Width <= FHDWidth))
+        {
+            stIPMCfg->enRW       = E_MDRV_HVSP_MCNR_YCM_W;
+        }
+        else
+        {
+            stIPMCfg->enRW       = E_MDRV_HVSP_MCNR_YCM_RW;
+        }
+        sg_hvsp1_mcnr_size   = stReqMemCfg->u32MemSize;
     }
     else
     {
-        stIPMCfg.enRW       = E_IOCTL_HVSP_DNR_NUM;
-        sg_hvsp1_dnr_size   = stReqMemCfg.u32MemSize;
+        stIPMCfg->enRW       = E_MDRV_HVSP_MCNR_NON;
+        sg_hvsp1_mcnr_size   = stReqMemCfg->u32MemSize;
     }
-    stIPMCfg.u32PhyAddr = Chip_Phys_to_MIU(sg_hvsp1_dnr_bus_addr);
-    return stIPMCfg;
+    if(sg_hvsp1_mcnr_yc_bus_addr)
+    {
+        stIPMCfg->u32YCPhyAddr = Chip_Phys_to_MIU(sg_hvsp1_mcnr_yc_bus_addr);
+    }
+    if(sg_hvsp1_mcnr_m_bus_addr)
+    {
+        stIPMCfg->u32MPhyAddr = Chip_Phys_to_MIU(sg_hvsp1_mcnr_m_bus_addr);
+    }
+    if(sg_hvsp1_mcnr_ciir_bus_addr)
+    {
+        stIPMCfg->u32CIIRPhyAddr = Chip_Phys_to_MIU(sg_hvsp1_mcnr_ciir_bus_addr);
+    }
 }
 
 
@@ -1120,24 +1183,24 @@ int _mdrv_ms_hvsp1_io_set_input_config(struct file *filp, unsigned long arg)
     int ret = 0;
     ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
 
-    stVersion = _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_INPUT_CONFIG),
+    _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_INPUT_CONFIG),
         (((ST_IOCTL_HVSP_INPUT_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_HVSP_INPUT_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_hvsp1_io_version_check(stVersion))
+        &(((ST_IOCTL_HVSP_INPUT_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp1_io_version_check(&stVersion))
     {
         SCL_ERR( "[HVSP1]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
     else
     {
-        if(copy_from_user(&stIOInCfg, (ST_IOCTL_HVSP_INPUT_CONFIG __user *)arg, sizeof(ST_IOCTL_HVSP_INPUT_CONFIG)))
+        if(copy_from_user(&stIOInCfg, (__user ST_IOCTL_HVSP_INPUT_CONFIG *)arg, sizeof(ST_IOCTL_HVSP_INPUT_CONFIG)))
         {
             return -EFAULT;
         }
         else
         {
-            stInCfg.enColor       = stIOInCfg.enColor;
-            stInCfg.enSrcType     = stIOInCfg.enSrcType;
+            stInCfg.enColor       = (EN_MDRV_HVSP_COLOR_TYPE)stIOInCfg.enColor;
+            stInCfg.enSrcType     = (EN_MDRV_HVSP_SRC_TYPE)stIOInCfg.enSrcType;
             memcpy(&stInCfg.stCaptureWin , &stIOInCfg.stCaptureWin,sizeof(ST_MDRV_HVSP_WINDOW_CONFIG));
             memcpy(&stInCfg.stTimingCfg , &stIOInCfg.stTimingCfg,sizeof(ST_MDRV_HVSPTIMING_CONFIG));
         }
@@ -1171,17 +1234,17 @@ int _mdrv_ms_hvsp1_io_set_output_config(struct file *filp, unsigned long arg)
     int ret = 0;
     ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
 
-    stVersion = _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_OUTPUT_CONFIG),
+     _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_OUTPUT_CONFIG),
         (((ST_IOCTL_HVSP_OUTPUT_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_HVSP_OUTPUT_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_hvsp1_io_version_check(stVersion))
+        &(((ST_IOCTL_HVSP_OUTPUT_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp1_io_version_check(&stVersion))
     {
         SCL_ERR( "[HVSP1]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
     else
     {
-        if(copy_from_user(&stOutCfg, (ST_IOCTL_HVSP_OUTPUT_CONFIG __user *)arg, sizeof(ST_IOCTL_HVSP_OUTPUT_CONFIG)))
+        if(copy_from_user(&stOutCfg, (__user ST_IOCTL_HVSP_OUTPUT_CONFIG *)arg, sizeof(ST_IOCTL_HVSP_OUTPUT_CONFIG)))
         {
             return -EFAULT;
         }
@@ -1198,17 +1261,17 @@ int _mdrv_ms_hvsp1_io_set_scaling_config(struct file *filp, unsigned long arg)
     int ret = 0;
     ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
 
-    stVersion = _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_SCALING_CONFIG),
+     _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_SCALING_CONFIG),
         (((ST_IOCTL_HVSP_SCALING_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_HVSP_SCALING_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_hvsp1_io_version_check(stVersion))
+        &(((ST_IOCTL_HVSP_SCALING_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp1_io_version_check(&stVersion))
     {
         SCL_ERR( "[HVSP1]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
     else
     {
-        if(copy_from_user(&stIOSclCfg, (ST_IOCTL_HVSP_SCALING_CONFIG __user *)arg, sizeof(ST_IOCTL_HVSP_SCALING_CONFIG)))
+        if(copy_from_user(&stIOSclCfg, (__user ST_IOCTL_HVSP_SCALING_CONFIG *)arg, sizeof(ST_IOCTL_HVSP_SCALING_CONFIG)))
         {
             return -EFAULT;
         }
@@ -1232,6 +1295,7 @@ int _mdrv_ms_hvsp1_io_set_scaling_config(struct file *filp, unsigned long arg)
     }
     else
     {
+        MDrv_HVSP_SetPriMaskInstId(MDrv_MultiInst_GetHvspQuantifyPreInstId());
         if(!MDrv_HVSP_SetScalingConfig(E_MDRV_HVSP_ID_1,  &stSclCfg ))
         {
             ret = -EFAULT;
@@ -1249,43 +1313,40 @@ int _mdrv_ms_hvsp1_io_req_mem_config(struct file *filp, unsigned long arg)
     ST_MDRV_HVSP_IPM_CONFIG stIPMCfg;
     int ret = 0;
     ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
-
-    stVersion = _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_REQ_MEM_CONFIG),
+    MsOS_Memset(&stReqMemCfg,0,sizeof(ST_IOCTL_HVSP_REQ_MEM_CONFIG));
+    MsOS_Memset(&stIPMCfg,0,sizeof(ST_MDRV_HVSP_IPM_CONFIG));
+     _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_REQ_MEM_CONFIG),
         (((ST_IOCTL_HVSP_REQ_MEM_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_HVSP_REQ_MEM_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_hvsp1_io_version_check(stVersion))
+        &(((ST_IOCTL_HVSP_REQ_MEM_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp1_io_version_check(&stVersion))
     {
         SCL_ERR( "[HVSP1]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
     else
     {
-        if(copy_from_user(&stReqMemCfg, (ST_IOCTL_HVSP_REQ_MEM_CONFIG __user *)arg, sizeof(ST_IOCTL_HVSP_REQ_MEM_CONFIG)))
+        if(copy_from_user(&stReqMemCfg, (__user ST_IOCTL_HVSP_REQ_MEM_CONFIG *)arg, sizeof(ST_IOCTL_HVSP_REQ_MEM_CONFIG)))
         {
             return -EFAULT;
         }
     }
     ret = _mdrv_hvsp1_CheckModifyMemSize(&stReqMemCfg);
-    _mdrv_hvsp1_DNRBufferMemoryAllocate();
-    stIPMCfg = _mdrv_hvsp1_FillIPMStructForDriver(stReqMemCfg);
+    _mdrv_hvsp1_FrameBufferMemoryAllocate();
+    _mdrv_hvsp1_FillIPMStructForDriver(&stReqMemCfg,&stIPMCfg);
     if(_ms_hvsp1_multiinstSet(E_MDRV_MULTI_INST_CMD_HVSP_MEM_REQ_CONFIG, (void *)&stIPMCfg, filp->private_data))
     {
-        ret = -EFAULT;
+        return -EFAULT;
     }
     else
     {
-        if(MDrv_HVSP_SetInitIPMConfig(E_MDRV_HVSP_ID_1, &stIPMCfg))
+        if(!MDrv_HVSP_SetInitIPMConfig(E_MDRV_HVSP_ID_1, &stIPMCfg))
         {
-            ret = 0;
-        }
-        else
-        {
-            ret = -EFAULT;
+            return -EFAULT;
         }
     }
-    if(gu8DNRBufferReadyNum == 0)
+    if(gu8FrameBufferReadyNum == 0)
     {
-        ret = -EFAULT;
+        return -EFAULT;
     }
     return ret;
 }
@@ -1294,13 +1355,24 @@ int _mdrv_ms_hvsp1_io_set_misc_config(struct file *filp, unsigned long arg)
 {
     ST_IOCTL_HVSP_MISC_CONFIG stIOMiscCfg;
     ST_MDRV_HVSP_MISC_CONFIG stMiscCfg;
-    if(copy_from_user(&stIOMiscCfg, (ST_IOCTL_HVSP_MISC_CONFIG __user *)arg, sizeof(ST_IOCTL_HVSP_MISC_CONFIG)))
+    MsOS_Memset(&stIOMiscCfg,0,sizeof(ST_IOCTL_HVSP_MISC_CONFIG));
+    MsOS_Memset(&stMiscCfg,0,sizeof(ST_MDRV_HVSP_MISC_CONFIG));
+    if(copy_from_user(&stIOMiscCfg, (__user ST_IOCTL_HVSP_MISC_CONFIG *)arg, sizeof(ST_IOCTL_HVSP_MISC_CONFIG)))
     {
         return -EFAULT;
     }
     else
     {
-        memcpy(&stMiscCfg, &stIOMiscCfg,sizeof(ST_IOCTL_HVSP_MISC_CONFIG));
+        if(stIOMiscCfg.u32Addr && stIOMiscCfg.u32Size>0 && stIOMiscCfg.u32Size< 0xFFFF)
+        {
+            stMiscCfg.u32Addr = stIOMiscCfg.u32Addr;
+            stMiscCfg.u32Size = stIOMiscCfg.u32Size;
+            stMiscCfg.u8Cmd = stIOMiscCfg.u8Cmd;
+        }
+        else
+        {
+            return -EFAULT;
+        }
     }
 
     if(MDrv_HVSP_SetMiscConfig(&stMiscCfg))
@@ -1320,17 +1392,17 @@ int _mdrv_ms_hvsp1_io_set_post_crop_config(struct file *filp, unsigned long arg)
     int ret = 0;
     ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
 
-    stVersion = _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_POSTCROP_CONFIG),
+     _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_POSTCROP_CONFIG),
         (((ST_IOCTL_HVSP_POSTCROP_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_HVSP_POSTCROP_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_hvsp1_io_version_check(stVersion))
+        &(((ST_IOCTL_HVSP_POSTCROP_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp1_io_version_check(&stVersion))
     {
         SCL_ERR( "[HVSP1]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
     else
     {
-        if(copy_from_user(&stIOPostCfg, (ST_IOCTL_HVSP_POSTCROP_CONFIG __user *)arg, sizeof(ST_IOCTL_HVSP_POSTCROP_CONFIG)))
+        if(copy_from_user(&stIOPostCfg, (__user ST_IOCTL_HVSP_POSTCROP_CONFIG  *)arg, sizeof(ST_IOCTL_HVSP_POSTCROP_CONFIG)))
         {
             return -EFAULT;
         }
@@ -1352,6 +1424,7 @@ int _mdrv_ms_hvsp1_io_set_post_crop_config(struct file *filp, unsigned long arg)
     }
     else
     {
+        MDrv_HVSP_SetPriMaskInstId(MDrv_MultiInst_GetHvspQuantifyPreInstId());
         if(!MDrv_HVSP_SetPostCropConfig(E_MDRV_HVSP_ID_1,  &stPostCfg))
         {
             ret = -EFAULT;
@@ -1419,24 +1492,26 @@ int _mdrv_ms_hvsp1_io_set_osd_config(struct file *filp, unsigned long arg)
     int ret = 0;
     ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
 
-    stVersion = _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_OSD_CONFIG),
+     _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_OSD_CONFIG),
         (((ST_IOCTL_HVSP_OSD_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_HVSP_OSD_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_hvsp1_io_version_check(stVersion))
+        &(((ST_IOCTL_HVSP_OSD_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp1_io_version_check(&stVersion))
     {
         SCL_ERR( "[HVSP1]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
     else
     {
-        if(copy_from_user(&stIOOSDCfg, (ST_IOCTL_HVSP_OSD_CONFIG __user *)arg, sizeof(ST_IOCTL_HVSP_OSD_CONFIG)))
+        if(copy_from_user(&stIOOSDCfg, (__user ST_IOCTL_HVSP_OSD_CONFIG  *)arg, sizeof(ST_IOCTL_HVSP_OSD_CONFIG)))
         {
             return -EFAULT;
         }
         else
         {
-            stOSDCfg.enOSD_loc = stIOOSDCfg.enOSD_loc;
+            stOSDCfg.enOSD_loc = (EN_MDRV_HVSP_OSD_LOC_TYPE)stIOOSDCfg.enOSD_loc;
             stOSDCfg.stOsdOnOff.bOSDEn = stIOOSDCfg.bEn;
+            stOSDCfg.stOsdOnOff.bOSDBypass = stIOOSDCfg.bOSDBypass;
+            stOSDCfg.stOsdOnOff.bWTMBypass = stIOOSDCfg.bWTMBypass;
         }
     }
     if(_ms_hvsp1_multiinstSet(E_MDRV_MULTI_INST_CMD_HVSP_SET_OSD_CONFIG, (void *)&stOSDCfg, filp->private_data))
@@ -1457,23 +1532,111 @@ int _mdrv_ms_hvsp1_io_set_osd_config(struct file *filp, unsigned long arg)
     return ret;
 }
 
-int _mdrv_ms_hvsp1_io_set_fb_config(struct file *filp, unsigned long arg)
+int _mdrv_ms_hvsp1_io_set_primask_config(struct file *filp, unsigned long arg)
 {
-    ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG stFbMgCfg;
+    ST_MDRV_HVSP_PRIMASK_CONFIG stCfg;
+    ST_IOCTL_HVSP_PRIMASK_CONFIG stIOCfg;
+    int ret = 0;
+    ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
+    EN_MDRV_MULTI_INST_STATUS_TYPE enMultiInstRet;
+    MsOS_Memset(&stIOCfg,0,sizeof(ST_IOCTL_HVSP_PRIMASK_CONFIG));
+    MsOS_Memset(&stCfg,0,sizeof(ST_MDRV_HVSP_PRIMASK_CONFIG));
+     _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_PRIMASK_CONFIG),
+        (((ST_IOCTL_HVSP_PRIMASK_CONFIG __user *)arg)->VerChk_Size),
+        &(((ST_IOCTL_HVSP_PRIMASK_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp1_io_version_check(&stVersion))
+    {
+        SCL_ERR( "[HVSP1]   %s  \n", __FUNCTION__);
+        return -EINVAL;
+    }
+    if(copy_from_user(&stIOCfg, (__user ST_IOCTL_HVSP_PRIMASK_CONFIG  *)arg, sizeof(ST_IOCTL_HVSP_PRIMASK_CONFIG)))
+    {
+        return -EFAULT;
+    }
+    else
+    {
+        stCfg.bMask = stIOCfg.bMask;
+        if(stIOCfg.u8idx>= PriMaskNum)
+        {
+            return -EINVAL;
+        }
+        stCfg.u8idx = stIOCfg.u8idx;
+        memcpy(&stCfg.stMaskWin,&stIOCfg.stMaskWin,sizeof(ST_IOCTL_HVSP_WINDOW_CONFIG));
+    }
+    enMultiInstRet = MDrv_MultiInst_Etnry_IsFree(E_MDRV_MULTI_INST_ENTRY_ID_HVSP1, filp->private_data);
+    if(enMultiInstRet == E_MDRV_MULTI_INST_STATUS_SUCCESS)
+    {
+        MDrv_HVSP_SetPriMaskInstId(MDrv_MultiInst_GetHvspQuantifyPreInstId());
+        if(!MDrv_HVSP_SetPriMaskConfig(&stCfg))
+        {
+            ret = -EFAULT;
+        }
+        else
+        {
+            ret = 0;
+        }
+    }
+    else
+    {
+        ret = -EFAULT;
+    }
+    return ret;
+}
+
+int _mdrv_ms_hvsp1_io_primask_trigger_config(struct file *filp, unsigned long arg)
+{
+    ST_IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG stIOCfg;
+    unsigned char bEn;
     int ret = 0;
     ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
 
-    stVersion = _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG),
-        (((ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_hvsp1_io_version_check(stVersion))
+     _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG),
+        (((ST_IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG __user *)arg)->VerChk_Size),
+        &(((ST_IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp1_io_version_check(&stVersion))
     {
         SCL_ERR( "[HVSP1]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
     else
     {
-        if(copy_from_user(&stFbMgCfg, (ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG __user *)arg, sizeof(ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG)))
+        if(copy_from_user(&stIOCfg, (__user ST_IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG  *)arg, sizeof(ST_IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG)))
+        {
+            return -EFAULT;
+        }
+        else
+        {
+            bEn= stIOCfg.bEn;
+        }
+    }
+    if(!MDrv_HVSP_SetPriMaskTrigger(bEn))
+    {
+        ret = -EFAULT;
+    }
+    else
+    {
+        ret = 0;
+    }
+    return ret;
+}
+
+int _mdrv_ms_hvsp1_io_set_fb_config(struct file *filp, unsigned long arg)
+{
+    ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG stFbMgCfg;
+    int ret = 0;
+    ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
+
+    _mdrv_ms_hvsp1_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG),
+        (((ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG __user *)arg)->VerChk_Size),
+        &(((ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp1_io_version_check(&stVersion))
+    {
+        SCL_ERR( "[HVSP1]   %s  \n", __FUNCTION__);
+        return -EINVAL;
+    }
+    else
+    {
+        if(copy_from_user(&stFbMgCfg, (__user ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG  *)arg, sizeof(ST_IOCTL_HVSP_SET_FB_MANAGE_CONFIG)))
         {
             return -EFAULT;
         }
@@ -1584,7 +1747,7 @@ long mdrv_ms_hvsp1_ioctl(struct file *filp, unsigned int u32Cmd, unsigned long u
     {
         return -EFAULT;
     }
-	/* not allow query or command once driver suspend */
+    /* not allow query or command once driver suspend */
 
     SCL_DBG(SCL_DBG_LV_IOCTL()&EN_DBGMG_IOCTLEVEL_SC1, "[HVSP1] IOCTL_NUM:: == %s ==  \n", (CMD_PARSING(u32Cmd)));
 
@@ -1628,7 +1791,12 @@ long mdrv_ms_hvsp1_ioctl(struct file *filp, unsigned int u32Cmd, unsigned long u
     case IOCTL_HVSP_SET_OSD_CONFIG:
         retval = _mdrv_ms_hvsp1_io_set_osd_config(filp, u32Arg);
         break;
-
+    case IOCTL_HVSP_SET_PRIMASK_CONFIG:
+        retval = _mdrv_ms_hvsp1_io_set_primask_config(filp, u32Arg);
+        break;
+    case IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG:
+        retval = _mdrv_ms_hvsp1_io_primask_trigger_config(filp, u32Arg);
+        break;
     case IOCTL_HVSP_SET_FB_MANAGE_CONFIG:
         retval = _mdrv_ms_hvsp1_io_set_fb_config(filp, u32Arg);
         break;
@@ -1655,9 +1823,14 @@ static unsigned int mdrv_ms_hvsp1_poll(struct file *filp, struct poll_table_stru
     SCL_DBG(SCL_DBG_LV_IOCTL()&EN_DBGMG_IOCTLEVEL_SC1, "[HVSP1]start %s ret=%x\n",__FUNCTION__,ret);
     if(enMultiInstRet == E_MDRV_MULTI_INST_STATUS_SUCCESS)
     {
-        pWaitQueueHead = MDrv_HVSP_GetWaitQueueHead();
+        pWaitQueueHead = (wait_queue_head_t *)MDrv_HVSP_GetWaitQueueHead();
         MDrv_HVSP_SetPollWait(filp, pWaitQueueHead, wait);
-        if(MDrv_HVSP_GetCMDQDoneStatus())
+        if(gu8first)
+        {
+            ret = POLLIN;
+            gu8first = 0;
+        }
+        else if(MDrv_HVSP_GetCMDQDoneStatus(E_MDRV_HVSP_ID_1))
         {
             ret = POLLIN;
         }
@@ -1680,8 +1853,8 @@ static int mdrv_ms_hvsp1_suspend(struct platform_device *dev, pm_message_t state
     int ret = 0;
     SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] %s\n",__FUNCTION__);
 
-    stHvspSuspendResumeCfg.u32IRQNum = SCL_IRQ_ID;
-    stHvspSuspendResumeCfg.u32CMDQIRQNum = CMDQ_IRQ_ID;
+    stHvspSuspendResumeCfg.u32IRQNum = MsOS_GetIrqIDSCL(E_SCLIRQ_SC0);
+    stHvspSuspendResumeCfg.u32CMDQIRQNum = MsOS_GetIrqIDCMDQ(E_CMDQIRQ_CMDQ0);
     if(MDrv_HVSP_Suspend(E_MDRV_HVSP_ID_1, &stHvspSuspendResumeCfg))
     {
         MDrv_HVSP_IDCLKRelease(&_dev_ms_hvsp1.stclk);
@@ -1697,14 +1870,14 @@ static int mdrv_ms_hvsp1_suspend(struct platform_device *dev, pm_message_t state
 
 static int mdrv_ms_hvsp1_resume(struct platform_device *dev)
 {
-    EN_MDRV_MULTI_INST_STATUS_TYPE enMultiInstRet = E_MDRV_MULTI_INST_STATUS_SUCCESS;
+    EN_MDRV_MULTI_INST_STATUS_TYPE enMultiInstRet;
     ST_MDRV_HVSP_SUSPEND_RESUME_CONFIG stHvspSuspendResumeCfg;
     int ret = 0;
 
     SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] %s\n",__FUNCTION__);
 
-    stHvspSuspendResumeCfg.u32IRQNum     = SCL_IRQ_ID;
-    stHvspSuspendResumeCfg.u32CMDQIRQNum = CMDQ_IRQ_ID;
+    stHvspSuspendResumeCfg.u32IRQNum     = MsOS_GetIrqIDSCL(E_SCLIRQ_SC0);
+    stHvspSuspendResumeCfg.u32CMDQIRQNum = MsOS_GetIrqIDCMDQ(E_CMDQIRQ_CMDQ0);
     if(MDrv_HVSP_Resume(E_MDRV_HVSP_ID_1, &stHvspSuspendResumeCfg))
     {
         enMultiInstRet = MDrv_MultiInst_Entry_FlashData(
@@ -1736,7 +1909,6 @@ static int mdrv_ms_hvsp1_resume(struct platform_device *dev)
 int mdrv_ms_hvsp1_open(struct inode *inode, struct file *filp)
 {
     int ret = 0;
-    SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] %s\n",__FUNCTION__);
 
     SCL_ASSERT(_dev_ms_hvsp1.refCnt>=0);
 
@@ -1747,9 +1919,15 @@ int mdrv_ms_hvsp1_open(struct inode *inode, struct file *filp)
             ret =  -EFAULT;
         }
     }
-
-    _dev_ms_hvsp1.refCnt++;
-
+    if(_dev_ms_hvsp1.refCnt == 0)
+    {
+        MDrv_HVSP_Open(E_MDRV_HVSP_ID_1);
+    }
+    if(!ret)
+    {
+        _dev_ms_hvsp1.refCnt++;
+    }
+    SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] %s:%d\n",__FUNCTION__,_dev_ms_hvsp1.refCnt);
     return ret;
 }
 
@@ -1757,7 +1935,6 @@ int mdrv_ms_hvsp1_open(struct inode *inode, struct file *filp)
 int mdrv_ms_hvsp1_release(struct inode *inode, struct file *filp)
 {
 
-    SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] %s\n",__FUNCTION__);
 
     MDrv_MultiInst_Entry_Free(E_MDRV_MULTI_INST_ENTRY_ID_HVSP1, filp->private_data);
     filp->private_data = NULL;
@@ -1765,8 +1942,11 @@ int mdrv_ms_hvsp1_release(struct inode *inode, struct file *filp)
     SCL_ASSERT(_dev_ms_hvsp1.refCnt>=0);
     if(_dev_ms_hvsp1.refCnt == 0)
     {
+        MDrv_HVSP_IDCLKRelease(&_dev_ms_hvsp1.stclk);
         MDrv_HVSP_Release(E_MDRV_HVSP_ID_1);
+        gu8first = 1;
     }
+    SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] %s:%d\n",__FUNCTION__,_dev_ms_hvsp1.refCnt);
     return 0;
 }
 #if CONFIG_OF
@@ -1775,6 +1955,7 @@ static int mdrv_ms_hvsp1_probe(struct platform_device *pdev)
     ST_MDRV_HVSP_INIT_CONFIG stHVSPInitCfg;
     unsigned char ret;
     int s32Ret;
+    unsigned int u32Dropmode;
     dev_t  dev;
     //struct resource *res_irq;
     //struct device_node *np;
@@ -1822,6 +2003,21 @@ static int mdrv_ms_hvsp1_probe(struct platform_device *pdev)
 
 //probe
     SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] %s\n",__FUNCTION__);
+    if(of_property_read_u32(pdev->dev.of_node, "DigitalZoom-Dropmode", &u32Dropmode))
+    {
+        printk(KERN_WARNING "[HVSP] Failed to read CMDQ-mode property, default on/n");
+        u32Dropmode = 1;  //if can't get, default on
+    }
+    if(u32Dropmode)
+    {
+        printk(KERN_WARNING "[HVSP]u32Dropmode on/n");
+        MsOS_SetHVSPDigitalZoomMode(u32Dropmode);
+    }
+    else
+    {
+        printk(KERN_WARNING "[HVSP]u32Dropmode off/n");
+        MsOS_SetHVSPDigitalZoomMode(u32Dropmode);
+    }
     //res_irq                     = platform_get_resource(pdev, IORESOURCE_IRQ, 0);// return NULL
     stHVSPInitCfg.u32Riubase    = 0x1F000000; //ToDo
     //if (res_irq)
@@ -1830,24 +2026,10 @@ static int mdrv_ms_hvsp1_probe(struct platform_device *pdev)
       //SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] Get resource IORESOURCE_IRQ = 0x%x\n",SCL_IRQ_ID);
     //}
     //else
-    {
-      SCL_IRQ_ID  = of_irq_to_resource(pdev->dev.of_node, 0, NULL);
-      CMDQ_IRQ_ID = of_irq_to_resource(pdev->dev.of_node, 1, NULL);
-      SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] Get resource SCL_IRQ = 0x%x\n",SCL_IRQ_ID);
-      SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] Get resource CMDQ_IRQ = 0x%x\n",CMDQ_IRQ_ID);
-      if (!SCL_IRQ_ID)
-      {
-          SCL_ERR( "[HVSP1] Can't Get SCL_IRQ\n");
-            return -EINVAL;
-      }
-      if (!CMDQ_IRQ_ID)
-      {
-          SCL_ERR( "[HVSP1] Can't Get CMDQ_IRQ\n");
-            return -EINVAL;
-      }
-    }
-    stHVSPInitCfg.u32IRQNUM     = SCL_IRQ_ID;
-    stHVSPInitCfg.u32CMDQIRQNUM = CMDQ_IRQ_ID;
+    MsOS_SetSclIrqIDFormSys(pdev,0,E_SCLIRQ_SC0);
+    MsOS_SetCmdqIrqIDFormSys(pdev,1,E_CMDQIRQ_CMDQ0);
+    stHVSPInitCfg.u32IRQNUM     = MsOS_GetIrqIDSCL(E_SCLIRQ_SC0);
+    stHVSPInitCfg.u32CMDQIRQNUM = MsOS_GetIrqIDCMDQ(E_CMDQIRQ_CMDQ0);
     if( MDrv_HVSP_Init(E_MDRV_HVSP_ID_1, &stHVSPInitCfg) == 0)
     {
         return -EFAULT;
@@ -1865,13 +2047,16 @@ static int mdrv_ms_hvsp1_probe(struct platform_device *pdev)
     }
     //create device
     ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_ptgen);
-    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_monitorHW);
     ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_clk);
     ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_proc);
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_SCIQ);
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_ints);
     ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_dbgmg);
     ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_osd);
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_od);
     ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_fbmg);
-
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_mutex);
+    gbCIIR = 1;
     Reset_DBGMG_FLAG();
     if (ret != 0)
     {
@@ -1884,6 +2069,7 @@ static int mdrv_ms_hvsp1_probe(struct platform_device *pdev)
     }
     gbProbeAlready |= EN_DBG_HVSP1_CONFIG;
     MDrv_MultiInst_Entry_Init_Variable(E_MDRV_MULTI_INST_ENTRY_ID_HVSP1);
+    gu8first = 1;
     return 0;
 }
 static int mdrv_ms_hvsp1_remove(struct platform_device *pdev)
@@ -1891,6 +2077,15 @@ static int mdrv_ms_hvsp1_remove(struct platform_device *pdev)
     SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] %s\n",__FUNCTION__);
     _ms_hvsp1_mem_free();
     MDrv_HVSP_IDCLKRelease(&_dev_ms_hvsp1.stclk);
+    gbProbeAlready = (gbProbeAlready&(~EN_DBG_HVSP1_CONFIG));
+    if(gbProbeAlready == 0)
+    {
+        MDrv_HVSP_Exit(1);
+    }
+    else if(!(gbProbeAlready& (EN_DBG_HVSP1_CONFIG|EN_DBG_HVSP2_CONFIG|EN_DBG_HVSP3_CONFIG)))
+    {
+        MDrv_HVSP_Exit(0);
+    }
     cdev_del(&_dev_ms_hvsp1.cdev);
     device_destroy(m_hvsp1_class, MKDEV(_dev_ms_hvsp1.s32Major, _dev_ms_hvsp1.s32Minor));
     class_destroy(m_hvsp1_class);
@@ -1903,10 +2098,8 @@ static int mdrv_ms_hvsp1_probe(struct platform_device *pdev)
     ST_MDRV_HVSP_INIT_CONFIG stHVSPInitCfg;
     unsigned char ret;
     SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP1] %s\n",__FUNCTION__);
-    SCL_IRQ_ID = SCLIRQ_ID;
-    CMDQ_IRQ_ID = CMDQIRQ_ID;
-    stHVSPInitCfg.u32IRQNUM     = SCL_IRQ_ID;
-    stHVSPInitCfg.u32CMDQIRQNUM = CMDQ_IRQ_ID;
+    stHVSPInitCfg.u32IRQNUM     = MsOS_GetIrqIDSCL(E_SCLIRQ_SC0);
+    stHVSPInitCfg.u32CMDQIRQNUM = MsOS_GetIrqIDCMDQ(E_CMDQIRQ_CMDQ0);
     if( MDrv_HVSP_Init(E_MDRV_HVSP_ID_1, &stHVSPInitCfg) == 0)
     {
         return -EFAULT;
@@ -1915,11 +2108,14 @@ static int mdrv_ms_hvsp1_probe(struct platform_device *pdev)
     //no device tree use hardcode
     //create device
 
-    ret = device_create_file(&pdev->dev, &dev_attr_ptgen);
-    ret = device_create_file(&pdev->dev, &dev_attr_monitorHW);
-    ret = device_create_file(&pdev->dev, &dev_attr_clk);
-    ret = device_create_file(&pdev->dev, &dev_attr_proc);
-    ret = device_create_file(&pdev->dev, &dev_attr_dbgmg);
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_ptgen);
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_monitorHW);
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_clk);
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_proc);
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_ints);
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_dbgmg);
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_osd);
+    ret = device_create_file(_dev_ms_hvsp1.devicenode, &dev_attr_fbmg);
     Reset_DBGMG_FLAG();
     if (ret != 0)
     {

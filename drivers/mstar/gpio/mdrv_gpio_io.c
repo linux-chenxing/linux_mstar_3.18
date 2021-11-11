@@ -71,6 +71,7 @@
 #include "mhal_gpio.h"
 #include "mdrv_gpio.h"
 #include "ms_platform.h"
+#include "gpio.h"
 
 
 //#include "mdrv_probe.h"
@@ -124,15 +125,11 @@ static struct device *dev;
 
 //static struct class *gpio_class;
 
-U32    gPadBaseAddr=0;
-U32    gChipBaseAddr=0;
-U32    gPmGpioBaseAddr=0;
-U32    gPmSleepBaseAddr=0;
 static int mstar_gpio_request(struct gpio_chip *chip, unsigned offset)
-{  
+{
     MDrv_GPIO_Pad_Set(offset);
     GPIO_PRINT("[mstar-gpio]mstar_gpio_request offset=%d\n",offset);
-	return 0;
+    return 0;
 }
 
 static void mstar_gpio_free(struct gpio_chip *chip, unsigned offset)
@@ -143,119 +140,122 @@ static void mstar_gpio_free(struct gpio_chip *chip, unsigned offset)
 static void mstar_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 {
     if(value==0)
-		MDrv_GPIO_Pull_Low(offset);
-	else
-		MDrv_GPIO_Pull_High(offset);
-	GPIO_PRINT("[mstar-gpio]mstar_gpio_set\n");
+        MDrv_GPIO_Pull_Low(offset);
+    else
+        MDrv_GPIO_Pull_High(offset);
+    GPIO_PRINT("[mstar-gpio]mstar_gpio_set\n");
 }
 
 static int mstar_gpio_get(struct gpio_chip *chip, unsigned offset)
 {
-	GPIO_PRINT("[mstar-gpio]mstar_gpio_get\n");
-	return MDrv_GPIO_Pad_Read(offset);
+    GPIO_PRINT("[mstar-gpio]mstar_gpio_get\n");
+    return MDrv_GPIO_Pad_Read(offset);
 }
 
 static int mstar_gpio_direction_input(struct gpio_chip *chip, unsigned offset)
 {
     GPIO_PRINT("[mstar-gpio]mstar_gpio_direction_input\n");
-	MDrv_GPIO_Pad_Odn(offset);
-	return MDrv_GPIO_Pad_Read(offset);
+    MDrv_GPIO_Pad_Odn(offset);
+    return 0;
 }
 
 static int mstar_gpio_direction_output(struct gpio_chip *chip, unsigned offset,
-					int value)
+                    int value)
 {
-	MDrv_GPIO_Pad_Oen(offset);
+    MDrv_GPIO_Pad_Oen(offset);
     if(value==0)
-		MDrv_GPIO_Pull_Low(offset);
-	else
-		MDrv_GPIO_Pull_High(offset);
+        MDrv_GPIO_Pull_Low(offset);
+    else
+        MDrv_GPIO_Pull_High(offset);
     GPIO_PRINT("[mstar-gpio]mstar_gpio_direction_output\n");
-	return 0;
+    return 0;
 }
 
 static int mstar_gpio_to_irq(struct gpio_chip *chip, unsigned offset)
 {
-    MDrv_Enable_GPIO_INT(offset);
-    GPIO_PRINT("[mstar-gpio]mstar_gpio_to_irq,but not set reg\n");
-	return 0;
+    int irq = MDrv_GPIO_To_Irq(offset);
+    //MDrv_Enable_GPIO_INT(offset);
+    //GPIO_PRINT("[mstar-gpio]mstar_gpio_to_irq,but not set reg\n");
+    pr_err("[Mstar GPIO] gpio(%d) to irq(%d)\n", offset, irq);
+    return irq;
 }
 
 static struct gpio_chip mstar_gpio_chip = {
-	.label			= "gpio",
-	.request		= mstar_gpio_request,
-	.free			= mstar_gpio_free,
-	.direction_input	= mstar_gpio_direction_input,
-	.get			= mstar_gpio_get,
-	.direction_output	= mstar_gpio_direction_output,
-	.set			= mstar_gpio_set,
-	.to_irq			= mstar_gpio_to_irq,
-	.base			= 0,
+    .label          = "gpio",
+    .request        = mstar_gpio_request,
+    .free           = mstar_gpio_free,
+    .direction_input    = mstar_gpio_direction_input,
+    .get            = mstar_gpio_get,
+    .direction_output   = mstar_gpio_direction_output,
+    .set            = mstar_gpio_set,
+    .to_irq         = mstar_gpio_to_irq,
+    .base           = 0,
 };
 
 
 static const struct of_device_id mstar_gpio_of_match[] = {
-	{ .compatible = "mstar,gpio" },
-	{ },
+    { .compatible = "mstar,gpio" },
+    { },
 };
 
 static int mstar_gpio_probe(struct platform_device *pdev)
 {
-	const struct of_device_id *match;
+    const struct of_device_id *match;
     int ret;
-	struct resource *res;
-	void __iomem *base;
-	int gpionum;
-	struct device_node	*node = pdev->dev.of_node;
-	
-	dev = &pdev->dev;
-	GPIO_PRINT("\n++[mstar-gpio]mstar_gpio_probe start\n");
-	
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	base = (void *)(IO_ADDRESS(res->start));
+/*
+    struct resource *res;
+    void __iomem *base;
+    int gpionum;
+    struct device_node  *node = pdev->dev.of_node;
+*/
+    dev = &pdev->dev;
+    GPIO_PRINT("\n++[mstar-gpio]mstar_gpio_probe start\n");
+/*
+    res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+    base = (void *)(IO_ADDRESS(res->start));
     gPadBaseAddr=(U32)base;
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-	base = (void *)(IO_ADDRESS(res->start));
+    res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+    base = (void *)(IO_ADDRESS(res->start));
     gChipBaseAddr=(U32)base;
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 2);
-	base = (void *)(IO_ADDRESS(res->start));
+    res = platform_get_resource(pdev, IORESOURCE_MEM, 2);
+    base = (void *)(IO_ADDRESS(res->start));
     gPmGpioBaseAddr=(U32)base;
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 3);
-	base = (void *)(IO_ADDRESS(res->start));
-    gPmSleepBaseAddr=(U32)base;	
-	GPIO_PRINT("gPadBaseAddr=%x\n",gPadBaseAddr);
-	GPIO_PRINT("gChipBaseAddr=%x\n",gChipBaseAddr);
-	GPIO_PRINT("gPmGpioBaseAddr=%x\n",gPmGpioBaseAddr);
-	
-	match = of_match_device(mstar_gpio_of_match, &pdev->dev);
-	if (!match) {
-		printk("Error:[mstar-gpio] No device match found\n");
-		return -ENODEV;
-	}
-	of_property_read_u32(node, "gpio-num", &gpionum);
-	
-	mstar_gpio_chip.ngpio =  gpionum;
-	mstar_gpio_chip.of_node = pdev->dev.of_node;
-	ret = gpiochip_add(&mstar_gpio_chip);
-	if (ret < 0) {
-		printk("[mstar-gpio]gpio_add err\n");
-		return ret;
-	}
+    res = platform_get_resource(pdev, IORESOURCE_MEM, 3);
+    base = (void *)(IO_ADDRESS(res->start));
+    gPmSleepBaseAddr=(U32)base;
+    GPIO_PRINT("gPadBaseAddr=%x\n",gPadBaseAddr);
+    GPIO_PRINT("gChipBaseAddr=%x\n",gChipBaseAddr);
+    GPIO_PRINT("gPmGpioBaseAddr=%x\n",gPmGpioBaseAddr);
+*/
+    match = of_match_device(mstar_gpio_of_match, &pdev->dev);
+    if (!match) {
+        printk("Error:[mstar-gpio] No device match found\n");
+        return -ENODEV;
+    }
+//    of_property_read_u32(node, "gpio-num", &gpionum);
 
-	GPIO_PRINT("--[mstar-gpio]mstar_gpio_probe end\n");
+    mstar_gpio_chip.ngpio = GPIO_NR;
+    mstar_gpio_chip.of_node = pdev->dev.of_node;
+    ret = gpiochip_add(&mstar_gpio_chip);
+    if (ret < 0) {
+        printk("[mstar-gpio]gpio_add err\n");
+        return ret;
+    }
+
+    GPIO_PRINT("--[mstar-gpio]mstar_gpio_probe end\n");
 
     MDrv_GPIO_Init();
     printk(KERN_WARNING"GPIO: probe end");
-	return 0;
+    return 0;
 }
 
 static struct platform_driver mstar_gpio_driver = {
-	.driver		= {
-		.name	= "gpio",
-		.owner	= THIS_MODULE,
-		.of_match_table = mstar_gpio_of_match,
-	},
-	.probe		= mstar_gpio_probe,
+    .driver     = {
+        .name   = "gpio",
+        .owner  = THIS_MODULE,
+        .of_match_table = mstar_gpio_of_match,
+    },
+    .probe      = mstar_gpio_probe,
 };
 
 
@@ -263,13 +263,13 @@ static struct platform_driver mstar_gpio_driver = {
 void __mod_gpio_init(void)
 {
     //GPIO chiptop initialization
-	MDrv_GPIO_Init();
+    MDrv_GPIO_Init();
 }
 
 
 static int __init mstar_gpio_init(void)
 {
-	return platform_driver_register(&mstar_gpio_driver);
+    return platform_driver_register(&mstar_gpio_driver);
 }
 postcore_initcall(mstar_gpio_init);
 

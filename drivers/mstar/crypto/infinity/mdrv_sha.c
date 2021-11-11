@@ -137,12 +137,24 @@ static void __BeforeStart(void)
 static int infinity_sha256_init(struct shash_desc *desc)
 {
     struct infinity_sha256_ctx *infinity_ctx = crypto_tfm_ctx(&desc->tfm->base);
-    struct sha256_state *sctx = shash_desc_ctx(desc);
+//	struct sha256_state *sctx = shash_desc_ctx(desc);
+
 
     SHA_DBG(" %s %d \n",__FUNCTION__,__LINE__);
-    enableClock();
-    allocMem(sctx->count);
-    allocTempMem(infinity_ctx->u32digest_len);
+	SHA_DBG(" %s %d \n","infinity_ctx->u32digest_len", infinity_ctx->u32digest_len);
+//	infinity_ctx->u32digest_len = 3;
+//    enableClock();
+//	if(infinity_ctx->u32digest_len)
+//	{
+//		allocMem(4096);
+//		allocMem(0x20);
+//		allocTempMem(4096);
+//	}
+//	else
+//	{
+//		return -EINVAL;
+//	}
+
     HAL_SHA_Reset();
     HAL_SHA_SetAddress(Chip_Phys_to_MIU(ALLOC_DMEM.aesdma_phy_addr));
     HAL_SHA_SelMode(1);
@@ -160,13 +172,17 @@ static int infinity_sha256_update(struct shash_desc *desc, const u8 *data, unsig
     u32 u32InputCopied = 0;
     u32 u32loopCnt;
     SHA_DBG(" %s %d \n",__FUNCTION__,__LINE__);
-    sctx->count =0;
+
+
+    sctx->count = 0;
     total = sctx->count + len;
     if (total < SHA256_BLOCK_SIZE) {
         memcpy(sctx->buf + sctx->count, data, len);
         sctx->count += len;
         return 0;
     }
+
+	SHA_DBG(" %s sctx->count %lld \n",__FUNCTION__,sctx->count);
     if(sctx->count)
     {
         memcpy(ALLOC_DMEM.aesdma_vir_addr, sctx->buf, sctx->count);
@@ -176,6 +192,7 @@ static int infinity_sha256_update(struct shash_desc *desc, const u8 *data, unsig
     leftover = total;
     if(leftover >= INFINITY_SHA_BUFFER_SIZE)
     {
+    	SHA_DBG("INFINITY_SHA_BUFFER_SIZE-sctx->count %lld \n",INFINITY_SHA_BUFFER_SIZE-sctx->count);
         memcpy(ALLOC_DMEM.aesdma_vir_addr+sctx->count, data, INFINITY_SHA_BUFFER_SIZE-sctx->count);
         Chip_Flush_MIU_Pipe();
         u32InputCopied = INFINITY_SHA_BUFFER_SIZE-sctx->count;
@@ -194,6 +211,7 @@ static int infinity_sha256_update(struct shash_desc *desc, const u8 *data, unsig
             leftover -= INFINITY_SHA_BUFFER_SIZE;
             if(leftover >= INFINITY_SHA_BUFFER_SIZE)
             {
+				SHA_DBG(" %s %d \n",__FUNCTION__,__LINE__);
                 memcpy(ALLOC_DMEM.aesdma_vir_addr, data+u32InputCopied, INFINITY_SHA_BUFFER_SIZE);
                 Chip_Flush_MIU_Pipe();
                 u32InputCopied += INFINITY_SHA_BUFFER_SIZE;
@@ -202,12 +220,14 @@ static int infinity_sha256_update(struct shash_desc *desc, const u8 *data, unsig
     }
     else
     {
+    	SHA_DBG(" %s line224 %d \n",__FUNCTION__,len);
         memcpy(ALLOC_DMEM.aesdma_vir_addr+sctx->count, data, len);
         Chip_Flush_MIU_Pipe();
     }
 
     if(leftover >= SHA256_BLOCK_SIZE)
     {
+    	SHA_DBG(" %s line232 %d \n",__FUNCTION__,SHA256_BLOCK_SIZE);
         memcpy(ALLOC_DMEM.aesdma_vir_addr, data+u32InputCopied, SHA256_BLOCK_SIZE);
         Chip_Flush_MIU_Pipe();
         u32InputCopied += SHA256_BLOCK_SIZE;
@@ -243,31 +263,12 @@ static int infinity_sha256_update(struct shash_desc *desc, const u8 *data, unsig
     return 0;
 }
 
-char* reverse(struct infinity_sha256_ctx *infinity_ctx)
-{
-    char *star = 0;
-    char *end = 0;
-    char head = 0;
-    star = infinity_ctx->digest;
-    end = infinity_ctx->digest;
-    head = infinity_ctx->digest[SHA256_DIGEST_SIZE-1];
-    for (end=star + (SHA256_DIGEST_SIZE*2) ;end > star-2 ; --end,++star)
-    {
-        *star ^= *end;
-        *end ^= *star;
-        *star ^= *end;
-    }
-    star[0] = head;
-    return star;
-}
-
-
 static int infinity_sha256_final(struct shash_desc *desc, u8 *out)
 {
     struct sha256_state *sctx = shash_desc_ctx(desc);
     struct infinity_sha256_ctx *infinity_ctx = crypto_tfm_ctx(&desc->tfm->base);
     u32 u32loopCnt;
-    char *shaResult = 0;
+
     SHA_DBG(" %s %d \n",__FUNCTION__,__LINE__);
     if(sctx->count)
     {
@@ -295,12 +296,12 @@ static int infinity_sha256_final(struct shash_desc *desc, u8 *out)
         sctx->count = 0;
     }
     HAL_SHA_Reset();
-    /* need to reverse */
-    shaResult = reverse(infinity_ctx);
-    memcpy(out, shaResult, SHA256_DIGEST_SIZE);
-    _ms_aes_mem_free();
-    disableClock();
-    printk(KERN_ALERT " %s \n",__FUNCTION__);
+
+    memcpy(out, infinity_ctx->digest, SHA256_DIGEST_SIZE);
+
+//    _ms_aes_mem_free();
+//    disableClock();
+//    printk(KERN_ALERT " %s \n",__FUNCTION__);
     return 0;
 }
 
@@ -354,7 +355,7 @@ struct shash_alg infinity_shash_sha256_alg = {
 	.base       = {
 		.cra_name        = "sha256",
 		.cra_driver_name = "sha256-infinity",
-		.cra_priority    = 100,//300
+		.cra_priority    = 00,
 		.cra_flags       = CRYPTO_ALG_TYPE_SHASH |
 						CRYPTO_ALG_NEED_FALLBACK,
 		.cra_blocksize   = SHA256_BLOCK_SIZE,
@@ -369,12 +370,18 @@ int infinity_sha_create(void)
 {
     int ret = -1;
     SHA_DBG(" %s %d \n",__FUNCTION__,__LINE__);
+//	SHA_DBG(" %s %d \n",__FUNCTION__,SHA256_DIGEST_SIZE);
     ret = crypto_register_shash(&infinity_shash_sha256_alg);
+//	allocMem(4096);
+	allocTempMem(4096);
+
     return ret;
 }
 
 int infinity_sha_destroy(void)
 {
+    _ms_aes_mem_free();
+
 //    crypto_unregister_alg(&infinity_shash_sha256_alg);
     return 0;
 }

@@ -950,7 +950,7 @@ void MDrv_PQ_LoadSettings(PQ_WIN eWindow);
 //-------------------------------------------------------------------------------------------------
 void MDrv_PQ_LoadSettingByData(PQ_WIN eWindow, MS_U8 u8PQIPIdx, MS_U8 *pData, MS_U16 u16DataSize);
 void MDrv_PQ_init_RIU(MS_U32 riu_addr);
-
+MS_U16 MDrv_PQ_GetIPRegCount(MS_U16 u16PQIPIdx);
 //-------------------------------------------------------------------------------------------------
 /// Set CMDQ Config
 /// @param  bEnCMDQ                       \b IN: TBD

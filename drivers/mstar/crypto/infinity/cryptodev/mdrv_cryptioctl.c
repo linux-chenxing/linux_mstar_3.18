@@ -186,7 +186,7 @@ crypto_create_session(struct fcrypt *fcr, struct session_op *sop)
 			sizeof(struct scatterlist), GFP_KERNEL);
 	if (ses_new->sg == NULL || ses_new->pages == NULL) {
 		ret = -ENOMEM;
-		goto error_hash;
+		goto error_hash_kfree;
 	}
 
 	/* put the new session to the list */
@@ -215,6 +215,9 @@ restart:
 
 error_hash:
 	cryptodev_cipher_deinit(&ses_new->cdata);
+	kfree(ses_new);
+	return ret;
+error_hash_kfree:
 	kfree(ses_new->sg);
 	kfree(ses_new->pages);
 error_cipher:
@@ -340,7 +343,7 @@ static void cryptask_routine(struct work_struct *work)
 static int
 cryptodev_open(struct inode *inode, struct file *filp)
 {
-    struct todo_list_item *tmp, *tmp_next;
+    struct todo_list_item *tmp[DEF_COP_RINGSIZE], *tmp_next;
 	struct crypt_priv *pcr;
 	int i;
 	pcr = kzalloc(sizeof(*pcr), GFP_KERNEL);
@@ -358,20 +361,21 @@ cryptodev_open(struct inode *inode, struct file *filp)
 	INIT_WORK(&pcr->cryptask, cryptask_routine);
 	init_waitqueue_head(&pcr->user_waiter);
 	for (i = 0; i < DEF_COP_RINGSIZE; i++) {
-		tmp = kzalloc(sizeof(struct todo_list_item), GFP_KERNEL);
-		if (!tmp)
+		tmp[i] = kzalloc(sizeof(struct todo_list_item), GFP_KERNEL);
+		if (!tmp[i])
             goto err_ringalloc;
 		pcr->itemcount++;
-		list_add(&tmp->__hook, &pcr->free.list);
+		list_add(&tmp[i]->__hook, &pcr->free.list);
         }
 	return 0;
 
 /* In case of errors, free any memory allocated so far */
 err_ringalloc:
-	list_for_each_entry_safe(tmp, tmp_next, &pcr->free.list, __hook) {
-		list_del(&tmp->__hook);
-		kfree(tmp);
+	list_for_each_entry_safe(tmp[i], tmp_next, &pcr->free.list, __hook) {
+		list_del(&tmp[i]->__hook);
+		kfree(tmp[i]);
 	}
+
     mutex_destroy(&pcr->done.lock);
 	mutex_destroy(&pcr->todo.lock);
 	mutex_destroy(&pcr->free.lock);

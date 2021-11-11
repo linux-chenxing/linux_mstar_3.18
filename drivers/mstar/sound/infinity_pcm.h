@@ -18,11 +18,6 @@
 #define DMA_FULL         3
 #define DMA_NORMAL 		   4
 
-// hardware dma variable
-#define PCM_DMA_SIZE		(40*1024)
-#define PCM_DMA_SIZE_ORDER	(3)				// calculate in page size
-#define PCM_DMA_OVERRUN		(PCM_DMA_SIZE << 1)
-#define PCM_DMA_UNDERRUN	(32*1024)
 
 //------------------------------------------------------------------------------
 //  Variables
@@ -38,5 +33,8 @@ struct infinity_pcm_dma_data
   dma_addr_t dma_addr;
   S32 dma_size;    /* Size of the DMA transfer */
 };
+
+int infinity_audio_clk_enable(void);
+int infinity_audio_clk_disable(struct snd_soc_codec *codec, int mode);
 
 #endif /* _INFINITY_PCM_H_ */

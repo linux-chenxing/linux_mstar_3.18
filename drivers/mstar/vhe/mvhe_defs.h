@@ -7,7 +7,7 @@
 #include <rqct_ops.h>
 
 /* options */
-#define MVHE_TIMER_SIZE         0
+#define MVHE_TIMER_SIZE         2048
 
 typedef MSYS_DMEM_INFO  msys_mem;
 typedef struct mvhe_rqc mvhe_rqc;
@@ -29,6 +29,7 @@ struct mvhe_ctx {
     int             i_score;
     int             i_index;
   /* direct memory resource */
+    int             i_strid;        // stream id set from user
     short           i_max_w;
     short           i_max_h;
   /* user data buffer */
@@ -100,7 +101,7 @@ struct mvhe_dev {
     int     i_users;
     int     i_score;
     /* statistic */
-    int     i_counts[MVHE_STREAM_NR][4];
+    int     i_counts[MVHE_STREAM_NR][5];
     int     i_thresh;
     /* clocks[0] */
     int     i_clkidx;

@@ -25,7 +25,7 @@
 
 #define MVHEIF_MAJ              1   //!< major version: Major number of driver-I/F version.
 #define MVHEIF_MIN              2   //!< minor version: Minor number of driver-I/F version.
-#define MVHEIF_EXT              0   //!< extended code: Extended number of version. It should increase when "mdrv_mmfe_io.h/mdrv_mmfe_st.h" changed.
+#define MVHEIF_EXT              1   //!< extended code: Extended number of version. It should increase when "mdrv_mvhe_io.h/mdrv_mvhe_st.h" changed.
 
 //! User Interface version number.
 #define MVHEIF_VERSION_ID       ((MVHEIF_MAJ<<22)|(MVHEIF_MIN<<12)|(MVHEIF_EXT))
@@ -39,10 +39,12 @@
 #define MVHEIF_GET_EXT(v)       (((v)>> 0)&0xFFF)
 
 //! mvhe_pixfmt indicates pixels formats
-enum mvhe_pixfmt {
+enum mvhe_pixfmt
+{
     MVHE_PIXFMT_NV12=0, //!< pixel format NV12.
     MVHE_PIXFMT_NV21,   //!< pixel format NV21.
     MVHE_PIXFMT_YUYV,   //!< pixel format YUYV.
+    MVHE_PIXFMT_YVYU,   //!< pixel format YVYU.
 };
 
 #define MVHE_HEVC_PROFILE_MAIN       1  //!< hevc main   profile
@@ -64,50 +66,61 @@ enum mvhe_pixfmt {
 #define MVHE_FLAGS_COMPR        (MVHE_FLAGS_CMPRY)
 
 //! mvhe_parm is used to apply/query configs out of streaming period.
-typedef union mvhe_parm {
+typedef union mvhe_parm
+{
     //! mvhe_parm_e indicates parameter type.
-    enum mvhe_parm_e {
-    MVHE_PARM_IDX=0,    //!< parameters of streamid: query stream-id.
-    MVHE_PARM_RES,      //!< parameters of resource: including image's resolution and format
-    MVHE_PARM_FPS,      //!< parameters of fps: fraction of framerate.
-    MVHE_PARM_GOP,      //!< parameters of gop: ip frame period.
-    MVHE_PARM_BPS,      //!< parameters of bps: bit per second.
-    MVHE_PARM_HEVC,     //!< parameters of hevc: codec settings.
-    MVHE_PARM_VUI,      //!< parameters of vui: vui params.
+    enum mvhe_parm_e
+    {
+        MVHE_PARM_IDX=0,    //!< parameters of streamid: query stream-id.
+        MVHE_PARM_RES,      //!< parameters of resource: including image's resolution and format
+        MVHE_PARM_FPS,      //!< parameters of fps: fraction of framerate.
+        MVHE_PARM_GOP,      //!< parameters of gop: ip frame period.
+        MVHE_PARM_BPS,      //!< parameters of bps: bit per second.
+        MVHE_PARM_HEVC,     //!< parameters of hevc: codec settings.
+        MVHE_PARM_VUI,      //!< parameters of vui: vui params.
+        MVHE_PARM_LTR,      //!< parameters of ltr: long term reference.
+        MVHE_PARM_PEN,      //!< parameters of pen: penalty params.
     } type;             //!< indicating which kind of mvhe_parm is.
 
     //! get ver parameter out of streaming.
-    struct mvhe_parm_idx {
+    struct mvhe_parm_idx
+    {
         enum mvhe_parm_e    i_type;         //!< i_type MUST be MMFE_PARM_IDX.
         unsigned int        i_stream;       //!< stream-id.
     } idx;              //!< used to get version/id parameters.
 
     //! set res parameters out of streaming.
-    struct mvhe_parm_res {
+    struct mvhe_parm_res
+    {
         enum mvhe_parm_e    i_type;     //!< i_type MUST be MVHE_PARM_RES.
         int                 i_pict_w;   //!< picture width.
         int                 i_pict_h;   //!< picture height.
         enum mvhe_pixfmt    i_pixfmt;   //!< pixel format.
         int                 i_outlen;   //!< output length: '<0' mmap-out, '=0' default, '>0' aligned to 512K
         int                 i_flags;    //!< flags.
+#define STREAM_ID_DEFAULT       0xFFFF
+        int                 i_strid;    //!< stream id, use STREAM_ID_DEFAULT as older naming
     } res;              //!< used to set resource parameters.
 
     //! set fps parameters out of streaming.
-    struct mvhe_parm_fps {
+    struct mvhe_parm_fps
+    {
         enum mvhe_parm_e    i_type;     //!< i_type MUST be MVHE_PARM_FPS.
         int                 i_num;      //!< numerator of fps.
         int                 i_den;      //!< denominator of fps.
     } fps;              //!< used to set fraction of frame rate.
 
     //! set gop parameters out of streaming.
-    struct mvhe_parm_gop {
+    struct mvhe_parm_gop
+    {
         enum mvhe_parm_e    i_type;     //!< i_type MUST be MVHE_PARM_GOP.
         int                 i_pframes;  //!< p-frames count per i-frame.
         int                 i_bframes;  //!< b-frames count per i/p-frame.
     } gop;              //!< used to set gop structure.
 
     //! set bps parameters out of streaming.
-    struct mvhe_parm_bps {
+    struct mvhe_parm_bps
+    {
         enum mvhe_parm_e    i_type;     //!< i_type MUST be MVHE_PARM_BPS.
         int                 i_method;   //!< rate-control method.
         int                 i_ref_qp;   //!< ref. QP.
@@ -115,7 +128,8 @@ typedef union mvhe_parm {
     } bps;              //!< used to set bit rate controller.
 
     //! set hevc parameters out of streaming.
-    struct mvhe_parm_hevc {
+    struct mvhe_parm_hevc
+    {
         enum mvhe_parm_e    i_type;                     //!< i_type MUST be MVHE_PARM_HEVC.
         unsigned short      i_profile;                  //!< profile.
         unsigned short      i_level;                    //!< level.
@@ -138,28 +152,43 @@ typedef union mvhe_parm {
     } hevc;             //!< used to set codec configuration.
 
     //! set vui parameter out of streaming.
-    struct mvhe_parm_vui {
+    struct mvhe_parm_vui
+    {
         enum mvhe_parm_e    i_type;         //!< i_type MUST be MVHE_PARM_VUI.
         int                 b_video_full_range;
+        int                 b_timing_info_pres;
     } vui;              //!< used to set codec configuration.
+
+    //! set ltr parameter out of streaming.
+    struct mvhe_parm_ltr
+    {
+        enum mvhe_parm_e    i_type;                     //!< i_type MUST be MVHE_PARM_LTR.
+        int                 b_long_term_reference;      //!< toggle ltr mode
+        int                 b_enable_pred;              //!< ltr mode, means LTR P-frame can be ref.; 0: P ref. I, 1: P ref. P
+        int                 i_ltr_period;               //!< ltr period
+    } ltr;              //!< used to set ltr configuration.
 
     unsigned char           byte[64];   //!< dummy bytes
 } mvhe_parm;
 
 //! mvhe_ctrl is used to apply/query control configs during streaming period.
-typedef union mvhe_ctrl {
+typedef union mvhe_ctrl
+{
     //! mvhe_ctrl_e indicates control type.
-    enum mvhe_ctrl_e {
+    enum mvhe_ctrl_e
+    {
         MVHE_CTRL_SEQ=0,//!< control of sequence: includes resolution, pixel format and frame-rate.
         MVHE_CTRL_HEVC, //!< control of hevc codec settings.
         MVHE_CTRL_ROI,  //!< control of roi setting changing.
         MVHE_CTRL_SPL,  //!< control of slice spliting.
         MVHE_CTRL_DBK,  //!< control of deblocking.
         MVHE_CTRL_BAC,  //!< control of cabac_init.
+        MVHE_CTRL_LTR,  //!< control of long term reference.
     } type;             //!< indicating which kind of mvhe_ctrl is.
 
     //! set seq control during streaming.
-    struct mvhe_ctrl_seq {
+    struct mvhe_ctrl_seq
+    {
         enum mvhe_ctrl_e    i_type;     //!< i_type MUST be MVHE_CTRL_SEQ.
         enum mvhe_pixfmt    i_pixfmt;   //!< pixel-format
         short               i_pixelw;   //!< pixels in width.
@@ -169,7 +198,8 @@ typedef union mvhe_ctrl {
     } seq;              //!< used to start new sequence.
 
     //! set hevc control during streaming.
-    struct mvhe_ctrl_hevc {
+    struct mvhe_ctrl_hevc
+    {
         enum mvhe_ctrl_e    i_type;     //!< i_type MUST be MVHE_CTRL_SEQ.
         unsigned short      i_profile;                      //!< profile.
         unsigned short      i_level;                        //!< level.
@@ -192,7 +222,8 @@ typedef union mvhe_ctrl {
     } hevc;             //!< used to set hevc codec setting.
 
     //! set roi control during streaming.
-    struct mvhe_ctrl_roi {
+    struct mvhe_ctrl_roi
+    {
         enum mvhe_ctrl_e    i_type;     //!< i_type MUST be MVHE_CTRL_ROI.
         short               i_index;    //!< roi index.
         short               i_dqp;      //!< dqp: -15~0, =0: disable, !=0: enable.
@@ -203,7 +234,8 @@ typedef union mvhe_ctrl {
     } roi;              //!< used to set roi region and dqp.
 
     //! set spl control during streaming.
-    struct mvhe_ctrl_spl {
+    struct mvhe_ctrl_spl
+    {
         enum mvhe_ctrl_e    i_type;     //!< i_type MUST be MVHE_CTRL_SPL.
         int                 i_rows;     //!< split slice by cb-rows.
         int                 i_bits;     //!< split slice by cb-bits.
@@ -219,25 +251,35 @@ typedef union mvhe_ctrl {
     } dbk;              //!< used to set deblocking splitting.
 
     //! set bac control during streaming.
-    struct mvhe_ctrl_bac {
+    struct mvhe_ctrl_bac
+    {
         enum mvhe_ctrl_e    i_type;     //!< i_type MUST be MVHE_CTRL_BAC.
         int                 b_init;     //!< cabac_init_flag: 0,1
     } bac;              //!< used to set cabac_init.
 
-    unsigned char           byte[64];   //!< dummy bytes
+    //! set ltr parameter during streaming.
+    struct mvhe_ctrl_ltr
+    {
+        enum mvhe_ctrl_e    i_type;             //!< i_type MUST be MVHE_CTRL_LTR.
+        int                 b_enable_pred;      //!< ltr mode, means LTR P-frame can be ref.; 0: P ref. I, 1: P ref. P
+        int                 i_ltr_period;       //!< ltr period
+    } ltr;              //!< used to set long term reference.
 
+    unsigned char           byte[64];   //!< dummy bytes
 } mvhe_ctrl;
 
 #define MVHE_FLAGS_IDR        (1<< 0)   //!< request IDR.
 #define MVHE_FLAGS_DISPOSABLE (1<< 1)   //!< request unref-pic.
 #define MVHE_FLAGS_NIGHT_MODE (1<< 2)   //!< night mode.
+#define MVHE_FLAGS_LTR_PFRAME (1<< 4)   //!< LTR P-frame flag.
 #define MVHE_FLAGS_SOP        (1<<30)   //!< start of picture.
 #define MVHE_FLAGS_EOP        (1<<31)   //!< end of picture.
 #define MVHE_MEMORY_USER      (0)       //!< user mode. (pass pointer)
 #define MVHE_MEMORY_MMAP      (1)       //!< mmap mode. (pass physic address)
 
 //! mvhe_buff is used to exchange video/obits buffer between user and driver during streaming period.
-typedef struct mvhe_buff {
+typedef struct mvhe_buff
+{
     int             i_index;        //!< index of buffer: '-1' invalid, '>=0' valid.
     int             i_flags;        //!< flags for request/reports.
     short           i_memory;       //!< memory mode of user/mmap.
@@ -245,20 +287,23 @@ typedef struct mvhe_buff {
     short           i_height;       //!< pixels in height. (if buffer is image)
     short           i_stride;       //!< pixels in stride. (if buffer is image) '<width': stride=width.
     long long       i_timecode;     //!< timestamp of buffer.
-    struct {
-    unsigned char   b_override;     //!< override deblocking.
-    unsigned char   b_disable;      //!< diable deblocking.
-      signed char   i_tc_offset_div2;   //!< tc_offset_div2: -6 to 6 (inclusive)
-      signed char   i_beta_offset_div2; //!< beta_offset_div2: -6 to 6 (inclusive)
+    struct
+    {
+        unsigned char   b_override;     //!< override deblocking.
+        unsigned char   b_disable;      //!< diable deblocking.
+      signed char       i_tc_offset_div2;   //!< tc_offset_div2: -6 to 6 (inclusive)
+      signed char       i_beta_offset_div2; //!< beta_offset_div2: -6 to 6 (inclusive)
     } deblock;      //!< deblock for slice layer.
     int             i_motion;       //!< measurement of motion.
     int             i_others;       //!< measurement of others.
     int             i_planes;       //!< buffer planes count.
-    struct {
-    union  {
-    unsigned long long  phys;       //!< physical address.
-    void*               uptr;       //!< virtual pointers.
-    } mem;          //!< memory address for virtual pointer or physical address.
+    struct
+    {
+        union
+        {
+            unsigned long long  phys;       //!< physical address.
+            void*               uptr;       //!< virtual pointers.
+        } mem;          //!< memory address for virtual pointer or physical address.
     int             i_bias;
     int             i_size;         //!< memory occupied size.
     int             i_used;         //!< memory used size.

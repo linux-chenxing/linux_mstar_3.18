@@ -159,6 +159,18 @@
     void MDrv_PQ_Set_CmdqCfg_##PQTABLE_NAME(PQ_CMDQ_CONFIG CmdqCfg) {\
         _MDrv_PQ_Set_CmdqCfg(CmdqCfg); \
     }
+//### MDrv_PQ_Set_CmdqCfg
+#define MDrv_PQ_GetIPRegCount_(PQTABLE_NAME, u16PQSrcType, u8PQIPIdx) \
+    MDrv_PQ_GetIPRegCount_##PQTABLE_NAME(u16PQSrcType,u8PQIPIdx)
+
+#define DECLARE_MDrv_PQ_GetIPRegCount_(PQTABLE_NAME) \
+    extern MS_U16 MDrv_PQ_GetIPRegCount_##PQTABLE_NAME(MS_U16 u16PQSrcType, MS_U8 u8PQIPIdx);
+
+#define INSTALL_MDrv_PQ_GetIPRegCount_(PQTABLE_NAME) \
+    MS_U16 MDrv_PQ_GetIPRegCount_##PQTABLE_NAME(MS_U16 u16PQSrcType, MS_U8 u8PQIPIdx) {\
+        return _MDrv_PQ_GetIPRegCount(u16PQSrcType,u8PQIPIdx); \
+    }
+
 
 //### MDRv_PQ_Check_Reg
 #define MDrv_PQ_Check_Type_(PQTABLE_NAME, EnCheck) \
@@ -404,6 +416,7 @@
     DECLARE_MDrv_PQ_LoadCommTable_(table_name) \
     DECLARE_MDrv_PQ_LoadTableBySrcType_(table_name) \
     DECLARE_MDrv_PQ_Set_CmdqCfg_(table_name) \
+    DECLARE_MDrv_PQ_GetIPRegCount_(table_name) \
     DECLARE_MDrv_PQ_Check_Type_(table_name) \
     DECLARE_MDrv_PQ_LoadTableByData_(table_name) \
     DECLARE_MDrv_PQ_CheckCommTable_(table_name) \
@@ -454,6 +467,7 @@
     INSTALL_MDrv_PQ_Set_LoadTableInfo_SrcType_(table_name) \
     INSTALL_MDrv_PQ_Get_LoadTableInfo_SrcType_(table_name) \
     INSTALL_MDrv_PQ_ClearTableIndex_(table_name) \
+    INSTALL_MDrv_PQ_GetIPRegCount_(table_name) \
     INSTALL_MDrv_PQ_LoadPictureSetting_(table_name)
 #else
 
@@ -461,6 +475,7 @@
     INSTALL_MDrv_PQ_DumpTable_(table_name) \
     INSTALL_MDrv_PQ_GetIPNum_(table_name) \
     INSTALL_MDrv_PQ_GetTableNum_(table_name) \
+    INSTALL_MDrv_PQ_GetIPRegCount_(table_name) \
     INSTALL_MDrv_PQ_GetTableIndex_(table_name) \
     INSTALL_MDrv_PQ_GetCurrentTableIndex_(table_name) \
     INSTALL_MDrv_PQ_GetTable_(table_name) \
@@ -477,9 +492,9 @@ DECLARE_PQ_FUNCTIONS(MAIN)    // table config parameter
 
 
 // SC
-#include "Infinity_Main.h"              // table config parameter
-#include "Infinity_Main_HSPRule.h"      // table config parameter
-#include "Infinity_Main_VSPRule.h"      // table config parameter
-#include "Infinity_Main_GRule.h"        // table config parameter
+#include "Infinity3e_Main.h"              // table config parameter
+#include "Infinity3e_Main_HSPRule.h"      // table config parameter
+#include "Infinity3e_Main_VSPRule.h"      // table config parameter
+#include "Infinity3e_Main_GRule.h"        // table config parameter
 
 #endif

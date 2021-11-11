@@ -109,7 +109,7 @@ do{                \
 #else
 #define PQ_ERR(x) x
 #define PQ_DBG(x)
-#define PQ_DUMP_DBG(x)          //x
+#define PQ_DUMP_DBG(x)
 #define PQ_DUMP_FILTER_DBG(x)   //x
 #endif
 
@@ -189,7 +189,25 @@ typedef enum {
     PQ_TABTYPE_SWDRIVER,
     PQ_TABTYPE_PICTURE_1,
     PQ_TABTYPE_PICTURE_2,
-
+    PQ_TABTYPE_WDR_Loc_TBL_0_SRAM,
+    PQ_TABTYPE_WDR_Loc_TBL_1_SRAM,
+    PQ_TABTYPE_WDR_Loc_TBL_2_SRAM,
+    PQ_TABTYPE_WDR_Loc_TBL_3_SRAM,
+    PQ_TABTYPE_WDR_Loc_TBL_4_SRAM,
+    PQ_TABTYPE_WDR_Loc_TBL_5_SRAM,
+    PQ_TABTYPE_WDR_Loc_TBL_6_SRAM,
+    PQ_TABTYPE_WDR_Loc_TBL_7_SRAM,
+    PQ_TABTYPE_PRIVACY_MASK_SRAM,
+    PQ_TABTYPE_YUV_Gamma_tblU_SRAM,
+    PQ_TABTYPE_YUV_Gamma_tblV_SRAM,
+    PQ_TABTYPE_YUV_Gamma_tblY_SRAM,
+    PQ_TABTYPE_ColorEng_GM10to12_Tbl_R_SRAM,
+    PQ_TABTYPE_ColorEng_GM10to12_Tbl_G_SRAM,
+    PQ_TABTYPE_ColorEng_GM10to12_Tbl_B_SRAM,
+    PQ_TABTYPE_ColorEng_GM12to10_CrcTbl_R_SRAM,
+    PQ_TABTYPE_ColorEng_GM12to10_CrcTbl_G_SRAM,
+    PQ_TABTYPE_ColorEng_GM12to10_CrcTbl_B_SRAM,
+    PQ_TABTYPE_Max,
 } EN_PQ_TABTYPE;
 
 

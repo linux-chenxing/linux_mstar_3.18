@@ -910,8 +910,16 @@ u8 MHal_EMAC_CalcMACHash( u8 m0, u8 m1, u8 m2, u8 m3, u8 m4, u8 m5 )
 //-------------------------------------------------------------------------------------------------
 void MHal_EMAC_enable_phyirq( void )
 {
-#if 0
+#ifdef LAN_ESD_CARRIER_INTERRUPT
+    u8 uRegVal;
+    //printk( KERN_ERR "[EMAC] %s\n" , __FUNCTION__);
+    uRegVal = MHal_EMAC_ReadReg8(REG_BANK_ALBANY2, 0x75*2);
+    uRegVal |= BIT4;
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY2, 0x75*2, uRegVal);
 
+    uRegVal = MHal_EMAC_ReadReg8(REG_BANK_ALBANY0, 0x30*2);
+    uRegVal = (uRegVal&~0x00F0) | 0x00A0;
+    MHal_EMAC_WritReg8(REG_BANK_ALBANY0, 0x30*2, uRegVal);
 #endif
 }
 

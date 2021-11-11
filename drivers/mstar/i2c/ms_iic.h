@@ -34,6 +34,7 @@
 #define MDRV_NAME_IIC                   "iic"
 #define MDRV_MAJOR_IIC                  0x8a
 #define MDRV_MINOR_IIC                  0x00
+#define HWI2C_PORTM                   4 //maximum support ports
 ////////////////////////////////////////////////////////////////////////////////
 // Define & data type
 ////////////////////////////////////////////////////////////////////////////////
@@ -197,8 +198,8 @@ typedef struct _HWI2C_UnitCfg
     HWI2C_ReadMode  eReadMode;      /// read mode
     int             eGroup;          /// port
     U32             eBaseAddr;
-    U32             eChipAddr;	
-    U32             eClkAddr;	
+    U32             eChipAddr;
+    U32             eClkAddr;
 }HWI2C_UnitCfg;
 
 /// I2C information
@@ -217,15 +218,22 @@ typedef struct _HWI2C_Status
     HWI2C_State eState;       /// state
 }HWI2C_Status;
 
+typedef struct _I2C_DMA
+{
+	dma_addr_t i2c_dma_addr;
+	u8  *i2c_virt_addr;
+}I2C_DMA;
+
+extern I2C_DMA HWI2C_DMA[HWI2C_PORTM];
 
 ////////////////////////////////////////////////////////////////////////////////
 // Extern Function
 ////////////////////////////////////////////////////////////////////////////////
-void MDrv_HW_IIC_Init(void *base,void *chipbase,int i2cgroup,void *clkbase);
+void MDrv_HW_IIC_Init(void *base,void *chipbase,int i2cgroup,void *clkbase, int i2cpadmux);
 BOOL MDrv_HWI2C_Init(HWI2C_UnitCfg *psCfg);
 BOOL MDrv_HWI2C_WriteBytes(U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAddr, U32 uSize, U8 *pData);
 BOOL MDrv_HWI2C_ReadBytes(U16 u16SlaveCfg, U32 uAddrCnt, U8 *pRegAddr, U32 uSize, U8 *pData);
-BOOL MDrv_HWI2C_SetClk(HWI2C_CLKSEL eClk);
+//BOOL MDrv_HWI2C_SetClk(HWI2C_CLKSEL eClk);
 
 
 BOOL MDrv_HWI2C_Start(U16 u16PortOffset);

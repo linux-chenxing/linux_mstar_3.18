@@ -201,7 +201,7 @@ static int xpm_register_source(char* name,struct file *filp)
 {
 
 	struct list_head *ptr;
-	struct XPM_SOURCE_LIST *entry,*match_entry;
+	struct XPM_SOURCE_LIST *entry,*match_entry=NULL;
 	int err=0;
 
 //	mutex_lock(&xpm.mutex);
@@ -262,7 +262,7 @@ static int xpm_deregister_source(struct file *filp)
 {
 
 	struct list_head *ptr;
-	struct XPM_SOURCE_LIST *entry,*match_entry;
+	struct XPM_SOURCE_LIST *entry,*match_entry=NULL;
 	int err=0;
 
 //	mutex_lock(&xpm.mutex);
@@ -305,10 +305,9 @@ static long xpm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
     	case IOCTL_XPM_REGISTER_SOURCE:
     	{
-			char _name[16]={0};
-
-			if( copy_from_user((void*)_name, (void __user *)arg, ((XPM_NAME_SIZE-1)>strlen((char *)arg))?strlen((char *)arg):(XPM_NAME_SIZE-1)) )
-			{
+			char _name[XPM_NAME_SIZE]={'\0'};
+			if( copy_from_user((void*)_name, (void __user *)arg, (XPM_NAME_SIZE>strlen((char *)arg))?  (strlen((char *)arg)+1): XPM_NAME_SIZE-1 ) )
+            {
 				BUG();
 
 			}
@@ -624,17 +623,15 @@ EXPORT_SYMBOL(xpm_suspend_wait_ms_show);
 
 ssize_t xpm_suspend_wait_ms_store(struct kobject *kobj, struct kobj_attribute *attr,const char *buf, size_t n)
 {
-	int err=0;
 	long st;
-
 
 	if(kstrtoul(buf,10,&st))
 	{
-		return -EINVAL;
-	}
+		return 0;
+    }
 	suspend_wait_time=(st<XPM_MIN_SUSPEND_WAIT_MS)?XPM_MIN_SUSPEND_WAIT_MS:st;
 
-	return err ? err : n;
+	return n;
 }
 EXPORT_SYMBOL(xpm_suspend_wait_ms_store);
 

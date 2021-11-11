@@ -147,7 +147,7 @@ static PQ_DISPLAY_TYPE genDisplayType = PQ_DISPLAY_ONE;
 static MS_PQ_INFO   _info           = {128,   217};
 static MS_PQ_RFBL_INFO _stRFBL_Info = {FALSE, FALSE, 0 };
 #endif
-static MS_PQ_Status _status         = {FALSE, FALSE, };
+static MS_PQ_Status _status         = {FALSE, FALSE};
 
 #else
 static MS_PQ_INFO   _info = {.u16Input_Src_Num = 128, .u8IP_Num = 217,};
@@ -575,7 +575,7 @@ MS_BOOL MDrv_PQ_Set_DisplayType_Main(MS_U16 u16DisplayWidth, PQ_DISPLAY_TYPE enD
     {
         default:
         case PQ_DISPLAY_ONE:
-            PQTableInfo.pQuality_Map_Aray = (void*)((u16DisplayWidth == 1366)?QMAP_1920_Main: QMAP_1920_Main);
+            PQTableInfo.pQuality_Map_Aray = (void*)(QMAP_1920_Main);
 #if (PQ_GRULE_NR_ENABLE)
             PQTableInfo.pGRule_Level[E_GRULE_NR] =
                 (void*)((u16DisplayWidth == 1366)?MST_GRule_1920_NR_Main: MST_GRule_1920_NR_Main);
@@ -817,39 +817,18 @@ MS_BOOL MDrv_PQ_Set_DisplayType_Main(MS_U16 u16DisplayWidth, PQ_DISPLAY_TYPE enD
     {
         default:
         case PQ_DISPLAY_ONE:
-        if(u16DisplayWidth == 1366)
-        {
             PQTableInfoEx.pQuality_Map_Aray = (void*)QMAP_1920_Main_Ex;
-        }
-        else
-        {
-            PQTableInfoEx.pQuality_Map_Aray = (void*)QMAP_1920_Main_Ex;
-        }
         break;
 
         case PQ_DISPLAY_PIP:
 #if PQ_ENABLE_PIP
-        if(u16DisplayWidth == 1366)
-        {
             PQTableInfoEx.pQuality_Map_Aray = (void*)QMAP_1920_PIP_Main_Ex;
-        }
-        else
-        {
-            PQTableInfoEx.pQuality_Map_Aray = (void*)QMAP_1920_PIP_Main_Ex;
-        }
 #endif
         break;
 
         case PQ_DISPLAY_POP:
 #if PQ_ENABLE_PIP
-        if(u16DisplayWidth == 1366)
-        {
             PQTableInfoEx.pQuality_Map_Aray = (void*)QMAP_1920_POP_Main_Ex;
-        }
-        else
-        {
-            PQTableInfoEx.pQuality_Map_Aray = (void*)QMAP_1920_POP_Main_Ex;
-        }
 #endif
         break;
     }
@@ -969,7 +948,11 @@ void MDrv_PQ_init_RIU(MS_U32 riu_addr)
 {
     Hal_PQ_init_riu_base(riu_addr);
 }
+MS_U16 MDrv_PQ_GetIPRegCount(MS_U16 u16PQIPIdx)
+{
 
+    return MDrv_PQ_GetIPRegCount_(MAIN,_u16PQSrcType[0], (MS_U8)u16PQIPIdx);
+}
 void MDrv_PQ_LoadSettingByData(PQ_WIN eWindow, MS_U8 u8PQIPIdx, MS_U8 *pData, MS_U16 u16DataSize)
 {
     PQ_DBG(printf("%s %d, Win:%d, IPIdx:%d, Size%d  \n", __FUNCTION__, __LINE__, eWindow, u8PQIPIdx, u16DataSize));

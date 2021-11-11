@@ -309,7 +309,7 @@ void* vsb3_allocate(void)
     vhe_rctl* rqcx;
 
     if (!(rqct = MEM_ALLC(sizeof(vhe_vsb3))))
-        return NULL;
+        return rqct;
 
     MEM_COPY(rqct->name, VSB3_NAME, 5);
     rqct->release = _vsb3_ops_free;

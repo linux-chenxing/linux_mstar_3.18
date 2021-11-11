@@ -44,7 +44,6 @@
 //  Function and Variable
 //-------------------------------------------------------------------------------------------------
 void MDrv_GPIO_Init(void);
-void MDrv_GPIO_WriteRegBit(U32 u32Reg, U8 u8Enable, U8 u8BitMsk);
 void MDrv_GPIO_Pad_Set(U8 u8IndexGPIO);
 void MDrv_GPIO_Pad_Oen(U8 u8IndexGPIO);
 void MDrv_GPIO_Pad_Odn(U8 u8IndexGPIO);
@@ -55,6 +54,7 @@ void MDrv_GPIO_Pull_Low(U8 u8IndexGPIO);
 void MDrv_GPIO_Set_High(U8 u8IndexGPIO);
 void MDrv_GPIO_Set_Low(U8 u8IndexGPIO);
 void MDrv_Enable_GPIO_INT(U8 u8IndexGPIO);
+int MDrv_GPIO_To_Irq(U8 u8IndexGPIO);
 void MDrv_GPIO_PAD_32K_OUT(U8 u8Enable);
 void MDrv_GPIO_Set_POLARITY(U8 u8IndexGPIO,U8 reverse);
 

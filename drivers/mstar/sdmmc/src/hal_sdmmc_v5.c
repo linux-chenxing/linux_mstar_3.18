@@ -46,7 +46,7 @@
 //-----------------------------------------------------------------------------------------------------------
 #define V_MIE_PATH_INIT     0
 #define V_MMA_PRI_INIT      (R_MIU_R_PRIORITY|R_MIU_W_PRIORITY)
-#define V_MIE_INT_EN_INIT   (R_DATA_END_IEN|R_CMD_END_IEN|R_SDIO_INT_IEN)
+#define V_MIE_INT_EN_INIT   (R_DATA_END_IEN|R_CMD_END_IEN|R_SDIO_INT_IEN|R_BUSY_END_IEN)
 #define V_RSP_SIZE_INIT     0
 #define V_CMD_SIZE_INIT     (5<<8)
 #define V_SD_CTL_INIT       0
@@ -92,6 +92,7 @@
 #define A_SD_MODE_REG(IP)               GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x0B)
 #define A_SD_CTL_REG(IP)                GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x0C)
 #define A_SD_STS_REG(IP)                GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x0D)
+#define A_BOOT_MOD_REG(IP)              GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x0E)
 #define A_DDR_MOD_REG(IP)               GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x0F)
 #define A_DDR_TOGGLE_CNT_REG(IP)        GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x10)
 #define A_SDIO_MODE_REG(IP)             GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x11)
@@ -104,6 +105,8 @@
 
 #define A_CIFD_EVENT_REG(IP)            GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x30)
 #define A_CIFD_INT_EN_REG(IP)           GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x31)
+
+#define A_BOOT_REG(IP)                  GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x37)
 
 #define A_DBG_BUS0_REG(IP)              GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x38)
 #define A_DBG_BUS1_REG(IP)              GET_CARD_REG_ADDR(A_SD_REG_POS(IP), 0x39)
@@ -161,15 +164,16 @@ static RetEmType _REG_ClearSDSTS(IPEmType eIP, U8_T u8Retry)
         CARD_REG_SETBIT(A_SD_STS_REG(eIP), M_SD_ERRSTS);
 
         if ( gb_StopWProc[eIP] )
-            return EV_FAIL;
+            break;
 
         if ( !M_REG_STSERR(eIP) )
             return EV_OK;
         else if(!u8Retry)
-            return EV_FAIL;
+            break;
 
     } while(u8Retry--);
-    return EV_FAIL;
+
+    return EV_FAIL; //mark for coverity scan
 }
 
 
@@ -188,15 +192,17 @@ static RetEmType _REG_ClearMIEEvent(IPEmType eIP, U8_T u8Retry)
         CARD_REG(A_MIE_EVENT_REG(eIP)) = M_SD_MIEEVENT;
 
         if ( gb_StopWProc[eIP] )
-            return EV_FAIL;
+            break;
 
         if ( !M_REG_SDMIEEvent(eIP) )
             return EV_OK;
         else if( !u8Retry )
-            return EV_FAIL;
+            break;
 
     }while( u8Retry-- );
-    return EV_FAIL;
+
+    return EV_FAIL; //mark for coverity scan
+
 }
 
 
@@ -206,19 +212,34 @@ static RetEmType _REG_WaitDat0HI(IPEmType eIP, U32_T u32WaitMs)
 {
     U32_T u32DiffTime = 0;
 
-    do
-    {
+#if(EN_BIND_CARD_INT)
+	if ( Hal_CARD_INT_MIEIntRunning(eIP, EV_INT_SD) )	// Interrupt Mode
+	{
+        CARD_REG_SETBIT(A_SD_CTL_REG(eIP), R_BUSY_DET_ON );
 
-        if ( gb_StopWProc[eIP] )
+        if ( !Hal_CARD_INT_WaitMIEEvent(eIP, R_BUSY_END_INT, u32WaitMs) )
             return EV_FAIL;
-
-        if ( M_REG_GETDAT0(eIP) )
+        else
             return EV_OK;
 
-        Hal_Timer_uDelay(1);
-        u32DiffTime++;
-    }while( u32DiffTime <= (u32WaitMs*1000) );
+	}
+    else // Polling Mode
+#endif
+    {
+        do
+        {
 
+                if ( gb_StopWProc[eIP] )
+                    return EV_FAIL;
+
+                if ( M_REG_GETDAT0(eIP) )
+                    return EV_OK;
+
+                Hal_Timer_uDelay(1);
+                u32DiffTime++;
+        }while( u32DiffTime <= (u32WaitMs*1000) );
+
+    }
     return EV_FAIL;
 
 }
@@ -231,8 +252,8 @@ static RetEmType _REG_WaitEvent(IPEmType eIP, IPEventEmType eEvent, U16_T u16Req
     U32_T u32DiffTime = 0;
 
 #if(EN_BIND_CARD_INT)
-	if ( Hal_CARD_INT_MIEIntRunning(eIP, EV_INT_SD) )	// Interrupt Mode
-	{
+    if ( Hal_CARD_INT_MIEIntRunning(eIP, EV_INT_SD) )	// Interrupt Mode
+    {
         if(eEvent == EV_MIE)
         {
             if ( !Hal_CARD_INT_WaitMIEEvent(eIP, u16ReqEvent, u32WaitMs) )
@@ -241,7 +262,7 @@ static RetEmType _REG_WaitEvent(IPEmType eIP, IPEventEmType eEvent, U16_T u16Req
                 return EV_OK;
         }
 
-	}
+    }
     else // Polling Mode
 #endif
     {
@@ -800,8 +821,10 @@ RspErrEmType Hal_SDMMC_SendCmdAndWaitProcess(IPEmType eIP, TransEmType eTransTyp
     CARD_REG(A_SD_CTL_REG(eIP))  = V_SD_CTL_INIT | (eRspType>>12) | (eCmdType>>4) | ((U8_T)(eTransType & R_ADMA_EN));
     CARD_REG(A_SDIO_MODE_REG(eIP)) = V_SDIO_MODE_INIT | gu16_SDIO_MODE_IntMode[eIP];
 
-    CARD_REG(A_MMA_PRI_REG_REG(eIP)) = V_MMA_PRI_INIT;
+    CARD_REG_CLRBIT(A_BOOT_MOD_REG(eIP), R_BOOT_MODE);
+    CARD_REG_CLRBIT(A_BOOT_REG(eIP), (R_NAND_BOOT_EN | R_BOOTSRAM_ACCESS_SEL | R_IMI_SEL));
 
+    CARD_REG(A_MMA_PRI_REG_REG(eIP)) = V_MMA_PRI_INIT;
     CARD_REG(A_DDR_MOD_REG(eIP)) = V_DDR_MODE_INIT | (eTransType==EV_CIF ? gu16_DDR_MODE_REG_ForR2N[eIP] : gu16_DDR_MODE_REG[eIP]);
 
     Hal_Timer_uDelay(gu16_WT_NRC[eIP]);
@@ -905,15 +928,15 @@ RspErrEmType Hal_SDMMC_RunBrokenDmaAndWaitProcess(IPEmType eIP, CmdEmType eCmdTy
 *     @author jeremy.wang (2015/7/13)
 * Desc: For ADMA Data Transfer Settings
 *
-* @param eIP : FCIE1/FCIE2/...
 * @param pDMATable : DMA Table memory address pointer
 * @param u8Item : DMA Table Item 0 ~
-* @param u32SubDMALen :  DMA Table DMA Len
-* @param u32SubDMAAddr : DMA Table DMA Addr
+* @param u32SubLen :  DMA Table DMA Len
+* @param u32SubBCnt : DMA Table Job Blk Cnt
+* @param u32SubAddr : DMA Table DMA Addr
 * @param u8MIUSel : MIU Select
 * @param bEnd : End Flag
 ----------------------------------------------------------------------------------------------------------*/
-void Hal_SDMMC_ADMASetting(IPEmType eIP, volatile void *pDMATable, U8_T u8Item, U32_T u32SubDMALen, U32_T u32SubDMAAddr, U8_T u8MIUSel, BOOL_T bEnd)
+void Hal_SDMMC_ADMASetting(volatile void *pDMATable, U8_T u8Item, U32_T u32SubLen, U16_T u16SubBCnt, U32_T u32SubAddr, U8_T u8MIUSel, BOOL_T bEnd)
 {
     //U16_T u16Pos;
 
@@ -922,15 +945,15 @@ void Hal_SDMMC_ADMASetting(IPEmType eIP, volatile void *pDMATable, U8_T u8Item, 
     pst_AdmaDescStruct = (pst_AdmaDescStruct+u8Item);
     memset(pst_AdmaDescStruct, 0, sizeof(AdmaDescStruct));
 
-    pst_AdmaDescStruct->u32_DmaLen = u32SubDMALen;
-    pst_AdmaDescStruct->u32_Address = u32SubDMAAddr;
-    pst_AdmaDescStruct->u32_JobCnt = (u32SubDMALen>>9);
+    pst_AdmaDescStruct->u32_DmaLen = u32SubLen;
+    pst_AdmaDescStruct->u32_Address = u32SubAddr;
+    pst_AdmaDescStruct->u32_JobCnt = u16SubBCnt;
     pst_AdmaDescStruct->u32_MiuSel = u8MIUSel;
     pst_AdmaDescStruct->u32_End    = bEnd;
 
     /*prtstring("\r\n");
     prtstring("gpst_AdmaDescStruct Pos=(");
-    prtU32Hex(pst_AdmaDescStruct);
+    prtU32Hex((U32_T)pst_AdmaDescStruct);
     prtstring(")\r\n");
 
     for(u16Pos=0; u16Pos<192 ; u16Pos++)
@@ -971,7 +994,8 @@ void Hal_SDMMC_ClkCtrl(IPEmType eIP, BOOL_T bEnable, U16_T u16DelayMs)
     else
         CARD_REG_CLRBIT(A_SD_MODE_REG(eIP), R_CLK_EN);
 
-    Hal_Timer_mDelay(u16DelayMs);
+    Hal_Timer_mSleep(u16DelayMs);
+    //Hal_Timer_mDelay(u16DelayMs);
 }
 
 

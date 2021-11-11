@@ -16,6 +16,7 @@ EXTRA_CFLAGS += -Idrivers/mstar/include
 EXTRA_CFLAGS += -Idrivers/mstar/mhve
 EXTRA_CFLAGS += -Idrivers/mstar/vhe
 EXTRA_CFLAGS += -Idrivers/mstar/vhe/$(H2IP_NAME)
+#EXTRA_CFLAGS += -DROIMAP
 
 # files
 obj-$(CONFIG_MS_VHE) += mdrv_mvhe.o

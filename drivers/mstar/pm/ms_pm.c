@@ -8,34 +8,48 @@
 
 #include "ms_platform.h"
 #include "ms_types.h"
-#include "infinity/registers.h"
-#include "infinity/irqs.h"
+#include "infinity3/registers.h"
+#include "infinity3/irqs.h"
+#include <linux/suspend.h>
+
 
 extern U8 MDrv_GPIO_Pad_Read(U8 u8IndexGPIO);
 int detect_gpio=-1;
+int from_resend=0;
 
 static irqreturn_t ms_pm_deepsleep_handler(int irq, void *dev_id)
 {
+#if 0
+
     struct platform_device *pdev = dev_id;
     struct irq_data *data;
+
 
     dev_info(&pdev->dev, "[%s] ++\n", __func__);
 
     if(detect_gpio == -1)
         return IRQ_NONE;
 
-    if(MDrv_GPIO_Pad_Read(detect_gpio) == 1)
+    if(from_resend == 1)
+    {
+        from_resend = 0;
         return IRQ_HANDLED;
+    }
 
-    //set polarity, get interrupt when L->H
+
     data = irq_get_irq_data(irq);
-    data->chip->irq_set_type(data, 0);
+
+
+    data = irq_get_irq_data(irq);
+    //data->chip->irq_set_type(data, 0);  //set polarity, get interrupt when L->H
+    data->chip->irq_set_type(data, 1);  //set polarity, get interrupt when H->L
 
     //clear interrupt
     SETREG16(BASE_REG_PMGPIO_PA + REG_ID_00, BIT6);
     //unmask interrupt
     CLRREG16(BASE_REG_PMGPIO_PA + REG_ID_00, BIT4);
 
+#ifndef CONFIG_ARCH_INFINITY3 //no need in I3
     //power down eth
     //wriu  -w  0x0032fc  0x0102   // Power-down LDO
     //wriu      0x0032b7  0x17     // Power-down ADC
@@ -64,6 +78,7 @@ static irqreturn_t ms_pm_deepsleep_handler(int irq, void *dev_id)
 
     //Set DVDD_NODIE to 0.95V
     //OUTREG8(BASE_REG_PMSLEEP_PA + REG_ID_62, 0xA0);
+#endif
 
     //Switch reg_ckg_mcu/reg_ckg_spi to xtal, or it will hang when resume
     OUTREG16(BASE_REG_PMSLEEP_PA + REG_ID_20, 0x0);
@@ -85,7 +100,7 @@ static irqreturn_t ms_pm_deepsleep_handler(int irq, void *dev_id)
     OUTREG8(BASE_REG_PMGPIO_PA + REG_ID_04, 0x10);
 
     /* we'll never reach here because power down */
-
+#endif
     return IRQ_HANDLED;
 }
 
@@ -116,20 +131,27 @@ static int ms_pm_probe(struct platform_device *pdev)
     int ret;
 
     data = irq_get_irq_data(platform_get_irq(pdev, 0));
-    data->chip->irq_set_type(data, 1); //get interrupt when H->L
+    //data->chip->irq_set_type(data, 1); //get interrupt when H->L
+    data->chip->irq_set_type(data, 0); //get interrupt when L->H
     data->chip->irq_ack(data);
 
-    if(of_property_read_u32(pdev->dev.of_node, "detect-gpio", &detect_gpio))
+    if((ret = of_property_read_u32(pdev->dev.of_node, "detect-gpio", &detect_gpio)))
     {
         detect_gpio=-1;
+        return ret;
     }
 
-    pr_info("gpio_to_irq %d => %d\n", detect_gpio, gpio_to_irq(detect_gpio));
+    if(MDrv_GPIO_Pad_Read(detect_gpio)==0)
+        from_resend=1;
+
+    pr_err("gpio_to_irq %d => %d\n", detect_gpio, gpio_to_irq(detect_gpio));
 
     if((ret = devm_request_threaded_irq(&pdev->dev, data->irq, ms_pm_deepsleep_handler, NULL, 0, "ms_pm", pdev)))
         return ret;
 
     dev_info(&pdev->dev, "[%s]: irq=%d, detect-gpio=%d\n", __func__, data->irq, detect_gpio);
+
+    from_resend=0;
 
     return ret;
 }
@@ -156,3 +178,4 @@ static struct platform_driver ms_pm_driver = {
 };
 
 module_platform_driver(ms_pm_driver);
+MODULE_LICENSE("GPL");

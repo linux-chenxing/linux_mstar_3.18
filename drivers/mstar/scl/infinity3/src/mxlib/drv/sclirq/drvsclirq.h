@@ -125,13 +125,23 @@ typedef struct
 #define INTERFACE
 #endif
 
-INTERFACE wait_queue_head_t * Drv_SCLIRQ_GetWaitQueueHead(MS_U32 enID);
+INTERFACE void * Drv_SCLIRQ_GetWaitQueueHead(MS_U32 enID);
 INTERFACE void Drv_SCLIRQ_SetPTGenStatus(MS_BOOL bPTGen);
+INTERFACE void Drv_SCLIRQ_SetDMADoneEarlyISP(MS_BOOL bDMADoneEarlyISP);
 INTERFACE void Drv_SCLIRQ_Set_Checkcropflag(MS_BOOL bcheck);
 INTERFACE MS_U8 Drv_SCLIRQ_Get_Checkcropflag(void);
 INTERFACE MS_U8 Drv_SCLIRQ_GetEachDMAEn(void);
+INTERFACE MS_U8 Drv_SCLIRQ_GetISPIN(void);
+INTERFACE ST_SCLIRQ_SCINTS_TYPE* Drv_SCLIRQ_GetSCLInts(void);
+INTERFACE void Drv_SCLIRQ_SetDropFrameFromCMDQDone(unsigned char u8Count);
+INTERFACE void Drv_SCLIRQ_SetDropFrameFromISP(unsigned char u8Count);
+INTERFACE void Drv_SCLIRQ_SetDAZAQueueWork(SCLIRQDAZAEvent enEvent);
+INTERFACE void Drv_SCLIRQ_SetDAZAQueueWorkISR(SCLIRQDAZAEvent enEvent);
+INTERFACE void Drv_SCLIRQ_SetDNRLock(MS_BOOL bEn);
+
 INTERFACE MS_BOOL Drv_SCLIRQ_InitVariable(void);
 INTERFACE MS_BOOL Drv_SCLIRQ_GetIsBlankingRegion(void);
+INTERFACE MS_BOOL Drv_SCLIRQ_GetIsVIPBlankingRegion(void);
 INTERFACE MS_BOOL Drv_SCLIRQ_Init(ST_SCLIRQ_INIT_CONFIG *pCfg);
 INTERFACE MS_BOOL Drv_SCLIRQ_Exit(void);
 INTERFACE MS_BOOL Drv_SCLIRQ_InterruptEnable(MS_U16 u16IRQ);
@@ -146,8 +156,9 @@ INTERFACE MS_BOOL Drv_SCLIRQ_Resume(ST_SCLIRQ_SUSPEND_RESUME_CONFIG *pCfg);
 INTERFACE MS_S32 Drv_SCLIRQ_Get_IRQ_EventID(void);
 INTERFACE MS_S32 Drv_SCLIRQ_Get_IRQ_SYNCEventID(void);
 INTERFACE MS_S32 Drv_SCLIRQ_Get_IRQ_SC3EventID(void);
-INTERFACE wait_queue_head_t * Drv_SCLIRQ_GetSyncQueue(void);
+INTERFACE void * Drv_SCLIRQ_GetSyncQueue(void);
 INTERFACE void scl_ve_isr(void);
+INTERFACE void scl_vs_isr(void);
 
 #undef INTERFACE
 

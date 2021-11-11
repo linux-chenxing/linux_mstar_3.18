@@ -1,7 +1,11 @@
-
 #include <linux/errno.h>
 #include <h2v3_def.h>
 #include <h265_enc.h>
+
+#define NAL_LEN 16
+#define ALIGN_EQU_ONE 1
+#define ALIGN8(x) (((x)+0x7)&~0x7)
+
 
 static void
 ebsp_put(
@@ -141,6 +145,16 @@ bs_write_u1(
     return bits_put(bs, 1, (uint)v!=0);
 }
 
+static int bs_write_32(
+    bs_t*   bs,
+    uint    v)
+{
+    int len;
+    len = bs_write(bs, 16, (v>>16)&0xFFFF);
+    len += bs_write(bs, 16, v&0xFFFF);
+    return len;
+}
+
 static int
 bs_trail(
     bs_t*   bs)
@@ -184,6 +198,156 @@ bs_write_nal(
 #define _put_se(v,coment)       bs_write_se(bs,( int)v)
 #define _put_u1(v,coment)       bs_write_u1(bs,(uint)v)
 #define _put(l, v,coment)       bs_write(bs, l,(uint)v)
+#define _put_32(v,coment)       bs_write_32(bs,(uint)v)
+
+int get_used_bits(base* ld)
+{
+	int tmp=0;
+
+	tmp=ld->Bitcnt;
+
+	return (ld->Bitcnt);
+}
+
+void Flush_Buffer(base* ld, int N)
+{
+    int Incnt;
+
+    ld->Bfr <<= N;
+    Incnt = ld->Incnt -= N;
+    if (Incnt <= 24)
+    {
+        do
+        {
+            ld->Bfr |= *ld->Rdptr++ << (24 - Incnt);
+            Incnt += 8;
+        }
+        while (Incnt <= 24);
+
+        ld->Incnt = Incnt;
+    }
+}
+
+unsigned int Show_Bits(base* ld, int N)
+{
+    return ld->Bfr >> (32-N);
+}
+
+unsigned int bs_read(base* ld, int N)
+{
+    unsigned int Val;
+    unsigned int count=0;
+    unsigned int remindbits=0;
+
+    if(N<32)
+    {
+        Val = Show_Bits(ld, N);
+        Flush_Buffer(ld, N);
+    }
+    else
+    {
+        do
+        {
+            remindbits=N-count;
+            if(remindbits<16)
+            {
+                Val = Show_Bits(ld, remindbits);
+                Flush_Buffer(ld, remindbits);
+                count+=remindbits;
+                break;
+            }
+            else
+            {
+                Val = Show_Bits(ld, 16);
+                Flush_Buffer(ld, 16);
+                count+=16;
+            }
+        }while(1);
+    }
+    ld->Bitcnt +=N;
+    return Val;
+}
+
+unsigned int bs_read_u1(base* ld)
+{
+    return bs_read(ld, 1);
+}
+
+void Fill_Buffer(base *ld, unsigned char *pData,unsigned int Datalength)
+{
+    int Buffer_Level;
+
+    memset(ld->Rdbfr, 0, sizeof(ld->Rdbfr));
+    Buffer_Level=(Datalength<=BIT_BUFFER_SIZE)?Datalength : BIT_BUFFER_SIZE;
+    memcpy(ld->Rdbfr,pData,Buffer_Level);
+
+    ld->Rdptr = ld->Rdbfr;
+    Flush_Buffer(ld, 0);
+}
+
+unsigned int bs_read_ue(base* ld)
+{
+    unsigned int tmp=0;
+    unsigned int length=0;
+    unsigned int ret=0;
+
+    do
+    {
+        tmp=bs_read(ld, 1)|(tmp<<1);
+        if(tmp!=0)
+        {
+            break;
+        }
+        length++;
+    }while(1);
+
+    if(length!=0)
+    {
+        tmp=bs_read(ld, length);
+        ret=tmp+(1<<length)-1;
+    }
+    else
+    {
+        ret=0;
+    }
+
+    return ret;
+}
+
+int bs_read_se(base* ld)
+{
+    unsigned int tmp=0;
+    unsigned int length=0;
+    unsigned int ret=0;
+
+    do
+    {
+        tmp=bs_read(ld, 1)|(tmp<<1);
+        if(tmp!=0)
+        {
+            break;
+        }
+        length++;
+    }while(1);
+
+    if(length!=0)
+    {
+        tmp=bs_read(ld, length);
+        tmp+=(1<<length);
+        ret=( tmp & 1) ? -(int)(tmp>>1) : (int)(tmp>>1);
+    }
+    else
+    {
+        ret=0;
+    }
+
+    return ret;
+}
+
+#define _get_ue(coment)       bs_read_ue(ld)
+#define _get_se(coment)       bs_read_se(ld)
+#define _get_u1(coment)       bs_read_u1(ld)
+#define _get(N, coment)       bs_read(ld, N)
 
 static int write_ptl(bs_t*, ptl_t*, int sublayers);
 
@@ -194,7 +358,7 @@ h265_write_vps(
 {
     int bpos = bs->bits_pos;
 
-    bs_write_nal(bs, NUH_PACK(NUT_VPS,0,0));
+    bs_write_nal(bs, NUH_PACK(NUT_VPS , 0, 0));
 
     _put(4, vps->i_id,                                  "vps_id");
     _put(2, 3,                                          "reserved_three_2bits");
@@ -217,8 +381,14 @@ h265_write_vps(
     }
     _put(6, 0,                                          "max_layer_id");
     _put_ue(0,                                          "num_layer_sets_minus1");
-    _put_u1(0,                                          "timing_info_present_flag");
-    /* TODO: If "timing_info_present_flag" is ON, .... */
+    _put_u1(vps->b_timing_info_pres,                    "timing_info_present_flag");
+    if(vps->b_timing_info_pres)
+    {
+        _put_32(vps->i_num_units_in_tick,               "num_units_in_tick");
+        _put_32(vps->i_time_scale,                      "time_scale");
+        _put_u1(0,                                      "poc_proportional_to_timing_flag");
+        _put_ue(0,                                      "hrd_parameters_present_flag");
+    }
     _put_u1(0,                                          "extension_flag");
 
     bs_trail(bs);
@@ -267,7 +437,7 @@ h265_write_sps(
     rps_t* rps = 0;
     int bpos = bs->bits_pos;
 
-    bs_write_nal(bs, NUH_PACK(NUT_SPS,0,0));
+    bs_write_nal(bs, NUH_PACK(NUT_SPS, 0, 0));
 
     _put(4, sps->p_vps->i_id,                               "vps_id");
     _put(3, sps->i_max_num_sub_layers -1,                   "max_sub_layers_minus1");
@@ -321,16 +491,19 @@ h265_write_sps(
     _put_ue(sps->i_num_short_term_ref_pic_sets,             "num_short_term_ref_pic_sets");
     for (i = 0; i < sps->i_num_short_term_ref_pic_sets; i++)
     {
-        //rps = (rps_t*)h265_pset_get(sps->q_rps, HEVC_RPS, i);
+//        rps = (rps_t*)h265_pset_get(sps->q_rps, HEVC_RPS, i);
         rps = &sps->rps[i];
         write_rps_st(bs, rps);
     }
     _put_u1(sps->b_long_term_ref_pics_pres,                 "long_term_ref_pics_present_flag");
+    if (sps->b_long_term_ref_pics_pres)
+    {
+        _put_ue(0,                                          "num_long_term_ref_pics_sps");
+    }
     /* support "b_long_term_ref_pics_pres" == OFF only */
     _put_u1(sps->b_temporal_mvp_enable,                     "temporal_mvp_enable_flag");
     _put_u1(sps->b_strong_intra_smoothing_enabled,          "strong_intra_smoothing_enabled_flag");
     _put_u1(sps->b_vui_param_pres,                          "vui_parameters_present_flag");
-    /* TODO: if (vui_parameters_present_flag)... */
     if (sps->b_vui_param_pres)
         write_vui(bs, &sps->vui);
     _put_u1(0,                                              "extension_flag");
@@ -339,6 +512,7 @@ h265_write_sps(
     return (bs->bits_pos - bpos);
 }
 
+/* write SPS reference table */
 static int
 write_rps_st(
     bs_t*   bs,
@@ -414,17 +588,17 @@ write_vui(
     _put_u1(vui->b_field_seq,                               "field_seq_flag");
     _put_u1(vui->b_frame_field_info_pres,                   "frame_field_info_present_flag");
     /*
-     * input support progressive frame and interlacedfield picture:
-     *   pic_struct=0(display in progressive),
-     *   source_scan_type=1(source is progressive),
-     *   duplicate_flag=0(not duplicate frame)
+     * input support progressive frame and interlaced field picture:
+     * pic_struct=0(display in progressive),
+     * source_scan_type=1(source is progressive),
+     * duplicate_flag=0(not duplicate frame)
      */
     _put_u1(0,                                              "default_display_window_flag");
     _put_u1(vui->b_timing_info_pres,                        "timing_info_present_flag");
     if (vui->b_timing_info_pres)
     {
-        _put(32,vui->i_num_units_in_tick,                   "num_units_in_tick");
-        _put(32,vui->i_time_scale,                          "time_scale");
+        _put_32(vui->i_num_units_in_tick,                   "num_units_in_tick");
+        _put_32(vui->i_time_scale,                          "time_scale");
         _put_u1(0,                                          "poc_proportional_to_timing_flag");
         _put_u1(vui->b_hrd_parameters_pres,                 "hrd_parameters_present_flag");
         if (vui->b_hrd_parameters_pres)
@@ -546,7 +720,7 @@ h265_write_pps(
 {
     int bpos = bs->bits_pos;
 
-    bs_write_nal(bs, NUH_PACK(NUT_PPS,0,0));
+    bs_write_nal(bs, NUH_PACK(NUT_PPS, 0, 0));
 
     _put_ue(pps->i_id,                                      "pps_id");
     _put_ue(pps->p_sps->i_id,                               "sps_id");
@@ -622,30 +796,128 @@ h265_write_pps(
     return (bs->bits_pos - bpos);
 }
 
-static vps_t vps_def = {
+int
+h265_sh_writer(
+    h265_enc* h265)
+{
+    pps_t *pps = h265_find_set(h265, HEVC_PPS, 0);
+    sps_t *sps = h265_find_set(h265, HEVC_SPS, 0);
+    slice_t *sh= h265_find_set(h265, HEVC_SLICE, 0);
+    bs_t outbs,*bs = &outbs;
+    int bpos = 0;
+
+    h265_reset_bs(bs, h265->m_swsh, SLICE_HEADER_BIAS_SIZE);
+
+    bs_write_nal(bs, NUH_PACK(sh->i_nal_type, 0, 0));
+
+    bpos = bs->bits_pos;
+
+    _put_u1(sh->first_slice_segment_in_pic_flag,                "first_slice_segment_in_pic_flag");
+    if (sh->i_nal_type >= BLA_W_LP && sh->i_nal_type <= RSV_IRAP_VCL23)
+        _put_u1(sh->no_output_of_prior_pics_flag,                "no_output_of_prior_pics_flag");
+    _put_ue(sh->slice_pic_parameter_set_id,                      "slice_pic_parameter_set_id");
+#if 0
+    if( !first_slice_segment_in_pic_flag )
+    {
+        ...
+    }
+#endif
+    _put_ue(sh->i_slice_type,                                    "slice_type");
+    if (sh->i_slice_type != SLICE_TYPE_I)
+    {
+        _put(sps->i_log2_max_poc_lsb, (uint)h265->i_poc & ((1 << sps->i_log2_max_poc_lsb) - 1),
+                                                                 "slice_pic_order_cnt_lsb");
+        _put_u1(1,                                               "short_term_ref_pic_set_sps_flag");
+        _put(1, sh->short_term_ref_pic_set_idx,                  "short_term_ref_pic_set_idx");
+        if(sps->b_long_term_ref_pics_pres)
+        {
+            _put_ue(sh->num_long_term_pics,                      "num_long_term_pics");
+            if (sh->num_long_term_pics)
+            {
+//                for( i = 0; i < num_long_term_sps + num_long_term_pics; i++ )
+//                {
+                _put(sps->i_log2_max_poc_lsb, sh->poc_lsb_lt[0],"poc_lsb_lt[0]");
+                _put_u1(sh->used_by_curr_pic_lt_flag[0],        "used_by_curr_pic_lt_flag[0]");
+                _put_u1(sh->delta_poc_msb_present_flag[0],      "delta_poc_msb_present_flag[0]");
+//                }
+            }
+        }
+
+        if(sps->b_temporal_mvp_enable)
+        {
+            _put_u1(sh->slice_temporal_mvp_enabled_flag,         "slice_temporal_mvp_enabled_flag");
+        }
+    }
+
+    if(sps->b_sao_enabled)
+    {
+        _put_u1(sh->slice_sao_luma_flag,                         "slice_sao_luma_flag");
+        _put_u1(sh->slice_sao_chroma_flag,                       "slice_sao_chroma_flag");
+    }
+
+    if (sh->i_slice_type == SLICE_TYPE_P || sh->i_slice_type == SLICE_TYPE_B)
+    {
+        _put_u1(0,                                               "num_ref_idx_active_override_flag");
+        if (pps->b_cabac_init_pres)
+        {
+            _put_u1(0,                                           "cabac_init_flag");
+        }
+        _put_ue(1,                                               "five_minus_max_num_merge_cand");
+    }
+    _put_se(sh->i_qp - pps->i_init_qp,                           "slice_qp_delta");
+
+    if(pps->b_deblocking_filter_override_enabled)
+    {
+        _put_u1(sh->deblocking_filter_override_flag,             "deblocking_filter_override_flag");
+    }
+
+    if(sh->deblocking_filter_override_flag)
+    {
+        _put_u1(sh->slice_deblocking_filter_disabled_flag,       "slice_deblocking_filter_disabled_flag");
+        if(!sh->slice_deblocking_filter_disabled_flag)
+        {
+             _put_se(sh->slice_beta_offset_div2,                 "slice_beta_offset_div2");
+             _put_se(sh->slice_tc_offset_div2,                   "slice_tc_offset_div2");
+        }
+    }
+    _put_u1(1,                                                   "slice_loop_filter_across_slices_enabled_flag");
+
+    bs_trail(bs);
+    h265_flush_bs(bs);
+
+    return (bs->bits_pos - bpos)/8 + 6;
+}
+
+static vps_t vps_def =
+{
     .i_id = 0,
     .i_max_num_sub_layers = 1,
     .b_sub_layers_ordering_pres = 1,
-    .i_max_dec_pic_buffering = 5,
+    .i_max_dec_pic_buffering = MAX_DEC_PIC_BUFFERING_DEFAULT,
     .i_max_num_reorder_pics = 0,
     .i_max_latency_increase = -1,
-    .ptl = {
+    .ptl =
+    {
         .i_profile = HEVC_PROFILE_MAIN,
-        .i_level = HEVC_LEVEL_6,
+//        .i_level = HEVC_LEVEL_6,
+        .i_level = HEVC_LEVEL_4_1,
         .b_interlaced = 0,
     },
 };
 
-static sps_t sps_def = {
+static sps_t sps_def =
+{
     .i_id = 0,
     .i_max_num_sub_layers = 1,
     .b_sub_layers_ordering_pres = 1,
-    .i_max_dec_pic_buffering = 5,
+    .i_max_dec_pic_buffering = MAX_DEC_PIC_BUFFERING_DEFAULT,
     .i_max_num_reorder_pics = 0,
     .i_max_latency_increase = -1,
-    .ptl = {
+    .ptl =
+    {
         .i_profile = HEVC_PROFILE_MAIN,
-        .i_level = HEVC_LEVEL_6,
+//        .i_level = HEVC_LEVEL_6,
+        .i_level = HEVC_LEVEL_4_1,
         .b_interlaced = 0,
     },
     .i_chroma_format_idc = 1,
@@ -668,11 +940,13 @@ static sps_t sps_def = {
     .b_amp_enabled = 1,
     .b_sao_enabled = 1,
     .b_pcm_enabled = 0,
-    .b_strong_intra_smoothing_enabled = 1,
+    .b_temporal_mvp_enable = 0,
+    .b_strong_intra_smoothing_enabled = 0,
     .b_long_term_ref_pics_pres = 0,
     /* vui params */
     .b_vui_param_pres = 1,
-    .vui = {
+    .vui =
+    {
         .b_video_signal_pres = 1,
         .i_video_format = 5,
         .b_video_full_range = 1,
@@ -683,15 +957,17 @@ static sps_t sps_def = {
     },
 };
 
-static pps_t pps_def = {
+static pps_t pps_def =
+{
     .i_id = 0,
     .b_cabac_init_pres = 1,
-    .i_num_ref_idx_l0_default_active = 4,
-    .i_num_ref_idx_l1_default_active = 4,
+    .i_num_ref_idx_l0_default_active = 1,
+    .i_num_ref_idx_l1_default_active = 1,
     .i_init_qp = 26,
     .b_constrained_intra_pred = 0,
     .b_transform_skip_enabled = 0,
     .b_cu_qp_delta_enabled = 0,
+    .i_diff_cu_qp_delta_depth = 0,
     .i_cb_qp_offset = 0,
     .i_cr_qp_offset = 0,
     .b_slice_chroma_qp_offsets_pres = 0,
@@ -704,15 +980,34 @@ static pps_t pps_def = {
     .i_log2_parallel_merge_level = 2,
 };
 
+static slice_t sh_def =
+{
+    .first_slice_segment_in_pic_flag = 1,
+    .no_output_of_prior_pics_flag = 0,
+    .slice_pic_parameter_set_id = 0,
+    .short_term_ref_pic_set_sps_flag = 0,
+    .short_term_ref_pic_set_idx = 0,
+    .num_long_term_pics = 0,
+    .poc_lsb_lt[0] = 0,
+    .used_by_curr_pic_lt_flag[0] = 0,
+    .delta_poc_msb_present_flag[0] = 0,
+    .slice_temporal_mvp_enabled_flag = 1,
+    .b_active_override = 1,
+    .b_cabac_init = 0,
+    .i_max_num_merge_cand = 4,
+    .slice_loop_filter_across_slices_enabled_flag = 1,
+};
+
 static pic_t*
 find_rpb_poc(
     h265_enc*   h265,
     int         poc)
 {
     int i;
+    pic_t* pic;
     for (i = 0; i < h265->i_rpbn; i++)
     {
-        pic_t* pic = h265->m_rpbs+i;
+        pic = h265->m_pics+i;
         if (poc == pic->i_poc)
             return pic;
     }
@@ -737,6 +1032,9 @@ h265_find_set(
     case HEVC_PPS:
         set = &h265->m_pps;
         break;
+    case HEVC_SLICE:
+        set = &h265->m_sh;
+        break;
     default:
         break;
     }
@@ -749,7 +1047,10 @@ h265_find_rpl(
     int list,
     int idx)
 {
-    if ((unsigned)list >= 2 || (unsigned)idx >= MAX_REF_SIZE)
+    sps_t* sps = h265_find_set(h265, HEVC_SPS, 0);
+    int max_list = sps->b_long_term_ref_pics_pres? HEVC_REF_MAX : HEVC_REF_MAX-1;
+
+    if ((unsigned)list >= max_list || (unsigned)idx >= MAX_REF_SIZE)
         return NULL;
     return h265->p_rpls[list][idx];
 }
@@ -759,38 +1060,41 @@ static void _release(void* vptr) { MEM_FREE(vptr); }
 h265_enc*
 h265enc_acquire(void)
 {
-    h265_enc* h265 = NULL;
-    do
+    h265_enc* h265 = MEM_ALLC(sizeof(h265_enc));
+    pps_t*  pps = NULL;
+    sps_t*  sps = NULL;
+    vps_t*  vps = NULL;
+    slice_t* sh = NULL;
+
+    if (!h265)
     {
-        pps_t* pps = NULL;
-        sps_t* sps = NULL;
-        vps_t* vps = NULL;
-
-        if (!(h265 = MEM_ALLC(sizeof(h265_enc))))
-            return NULL;
-
-        h265->release = _release;
-        h265->m_vps = vps_def;
-        h265->m_sps = sps_def;
-        h265->m_pps = pps_def;
-        pps = &h265->m_pps;
-        sps = &h265->m_sps;
-        vps = &h265->m_vps;
-        pps->p_sps = sps;
-        sps->p_vps = vps;
-
-        h265->i_profile = HEVC_PROFILE_MAIN;
-        h265->i_level = HEVC_LEVEL_6;
-        h265->b_deblocking_override = 0;
-        h265->b_deblocking_disable = pps->b_deblocking_filter_disabled;
-        h265->i_tc_offset = pps->i_tc_offset;
-        h265->i_beta_offset = pps->i_beta_offset;
-
+        printk(KERN_ERR"%s() alloc fail\n", __func__);
         return h265;
     }
-    while (0);
-    h265->release(h265);
-    return NULL;
+
+    h265->release = _release;
+    h265->m_vps = vps_def;
+    h265->m_sps = sps_def;
+    h265->m_pps = pps_def;
+    h265->m_sh  = sh_def;
+    pps = &h265->m_pps;
+    sps = &h265->m_sps;
+    vps = &h265->m_vps;
+    sh  = &h265->m_sh;
+    pps->p_sps = sps;
+    sps->p_vps = vps;
+    sh->p_sps  = sps;
+    sh->p_pps  = pps;
+
+    h265->i_profile = HEVC_PROFILE_MAIN;
+//        h265->i_level = HEVC_LEVEL_6;
+    h265->i_level = HEVC_LEVEL_4_1;
+    h265->b_deblocking_override = 0;
+    h265->b_deblocking_disable = pps->b_deblocking_filter_disabled;
+    h265->i_tc_offset = pps->i_tc_offset;
+    h265->i_beta_offset = pps->i_beta_offset;
+
+    return h265;
 }
 
 int
@@ -799,11 +1103,13 @@ h265_seq_init(
     int         rpbn)
 {
     pps_t* pps = h265_find_set(h265, HEVC_PPS, 0);
-    sps_t* sps = pps->p_sps;
+    sps_t* sps = h265_find_set(h265, HEVC_SPS, 0);
     rps_t* rps;
+    pic_t* pic;
     int i;
 
     sps->i_num_short_term_ref_pic_sets = 2;
+    h265->i_num_short_term_ref_pic_sets = 2;
     /* rps-0: refer previous picture */
     rps = &sps->rps[0];
     rps->i_id = 0;
@@ -814,25 +1120,32 @@ h265_seq_init(
     /* rps-1: refer previous 2nd picture */
     rps = &sps->rps[1];
     rps->i_id = 1;
-    rps->i_num_neg_pics = 1;
+    if (sps->b_long_term_ref_pics_pres)
+        rps->i_num_neg_pics = 0;
+    else
+        rps->i_num_neg_pics = 1;
     rps->i_dpoc[0] = -2;
     rps->b_used[0] = 1;
     rps->i_num_pos_pics = 0;
 
+    /* initialize picture buffer */
     for (i = 0; i < rpbn; i++)
     {
-        pic_t* pic = h265->m_rpbs+i;
+        pic = h265->m_pics+i;
         pic->i_id = i;
-        pic->i_poc = -1;
+        pic->i_poc = POC_BUFFER_FREE;
         pic->b_reference = 0;
+        pic->b_ltr_keep = 0;
+        pic->b_cached = 0;
         pic->p_pps = pps;
         pic->p_sps = sps;
     }
+    /* clear pic_t if not in used */
     for (i = rpbn; i < MAX_RPB_SIZE; i++)
     {
-        h265->m_rpbs[i].i_poc = -2;
-        h265->m_rpbs[i].p_pps = NULL;
-        h265->m_rpbs[i].p_sps = NULL;
+        h265->m_pics[i].i_poc = POC_BUFFER_INVL;
+        h265->m_pics[i].p_pps = NULL;
+        h265->m_pics[i].p_sps = NULL;
     }
     h265->i_rpbn = rpbn;
 
@@ -850,12 +1163,30 @@ h265_seq_init(
 }
 
 int
+h265_seq_sync(
+    h265_enc*   h265)
+{
+    pic_t* pic;
+    int i;
+
+    /* initialize picture buffer */
+    for (i = 0; i < h265->i_rpbn; i++)
+    {
+        pic = h265->m_pics+i;
+        pic->i_poc = POC_BUFFER_FREE;
+//        pic->b_ltr_keep = 0;
+//        pic->b_reference = 0;
+    }
+    return 0;
+}
+
+int
 h265_seq_conf(
     h265_enc*   h265)
 {
     pps_t* pps = h265_find_set(h265, HEVC_PPS, 0);
-    sps_t* sps = pps->p_sps;
-    vps_t* vps = sps->p_vps;
+    sps_t* sps = h265_find_set(h265, HEVC_SPS, 0);
+    vps_t* vps = h265_find_set(h265, HEVC_VPS, 0);
     bs_t outbs,*bs = &outbs;
 
     h265->i_cb_w = (h265->i_picw + ((1 << sps->i_log2_max_cb_size) - 1)) >> sps->i_log2_max_cb_size;
@@ -904,18 +1235,33 @@ h265_enc_buff(
     int         refp)
 {
     sps_t* sps = &h265->m_sps;
-    pic_t* rec = NULL;
+    pic_t* rec = h265->p_recn;
     int dref = !refp;
     int rpsi = !h265->b_refp;
 
-    if (h265->p_recn)
-        return 0;
+    if (rec)
+    {
+        if (HEVC_ISLICE == type)
+        {
+            h265->b_refp = 1;
+            h265->i_poc = 0;
+            rec->i_poc = 0;
+            rec->p_rps = NULL;
+        }
+        if (sps->b_long_term_ref_pics_pres)
+        {
+            if (HEVC_ISLICE == type || (h265->b_enable_pred && HEVC_LTRPSLICE == type))
+                rec->b_ltr_keep = 1;
+        }
+        rec->i_type = type;
+        return rec->i_id;
+    }
 
-    h265->i_type = type;
     h265->i_poc++;
-
-    if (HEVC_ISLICE == h265->i_type)
+    if (HEVC_ISLICE == type)
         h265->i_poc = rpsi = dref = 0;
+    if (sps->b_long_term_ref_pics_pres)
+        h265->i_swsh = 0;
 
     if ((unsigned)rpsi >= sps->i_num_short_term_ref_pic_sets)
         return -1;
@@ -928,11 +1274,17 @@ h265_enc_buff(
     {
         rec->i_type = type;
         rec->i_poc = h265->i_poc;
-        rec->p_rps = type==HEVC_ISLICE?NULL:&sps->rps[rpsi];
+        rec->p_rps = type==HEVC_ISLICE ? NULL : &sps->rps[rpsi];
         h265->b_refp = !dref;
         h265->p_recn = rec;
+        if (sps->b_long_term_ref_pics_pres)
+        {
+            if (HEVC_ISLICE == type || (h265->b_enable_pred && HEVC_LTRPSLICE == type))
+                rec->b_ltr_keep = 1;
+        }
         return rec->i_id;
     }
+    printk(KERN_ERR"vhe-found null recn buffer\n");
     return -1;
 }
 
@@ -942,72 +1294,293 @@ h265_enc_done(
 {
     int idx = -1;
 #if defined(HEVC_RPS_PRESET)
-   pic_t* pic = _rps_reset(h265, h265->i_poc+1, !h265->b_refp);
+    pic_t* pic = _rps_reset(h265, h265->i_poc+1, !h265->b_refp);
     if (pic)
     {
-        pic->i_poc = -1;
+        pic->i_poc = POC_BUFFER_FREE;
         idx = pic->i_id;
+//        printk("clear buf[%d]-poc(%d), ref.(%d), keep(%d)\n", pic->i_id, pic->i_poc, pic->b_reference, pic->b_ltr_keep);
+    }
+    else
+    {
+        printk(KERN_ERR"vhe-return buffer is null\n");
     }
 #endif
     h265->p_recn = NULL;
+
+//    for (i=0;i<h265->i_rpbn;i++)
+//    {
+//        pic = h265->m_pics+i;
+//        printk("[%d<idx-%d>]-poc(%d), ref.(%d), keep(%d)\n", i, pic->i_id, pic->i_poc, pic->b_reference, pic->b_ltr_keep);
+//    }
     return idx;
 }
 
+int
+h265_write_padding_head(void* buff, int len)
+{
+    bs_t outbs,*bs = &outbs;
+
+    if (len < 6)
+        return -1;
+
+    h265_reset_bs(bs, buff, 128);
+    bs_write_nal(bs, NUH_PACK(RSV_NVCL41, 0, 0));
+    bs_trail(bs);
+    h265_flush_bs(bs);
+
+    return h265_count_bs(bs)/8;
+}
+
+/* find available picture buffer */
 static pic_t* _pic_avail(
     h265_enc*   h265)
 {
     int i;
-    pic_t* rpb = h265->m_rpbs;
-    for (i = 0; i < h265->i_rpbn; i++, rpb++)
-        if (rpb->i_poc < 0)
-            return rpb;
+    pic_t* pic = h265->m_pics;
+
+    for (i = 0, pic = h265->m_pics; i < h265->i_rpbn; i++, pic++)
+    {
+        /* find not short/long term reference buffer */
+        if (IS_POC_FREE(pic->i_poc) && !pic->b_reference && !pic->b_cached)
+        {
+            if (!h265->i_poc && pic->b_ltr_keep)
+                printk(KERN_ERR"%s(idx-%d)-ref.(%d)/keep(%d)/cached(%d)\n", __func__, i, pic->b_reference, pic->b_ltr_keep, pic->b_cached);
+            return pic;
+        }
+    }
+
+    printk(KERN_ERR"%s()-found null picture buffer(idx<%d>\n", __func__, i);
+    for (i = 0, pic = h265->m_pics; i < MAX_RPB_SIZE; i++, pic++)
+    {
+        printk(KERN_ERR"m_pics[%d-idx<%d>] poc<%d>, ref.<%d>, keep<%d>, cached(%d)\n", i, pic->i_id, pic->i_poc, pic->b_reference, pic->b_ltr_keep, pic->b_cached);
+    }
     return NULL;
 }
 
+/* _rps_reset
+ * return value is idx of buffer can be freed
+ * h265-
+ * ipoc-next encode picture poc
+ * rpsi-reference picture idx
+ * return value: dropped picture
+ */
 static pic_t* _rps_reset(
     h265_enc*   h265,
     int         ipoc,
     int         rpsi)
 {
-    pic_t* pics = h265->m_rpbs, *rpb, *pic;
+    pic_t *pic, *out = NULL, *rec = h265->p_recn;
     rps_t* rps;
-    short pocs[MAX_RPS_SIZE];
+    short pocs[MAX_RPS_SIZE] = {0};
     int i, j;
+    int b_ltr_keep = 0;
 
+    /* get LTR status */
+    if (rec)
+    {
+        b_ltr_keep = rec->b_ltr_keep;
+        /* shrink mode: tag cached buffer */
+        rec->b_cached = 1;
+    }
+    /* clear current STR list */
     for (i = 0; i < MAX_REF_SIZE; i++)
-        h265->p_rpls[0][i] = h265->p_rpls[1][i] = NULL;
-
-    h265->i_active_l0_count = h265->i_active_l1_count = 0;
-    for (rpb = pics, i = 0; i < h265->i_rpbn; i++, rpb++)
-        rpb->b_reference = 0;
-    if (!ipoc)
-    {   /* Intra-frame or IDR-frame */
-        for (rpb = pics, pic = NULL, i = 0; i < h265->i_rpbn; i++, rpb++)
-            if (rpb->i_poc >= 0)
-                pic = rpb;
-        return pic;
+    {
+        h265->p_rpls[HEVC_REF_ACTIVE_L0][i] = h265->p_rpls[HEVC_REF_ACTIVE_L1][i] = NULL;
     }
 
+    /* clear reference count and buffer ref. status */
+    h265->i_active_l0_count = h265->i_active_l1_count = 0;
+    h265->i_num_ref_idx_l0_default_active = 1;
+    for (pic = h265->m_pics, i = 0; i < h265->i_rpbn; i++, pic++)
+    {
+        pic->b_reference = 0;
+    }
+
+    /* seems not be into this scope */
+    if (!ipoc)
+    {   /* Intra-frame or IDR-frame */
+        for (pic = h265->m_pics, i = 0; i < h265->i_rpbn; i++, pic++)
+        {
+            pic->b_ltr_keep = 0;
+            if (pic->i_poc >= 0)
+                out = pic;
+        }
+        return out;
+    }
+
+    /* update LTR ref. list */
+    if (b_ltr_keep)
+    {
+        pic = h265->p_rpls[HEVC_REF_LTR][0];
+        /* return last LTR picture */
+        if (pic && pic != rec)
+        {
+            out = pic;
+            /* let last LTR's POC equal to POC_BUFFER_FREE to avoid find two picture with the same POC */
+            out->i_poc = POC_BUFFER_FREE;
+            out->b_ltr_keep = 0;
+            out->b_cached = 0;
+        }
+        /* update LTR list and picture status */
+        h265->p_rpls[HEVC_REF_LTR][0] = rec;
+        rec->b_reference = 1;
+        rec->b_ltr_keep = 1;
+    }
+    /* find the STR referenced picture */
     rps = &h265->m_sps.rps[rpsi];
     for (i = 0; i < rps->i_num_neg_pics + rps->i_num_pos_pics; i++)
     {
         pic = find_rpb_poc(h265, ipoc + rps->i_dpoc[i]);
         if (!pic)
+        {
+            printk(KERN_ERR"vhe-%s()null ref. pic and return\n", __func__);
             return pic;
-        pic->b_reference = 1;
+        }
         pocs[i] = ipoc + rps->i_dpoc[i];
+        pic->b_reference = 1;
     }
-    for (    i = 0; i < h265->i_rpbn; i++)
-        if (!pics[i].b_reference)
-            pic = &pics[i];
+    /* find the return buffer */
+    for (pic = h265->m_pics, i = 0; i < h265->i_rpbn; i++, pic++)
+    {
+        if (!pic->b_reference)
+        {
+            /* keep LTR picture still be referenced in current frame is STR */
+            if (pic->b_ltr_keep)
+            {
+                pic->b_reference = 1;
+            }
+            else if (!pic->b_cached)
+            {
+                continue;
+            }
+            else if (!out)
+            {
+                out = pic;
+                out->b_cached = 0;
+            }
+        }
+    }
+    /* update HEVC_REF_ACTIVE_L0 */
     for (i = j = 0; i < rps->i_num_neg_pics; i++)
-        if (rps->b_used[i] && (h265->p_rpls[0][j] = find_rpb_poc(h265, pocs[i])))
+        if (rps->b_used[i] && (h265->p_rpls[HEVC_REF_ACTIVE_L0][j] = find_rpb_poc(h265, pocs[i])))
             j++;
     h265->i_active_l0_count = j;
-    for (    j = 0; i < rps->i_num_neg_pics + rps->i_num_pos_pics; i++)
-        if (rps->b_used[i] && (h265->p_rpls[1][j] = find_rpb_poc(h265, pocs[i])))
+    /* update HEVC_REF_ACTIVE_L1 */
+    for (j = 0; i < rps->i_num_neg_pics + rps->i_num_pos_pics; i++)
+        if (rps->b_used[i] && (h265->p_rpls[HEVC_REF_ACTIVE_L1][j] = find_rpb_poc(h265, pocs[i])))
             j++;
     h265->i_active_l1_count = j;
 
-    return pic;
+    return out;
+}
+
+/* initialize buffer, call once before first getbits or showbits */
+
+static
+void Initialize_Buffer(base *ld, void *pData,unsigned int Datalength)
+{
+    ld->Incnt = 0;
+    ld->Rdptr = ld->Rdbfr + 32;
+    ld->Rdmax = ld->Rdptr;
+    ld->Bitcnt = 0;
+
+    ld->Bfr = 0;
+    Fill_Buffer(ld,pData,Datalength);
+}
+
+int
+h265_sh_parser(
+    h265_enc* h265)
+{
+    slice_t *pSh = h265_find_set(h265, HEVC_SLICE, 0);
+    sps_t *sps = h265_find_set(h265, HEVC_SPS, 0);
+    pps_t *pps = pSh->p_pps;
+    NAL_Header NAL;
+    NAL_Header *pNal=&NAL;
+    int TotalLength = SLICE_HEADER_PARSE_SIZE;
+    int used_bits = 0;
+    base BitsControl, *ld = &BitsControl;
+
+    Initialize_Buffer(ld, h265->m_hwsh+START_CODE_LEN, TotalLength-START_CODE_LEN);
+
+    /** NAL_Parser **/
+    pNal->forbidden_zero_bit =              _get(1,                         "forbidden_zero_bit");
+    pNal->nal_unit_type =                   _get(6,                         "nal_unit_type");
+    pNal->nuh_layer_id =                    _get(6,                         "nuh_layer_id");
+    pNal->nuh_temporal_id_plus1 =           _get(3,                         "nuh_temporal_id_plus1");
+    pSh->i_nal_type = pNal->nal_unit_type;
+
+    /** SH_Parser **/
+    pSh->first_slice_segment_in_pic_flag =  _get_u1(                        "first_slice_segment_in_pic_flag");
+
+    if (pNal->nal_unit_type >= BLA_W_LP && pNal->nal_unit_type <= RSV_IRAP_VCL23)
+        pSh->no_output_of_prior_pics_flag = _get_u1(                        "no_output_of_prior_pics_flag");
+
+    pSh->slice_pic_parameter_set_id =       _get_ue(                        "slice_pic_parameter_set_id");
+    pSh->i_slice_type =                     _get_ue(                        "slice_type");
+
+    if (pSh->i_slice_type != SLICE_TYPE_I)
+    {
+        /* vhe hw fixed poc field length to 8 bits */
+//        pSh->i_poc =                        _get(sps->i_log2_max_poc_lsb,   "slice_pic_order_cnt_lsb");
+        pSh->i_poc =                        _get(8,                         "slice_pic_order_cnt_lsb");
+        pSh->short_term_ref_pic_set_sps_flag = _get_u1(                     "short_term_ref_pic_set_sps_flag");
+        pSh->short_term_ref_pic_set_idx =   _get(1,                         "short_term_ref_pic_set_idx");
+#if 0
+        if(sps->b_long_term_ref_pics_pres)
+        {
+            pSh->num_long_term_pics =       _get_ue(                        "num_long_term_pics");
+            pSh->poc_lsb_lt[0] =            _get(8,                         "poc_lsb_lt[0]");
+            pSh->used_by_curr_pic_lt_flag[0] = _get_u1(                     "used_by_curr_pic_lt_flag[0]");
+            pSh->delta_poc_msb_present_flag[0] = _get_u1(                   "delta_poc_msb_present_flag[0]");
+        }
+
+        if(sps->b_temporal_mvp_enable)
+        {
+            pSh->slice_temporal_mvp_enabled_flag = _get_u1(                 "slice_temporal_mvp_enabled_flag");
+        }
+#endif
+    }
+
+    if(sps->b_sao_enabled)
+    {
+        pSh->slice_sao_luma_flag =          _get_u1(                        "slice_sao_luma_flag");
+        pSh->slice_sao_chroma_flag =        _get_u1(                        "slice_sao_chroma_flag");
+    }
+
+    if (pSh->i_slice_type == SLICE_TYPE_P || pSh->i_slice_type == SLICE_TYPE_B)
+    {
+        h265->b_active_override =           _get_u1(                        "num_ref_idx_active_override_flag");
+
+        if (pps->b_cabac_init_pres)
+        {
+            pSh->b_cabac_init =             _get_u1(                        "cabac_init_flag");
+        }
+        pSh->i_max_num_merge_cand = 5 -     _get_ue(                        "five_minus_max_num_merge_cand");
+    }
+
+    pSh->i_qp =                             _get_se(                        "slice_qp_delta") + pps->i_init_qp;
+
+    if(pps->b_deblocking_filter_override_enabled)
+    {
+        pSh->deblocking_filter_override_flag = _get_u1(                     "deblocking_filter_override_flag");
+    }
+
+    if(pSh->deblocking_filter_override_flag)
+    {
+        pSh->slice_deblocking_filter_disabled_flag = _get_u1(               "slice_deblocking_filter_disabled_flag");
+        if(!pSh->slice_deblocking_filter_disabled_flag)
+        {
+            pSh->slice_beta_offset_div2 =   _get_se(                        "slice_beta_offset_div2");
+            pSh->slice_tc_offset_div2 =     _get_se(                        "slice_tc_offset_div2");
+        }
+    }
+
+    pSh->slice_loop_filter_across_slices_enabled_flag = _get_u1(            "slice_loop_filter_across_slices_enabled_flag");
+
+    used_bits = get_used_bits(ld)-NAL_LEN+ALIGN_EQU_ONE;
+    used_bits = ALIGN8(used_bits) + NAL_LEN + 4*8;        // add forbidden and start syntax
+
+    return used_bits/8;
 }

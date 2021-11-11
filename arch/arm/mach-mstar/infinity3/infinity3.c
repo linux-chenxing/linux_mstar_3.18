@@ -11,13 +11,14 @@
 #include <linux/delay.h>
 #include <linux/mutex.h>
 #include <linux/clocksource.h>
+#include <linux/gpio.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/memory.h>
 #include <asm/io.h>
 #include <asm/mach/map.h>
-
+#include "infinity3/gpio.h"
 #include "infinity3/registers.h"
 #include "infinity3/mcm_id.h"
 #include "ms_platform.h"
@@ -25,7 +26,7 @@
 #include "_ms_private.h"
 
 /* IO tables */
-static struct map_desc infinity_io_desc[] __initdata =
+static struct map_desc mstar_io_desc[] __initdata =
 {
     /* Define Registers' physcial and virtual addresses */
         {IO_VIRT,   __phys_to_pfn(IO_PHYS),     IO_SIZE,        MT_DEVICE},
@@ -35,22 +36,22 @@ static struct map_desc infinity_io_desc[] __initdata =
 };
 
 
-static const char *infinity_dt_compat[] __initconst = {
+static const char *mstar_dt_compat[] __initconst = {
     "mstar,infinity3",
     NULL,
 };
 
-static void __init infinity_map_io(void)
+static void __init mstar_map_io(void)
 {
-    iotable_init(infinity_io_desc, ARRAY_SIZE(infinity_io_desc));
+    iotable_init(mstar_io_desc, ARRAY_SIZE(mstar_io_desc));
 }
 
 #define PLATFORM_NAME PLATFORM_NAME_INFINITY3
 
 extern struct ms_chip* ms_chip_get(void);
 extern void __init ms_chip_init_default(void);
-//extern void __init infinity_init_irqchip(void);
-extern void infinity_restart(enum reboot_mode mode, const char *cmd);
+//extern void __init mstar_init_irqchip(void);
+//extern void infinity_restart(enum reboot_mode mode, const char *cmd);
 extern struct timecounter *arch_timer_get_timecounter(void);
 
 
@@ -60,9 +61,9 @@ static int mcm_rw(int index, int ratio, int write);
 /*************************************
 *        Mstar chip flush function
 *************************************/
-static DEFINE_SPINLOCK(infinity_l2prefetch_lock);
+static DEFINE_SPINLOCK(mstar_l2prefetch_lock);
 
-static void infinity_uart_disable_line(int line)
+static void mstar_uart_disable_line(int line)
 {
     if(line == 0)  //for debug, do not change
     {
@@ -82,7 +83,7 @@ static void infinity_uart_disable_line(int line)
     }
 }
 
-static void infinity_uart_enable_line(int line)
+static void mstar_uart_enable_line(int line)
 {
     if(line == 0)  //for debug, do not change
     {
@@ -101,12 +102,12 @@ static void infinity_uart_enable_line(int line)
     }
 }
 
-static int infinity_get_device_id(void)
+static int mstar_get_device_id(void)
 {
-    return (int)(INREG16(0x1F003C00) & 0x00FF);;
+    return (int)(INREG16(BASE_REG_PMTOP_PA) & 0x00FF);;
 }
 
-static int infinity_get_revision(void)
+static int mstar_get_revision(void)
 {
     u16 tmp = 0;
     tmp = INREG16((unsigned int)(BASE_REG_PMTOP_PA + REG_ID_67));
@@ -116,15 +117,15 @@ static int infinity_get_revision(void)
 }
 
 
-static void infinity_chip_flush_miu_pipe(void)
+static void mstar_chip_flush_miu_pipe(void)
 {
     unsigned long   dwLockFlag = 0;
     unsigned short dwReadData = 0;
 
-    spin_lock_irqsave(&infinity_l2prefetch_lock, dwLockFlag);
+    spin_lock_irqsave(&mstar_l2prefetch_lock, dwLockFlag);
     //toggle the flush miu pipe fire bit
-    *(volatile unsigned short *)(0xFD204414) = 0x0;
-    *(volatile unsigned short *)(0xFD204414) = 0x1;
+    *(volatile unsigned short *)(0xFD204414) = 0x10;
+    *(volatile unsigned short *)(0xFD204414) = 0x11;
 
     do
     {
@@ -133,131 +134,138 @@ static void infinity_chip_flush_miu_pipe(void)
 
     } while(dwReadData == 0);
 
-    spin_unlock_irqrestore(&infinity_l2prefetch_lock, dwLockFlag);
+    spin_unlock_irqrestore(&mstar_l2prefetch_lock, dwLockFlag);
 
 }
 
-static u64 infinity_phys_to_MIU(u64 x)
+static u64 mstar_phys_to_MIU(u64 x)
 {
 
-    return ((x) - INFINITY_MIU0_BASE);
+    return ((x) - MIU0_BASE);
 }
 
-static u64 infinity_MIU_to_phys(u64 x)
+static u64 mstar_MIU_to_phys(u64 x)
 {
 
-    return ((x) + INFINITY_MIU0_BASE);
+    return ((x) + MIU0_BASE);
 }
 
 
-struct soc_device_attribute infinity_soc_dev_attr;
+struct soc_device_attribute mstar_soc_dev_attr;
 
 extern const struct of_device_id of_default_bus_match_table[];
 
-static int infinity_get_storage_type(void)
+static int mstar_get_storage_type(void)
 {
-    u8 type = ((INREG16(BASE_REG_DIDKEY_PA + 0x70) >> 4) & 0x3);
+/*//check DIDKEY bank, offset 0x70
+#define STORAGE_SPI_NAND            BIT2
+#define STORAGE_EMMC                BIT3
+#define STORAGE_P_NAND              BIT4
+#define STORAGE_SPI_NOR             BIT5
+*/
+    u8 type = (INREG16(BASE_REG_DIDKEY_PA + 0x70*4) & 0x3C);
 
-    if(1 == type)
+    if(BIT4 == type)
         return (int)MS_STORAGE_NAND;
-    else if(2 == type)
+    else if(BIT5 == type)
         return (int)MS_STORAGE_NOR;
+    else if(BIT3 == type)
+        return (int)MS_STORAGE_EMMC;
+    else if(BIT2 == type)
+        return (int)MS_STORAGE_SPINAND_ECC;
     else
         return (int)MS_STORAGE_UNKNOWN;
 }
 
-static int infinity_get_package_type(void)
+static int mstar_get_package_type(void)
 {
-    if(!strcmp(&infinity_soc_dev_attr.machine[8], "MSC316D"))
-        return MS_PACKAGE_BGA;
-    else if(!strcmp(&infinity_soc_dev_attr.machine[8], "MSC316Q"))
-        return MS_PACKAGE_BGA_256M;
-    else if(!strcmp(&infinity_soc_dev_attr.machine[8], "MSC315"))
-        return MS_PACKAGE_QFP;
-    else if(!strcmp(&infinity_soc_dev_attr.machine[8], "MSC313"))
-        return MS_PACKAGE_QFN;
+    if(!strcmp(&mstar_soc_dev_attr.machine[10], "MSC000A-S01A"))
+        return MS_I3_PACKAGE_BGA_128MB;
+    else if(!strcmp(&mstar_soc_dev_attr.machine[10], "MSC000A-S02A-256M") || !strcmp(&mstar_soc_dev_attr.machine[10], "MSC250C"))
+        return MS_I3_PACKAGE_DDR3_1866_256MB;
+    else if(!strcmp(&mstar_soc_dev_attr.machine[10], "MSC000A-S04A"))
+        return MS_I3_PACKAGE_QFN_DDR3_128MB;
+    else if(!strcmp(&mstar_soc_dev_attr.machine[10], "MSC000A-S03A-64M"))
+        return MS_I3_PACKAGE_QFN_DDR2_64MB;
+    else if(!strcmp(&mstar_soc_dev_attr.machine[10], "FPGA"))
+        return MS_I3_PACKAGE_FPGA_128MB;
     else
     {
-        printk(KERN_ERR "** ERROR ** Machine name [%s] not support\n", infinity_soc_dev_attr.machine);
-        return MS_PACKAGE_UNKNOWN;
+        printk(KERN_ERR "!!!!! Machine name [%s] \n", mstar_soc_dev_attr.machine);
+        return MS_I3_PACKAGE_UNKNOWN;
     }
 }
-static char infinity_platform_name[]=PLATFORM_NAME_INFINITY;
+static char mstar_platform_name[]=PLATFORM_NAME_INFINITY3;
 
-char* infinity_get_platform_name(void)
+char* mstar_get_platform_name(void)
 {
-    return infinity_platform_name;
+    return mstar_platform_name;
 }
 
-static unsigned long long infinity_chip_get_riu_phys(void)
+static unsigned long long mstar_chip_get_riu_phys(void)
 {
     return IO_PHYS;
 }
 
-static int infinity_chip_get_riu_size(void)
+static int mstar_chip_get_riu_size(void)
 {
     return IO_SIZE;
 }
 
 
-static int infinity_ir_enable(int param)
+static int mstar_ir_enable(int param)
 {
     printk(KERN_ERR "NOT YET IMPLEMENTED!![%s]",__FUNCTION__);
     return 0;
 }
 
 
-static int infinity_usb_vbus_control(int param)
+static int mstar_usb_vbus_control(int param)
 {
-    int package = infinity_get_package_type();
+
+    int ret;
+    //int package = mstar_get_package_type();
+    static int power_en_gpio=-1;
+
+    struct device_node *np;
+    int pin_data;
+    if(param<0 || param>1)
+    {
+        printk(KERN_ERR "[%s] param invalid\n", __FUNCTION__);
+        return -EINVAL;
+    }
+
+    if (power_en_gpio<0)
+    {
+        np = of_find_node_by_path("/soc/Mstar-ehci-1");
+        if(!of_property_read_u32(np, "power-enable-pad", &pin_data))
+        {
+            printk(KERN_ERR "Get power-enable-pad from DTS GPIO(%d)\n", pin_data);
+            power_en_gpio = (unsigned char)pin_data;
+        }
+        else
+        {
+            printk(KERN_ERR "Can't get power-enable-pad from DTS, set default GPIO(%d)\n", pin_data);
+            power_en_gpio = PAD_PM_GPIO2;
+        }
+
+        ret = gpio_request(power_en_gpio, "USB0-power-enable");
+        if (ret < 0) {
+            printk(KERN_INFO "Failed to request USB0-power-enable GPIO(%d)\n", power_en_gpio);
+            power_en_gpio =-1;
+            return ret;
+        }
+    }
 
     if(0 == param) //disable vbus
     {
-        if(MS_PACKAGE_BGA == package || MS_PACKAGE_BGA_256M == package)
-        {
-            // BGA (PAD_PM_GPIO2)
-            CLRREG8(BASE_REG_PMSLEEP_PA + REG_ID_28, BIT6|BIT7);  //reg_pwm2_mode = 0
-            CLRREG8(BASE_REG_PMGPIO_PA + REG_ID_02, BIT1);  //output = 0
-            CLRREG8(BASE_REG_PMGPIO_PA + REG_ID_02, BIT0);  //oen = 0
-        }
-        else if(MS_PACKAGE_QFP == package || MS_PACKAGE_QFN == package)
-        {
-            // QFP (PAD_SPI0_CK) need to check many register, please refer to GPIO table
-            CLRREG8(0x1F2079C4, BIT4);  //output = 0
-            CLRREG8(0x1F2079C4, BIT5);  //oen = 0
-        }
-        else
-        {
-            printk(KERN_ERR "[%s] TODO: package type =%d\n", __FUNCTION__, package);
-            return 0;
-        }
-        printk(KERN_INFO "[%s] Disable USB VBUS\n", __FUNCTION__);
+        gpio_direction_output(power_en_gpio, 0);
+        printk(KERN_INFO "[%s] Disable USB VBUS GPIO(%d)\n", __FUNCTION__,power_en_gpio);
     }
     else if(1 == param)
     {
-        if(MS_PACKAGE_BGA == package || MS_PACKAGE_BGA_256M == package)
-        {
-            // BGA (PAD_PM_GPIO2)
-            CLRREG8(BASE_REG_PMSLEEP_PA + REG_ID_28, BIT6|BIT7);  //reg_pwm2_mode = 0
-            SETREG8(BASE_REG_PMGPIO_PA + REG_ID_02, BIT1);  //output = 1
-            CLRREG8(BASE_REG_PMGPIO_PA + REG_ID_02, BIT0);  //oen = 0
-        }
-        else if(MS_PACKAGE_QFP == package || MS_PACKAGE_QFN == package)
-        {
-            // QFP (PAD_SPI0_CK) need to check many register, please refer to GPIO table
-            SETREG8(0x1F2079C4, BIT4);  //output = 1
-            CLRREG8(0x1F2079C4, BIT5);  //oen = 0
-        }
-        else
-        {
-            printk(KERN_ERR "[%s] TODO: package type =%d\n", __FUNCTION__, package);
-            return 0;
-        }
-        printk(KERN_INFO "[%s] Enable USB VBUS\n", __FUNCTION__);
-    }
-    else
-    {
-        printk(KERN_ERR "[%s] param invalid\n", __FUNCTION__);
+        gpio_direction_output(power_en_gpio, 1);
+        printk(KERN_INFO "[%s] Enable USB VBUS GPIO(%d)\n", __FUNCTION__,power_en_gpio);
     }
     return 0;
 }
@@ -266,7 +274,7 @@ extern u32 arch_timer_get_rate(void);
 static cycle_t us_ticks_cycle_offset=0;
 static u64 us_ticks_factor=1;
 
-static u64 infinity_chip_get_us_ticks(void)
+static u64 mstar_chip_get_us_ticks(void)
 {
 	const struct cyclecounter *arch_cc=arch_timer_get_timecounter()->cc;
 	u64 cycles=(arch_cc->read(arch_cc)-us_ticks_cycle_offset);
@@ -274,30 +282,30 @@ static u64 infinity_chip_get_us_ticks(void)
 	return usticks;
 }
 
-void intinify_reset_us_ticks_cycle_offset(void)
+void mstar_reset_us_ticks_cycle_offset(void)
 {
 	const struct cyclecounter *arch_cc=arch_timer_get_timecounter()->cc;
 	us_ticks_cycle_offset=arch_cc->read(arch_cc);
 }
 
-static int infinity_chip_function_set(int function_id, int param)
+static int mstar_chip_function_set(int function_id, int param)
 {
     int res=-1;
 
-    printk("[%s]CHIP_FUNCTION SET. ID=%d, param=%d\n",PLATFORM_NAME,function_id,param);
+    printk("CHIP_FUNCTION SET. ID=%d, param=%d\n",function_id,param);
     switch (function_id)
     {
             case CHIP_FUNC_UART_ENABLE_LINE:
-                infinity_uart_enable_line(param);
+                mstar_uart_enable_line(param);
                 break;
             case CHIP_FUNC_UART_DISABLE_LINE:
-                infinity_uart_disable_line(param);
+                mstar_uart_disable_line(param);
                 break;
             case CHIP_FUNC_IR_ENABLE:
-                infinity_ir_enable(param);
+                mstar_ir_enable(param);
                 break;
             case CHIP_FUNC_USB_VBUS_CONTROL:
-                infinity_usb_vbus_control(param);
+                mstar_usb_vbus_control(param);
                 break;
             case CHIP_FUNC_MCM_DISABLE_ID:
                 mcm_rw(param, 0, 1);
@@ -306,7 +314,7 @@ static int infinity_chip_function_set(int function_id, int param)
                 mcm_rw(param, 15, 1);
                 break;
         default:
-            printk(KERN_ERR "[%s]Unsupport CHIP_FUNCTION!! ID=%d\n",PLATFORM_NAME,function_id);
+            printk(KERN_ERR "Unsupport CHIP_FUNCTION!! ID=%d\n",function_id);
 
     }
 
@@ -314,7 +322,7 @@ static int infinity_chip_function_set(int function_id, int param)
 }
 
 
-static void __init infinity_init_early(void)
+static void __init mstar_init_early(void)
 {
 
 
@@ -323,46 +331,48 @@ static void __init infinity_init_early(void)
 
     chip=ms_chip_get();
 
+    //enable axi exclusive access
+    *(volatile unsigned short *)(0xFD204414) = 0x10;
 
-    chip->chip_flush_miu_pipe=infinity_chip_flush_miu_pipe;
-    chip->phys_to_miu=infinity_phys_to_MIU;
-    chip->miu_to_phys=infinity_MIU_to_phys;
-    chip->chip_get_device_id=infinity_get_device_id;
-    chip->chip_get_revision=infinity_get_revision;
-    chip->chip_get_platform_name=infinity_get_platform_name;
-    chip->chip_get_riu_phys=infinity_chip_get_riu_phys;
-    chip->chip_get_riu_size=infinity_chip_get_riu_size;
+    chip->chip_flush_miu_pipe=mstar_chip_flush_miu_pipe;
+    chip->phys_to_miu=mstar_phys_to_MIU;
+    chip->miu_to_phys=mstar_MIU_to_phys;
+    chip->chip_get_device_id=mstar_get_device_id;
+    chip->chip_get_revision=mstar_get_revision;
+    chip->chip_get_platform_name=mstar_get_platform_name;
+    chip->chip_get_riu_phys=mstar_chip_get_riu_phys;
+    chip->chip_get_riu_size=mstar_chip_get_riu_size;
 
-    chip->chip_function_set=infinity_chip_function_set;
-    chip->chip_get_storage_type=infinity_get_storage_type;
-    chip->chip_get_package_type=infinity_get_package_type;
-    chip->chip_get_us_ticks=infinity_chip_get_us_ticks;
+    chip->chip_function_set=mstar_chip_function_set;
+    chip->chip_get_storage_type=mstar_get_storage_type;
+    chip->chip_get_package_type=mstar_get_package_type;
+    chip->chip_get_us_ticks=mstar_chip_get_us_ticks;
 
 }
 
 extern char* LX_VERSION;
-static void __init infinity_init_machine(void)
+static void __init mstar_init_machine(void)
 {
     struct soc_device *soc_dev;
     struct device *parent = NULL;
 
-    pr_info("\n\n[INFINITY] : %s\n\n",LX_VERSION);
+    pr_info("\n\nVersion : %s\n\n",LX_VERSION);
 
-    intinify_reset_us_ticks_cycle_offset();
+    mstar_reset_us_ticks_cycle_offset();
     us_ticks_factor=div64_u64(arch_timer_get_rate(),1000000);
 
-    infinity_soc_dev_attr.family = kasprintf(GFP_KERNEL, infinity_platform_name);
-    infinity_soc_dev_attr.revision = kasprintf(GFP_KERNEL, "%d", infinity_get_revision());
-    infinity_soc_dev_attr.soc_id = kasprintf(GFP_KERNEL, "%u", infinity_get_device_id());
-    infinity_soc_dev_attr.api_version = kasprintf(GFP_KERNEL, ms_chip_get()->chip_get_API_version());
-    infinity_soc_dev_attr.machine = kasprintf(GFP_KERNEL, of_flat_dt_get_machine_name());
+    mstar_soc_dev_attr.family = kasprintf(GFP_KERNEL, mstar_platform_name);
+    mstar_soc_dev_attr.revision = kasprintf(GFP_KERNEL, "%d", mstar_get_revision());
+    mstar_soc_dev_attr.soc_id = kasprintf(GFP_KERNEL, "%u", mstar_get_device_id());
+    mstar_soc_dev_attr.api_version = kasprintf(GFP_KERNEL, ms_chip_get()->chip_get_API_version());
+    mstar_soc_dev_attr.machine = kasprintf(GFP_KERNEL, of_flat_dt_get_machine_name());
 
-    soc_dev = soc_device_register(&infinity_soc_dev_attr);
+    soc_dev = soc_device_register(&mstar_soc_dev_attr);
     if (IS_ERR(soc_dev)) {
-        kfree((void *)infinity_soc_dev_attr.family);
-        kfree((void *)infinity_soc_dev_attr.revision);
-        kfree((void *)infinity_soc_dev_attr.soc_id);
-        kfree((void *)infinity_soc_dev_attr.machine);
+        kfree((void *)mstar_soc_dev_attr.family);
+        kfree((void *)mstar_soc_dev_attr.revision);
+        kfree((void *)mstar_soc_dev_attr.soc_id);
+        kfree((void *)mstar_soc_dev_attr.machine);
         goto out;
     }
 
@@ -375,372 +385,9 @@ static void __init infinity_init_machine(void)
 out:
     of_platform_populate(NULL, of_default_bus_match_table, NULL, parent);
 
-    //disable ETAG pad setting if QFP or QFN package
-    if(MS_PACKAGE_QFP == infinity_get_package_type() || MS_PACKAGE_QFN == infinity_get_package_type())
-        CLRREG8(BASE_REG_CHIPTOP_PA + REG_ID_0F, BIT0|BIT1);
-}
-
-
-
-
-struct miu_device {
-    struct device dev;
-    int index;
-};
-
-struct miu_client{
-    char* name;
-    short bw_client_id;
-    short bw_enabled;
-    short bw_val;
-    short bw_val_thread;
-};
-
-static struct miu_client miu0_clients[] = {
-        {"OVERALL   ",0x00,0,0,0},
-        {"MFE(F)    ",0x01,0,0,0},
-        {"MFE(B)    ",0x02,0,0,0},
-        {"VHE       ",0x03,0,0,0},
-        {"JPE1      ",0x04,0,0,0},
-        {"JPE0      ",0x05,0,0,0},
-        {"BACH      ",0x06,0,0,0},
-        {"FILE      ",0x07,0,0,0},
-        {"UHC0      ",0x08,0,0,0},
-        {"EMAC      ",0x09,0,0,0},
-        {"MCU51     ",0x0A,0,0,0},
-        {"URDMA     ",0x0B,0,0,0},
-        {"BDMA      ",0x0C,0,0,0},
-        {"NA        ",0x0D,0,0,0},
-        {"NA        ",0x0E,0,0,0},
-        {"NA        ",0x0F,0,0,0},
-        {"CMDQ      ",0x10,0,0,0},
-        {"ISP_DNR   ",0x11,0,0,0},
-        {"ISP_ROT   ",0x12,0,0,0},
-        {"ISP_DMA   ",0x13,0,0,0},
-        {"ISP_STA   ",0x14,0,0,0},
-        {"GOP       ",0x15,0,0,0},
-        {"SC_DNR    ",0x16,0,0,0},
-        {"SC_DNR_SAD",0x17,0,0,0},
-        {"SC_CROP   ",0x18,0,0,0},
-        {"SC1_FRM   ",0x19,0,0,0},
-        {"SC1_SNP   ",0x1A,0,0,0},
-        {"SC1_DBG   ",0x1B,0,0,0},
-        {"SC2_FRM   ",0x1C,0,0,0},
-        {"SC3_FRM   ",0x1D,0,0,0},
-        {"FCIE      ",0x1E,0,0,0},
-        {"SDIO      ",0x1F,0,0,0},
-        {"CPU       ",0x70,0,0,0},
-
-};
-
-static struct miu_device miu0;
-
-
-static struct bus_type miu_subsys = {
-    .name = "miu",
-    .dev_name = "miu",
-};
-
-static struct task_struct *pBWmonitorThread=NULL;
-struct mutex bw_monitor_mutex;
-
-
-int BW_measure(short bwclientid)
-{
-    short BW_val=0;
-    mutex_lock(&bw_monitor_mutex);
-    OUTREG16( (BASE_REG_MIU_PA+REG_ID_0D), ( ((bwclientid << 8) & 0xFF00) | 0x50)) ;//reset
-    OUTREG16( (BASE_REG_MIU_PA+REG_ID_0D), ( ((bwclientid << 8) & 0xFF00) | 0x51)) ;//set to read peak
-
-    mdelay(300);
-    BW_val=INREG16((BASE_REG_MIU_PA+REG_ID_0E));
-
-    OUTREG16( (BASE_REG_MIU_PA+REG_ID_0D),0) ;//reset all
-
-    mutex_unlock(&bw_monitor_mutex);
-
-    return BW_val;
-}
-
-static int BW_monitor(void *arg)
-{
-    int i=0;
-    short tempBW_val=0;
-    while(1)
-    {
-        if (kthread_should_stop()) break;
-        for(i=0; i<(sizeof(miu0_clients)/sizeof(miu0_clients[0]));i++)
-        {
-
-            if(miu0_clients[i].bw_enabled)
-            {
-                //OUTREG16( (BASE_REG_MIU_PA+REG_ID_0D), ( ((miu0_clients[i].bw_client_id << 8) & 0xFF00) | 0x50)) ;//reset
-                //OUTREG16( (BASE_REG_MIU_PA+REG_ID_0D), ( ((miu0_clients[i].bw_client_id << 8) & 0xFF00) | 0x51)) ;//set to read peak
-
-                //mdelay(300);
-                //tempBW_val=0;
-                //tempBW_val=INREG16((BASE_REG_MIU_PA+REG_ID_0E));
-
-                tempBW_val=BW_measure(miu0_clients[i].bw_client_id);
-
-                if(miu0_clients[i].bw_val_thread<tempBW_val)
-                {
-                    miu0_clients[i].bw_val_thread=tempBW_val;
-                }
-            }
-        }
-
-        //OUTREG16( (BASE_REG_MIU_PA+REG_ID_0D),0) ;//reset all
-        mdelay(100);
-    }
-
-   return 0;
-
-}
-
-
-static int set_miu_client_enable(struct device *dev, const char *buf, size_t n, int enabled)
-{
-    long idx=-1;
-    if (kstrtol(buf, 10, &idx) != 0 || idx<0 || idx >= (sizeof(miu0_clients)/sizeof(miu0_clients[0])) ) return -EINVAL;
-
-    if('0'== (dev->kobj.name[3]))
-    {
-        miu0_clients[idx].bw_enabled=enabled;
-    }
-    return n;
-}
-
-static ssize_t bw_enable_store(struct device *dev,  struct device_attribute *attr, const char *buf, size_t n)
-{
-    return set_miu_client_enable(dev,buf,n,1);
-}
-
-static ssize_t bw_enable_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-    char *str = buf;
-    char *end = buf + PAGE_SIZE;
-    int i=0;
-
-    if('0'== (dev->kobj.name[3]))
-    {
-        for(i=0; i<(sizeof(miu0_clients)/sizeof(miu0_clients[0]));i++)
-        {
-            if(miu0_clients[i].bw_enabled)
-            {
-                str += scnprintf(str, end - str, "%d ",(short)i);
-            }
-        }
-    }
-
-    if (str > buf)  str--;
-
-    str += scnprintf(str, end - str, "\n");
-
-    return (str - buf);
-}
-
-static ssize_t bw_disable_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
-{
-    return set_miu_client_enable(dev,buf,n,0);
-}
-
-static ssize_t bw_disable_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-    char *str = buf;
-    char *end = buf + PAGE_SIZE;
-    int i=0;
-
-    if('0'== (dev->kobj.name[3]))
-    {
-        str += scnprintf(str, end - str, "Num:IP_name   [BW_Idx][Enable(1)/Disable(0)]\n");
-        for(i=0; i<(sizeof(miu0_clients)/sizeof(miu0_clients[0]));i++)
-        {
-            str += scnprintf(str, end - str, "%3d:%s[0x%04X][%d]\n",(short)i,miu0_clients[i].name,(short)miu0_clients[i].bw_client_id,(char)miu0_clients[i].bw_enabled);
-        }
-    }
-
-    if (str > buf)  str--;
-
-    str += scnprintf(str, end - str, "\n");
-
-    return (str - buf);
-}
-
-static ssize_t bw_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
-{
-    return 0;
-}
-
-static ssize_t bw_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-    char *str = buf;
-    char *end = buf + PAGE_SIZE;
-    int ip_loop_time=1;
-    int i=0, temp_loop_time=0;
-    short tempBW_val=0;
-
-    //reset all bw value
-    for(i=0; i<(sizeof(miu0_clients)/sizeof(miu0_clients[0]));i++)
-    {
-        miu0_clients[i].bw_val=0;
-    }
-
-    for(i=0; i<(sizeof(miu0_clients)/sizeof(miu0_clients[0]));i++)
-    {
-        if(miu0_clients[i].bw_enabled)
-        {
-            for (temp_loop_time=0;temp_loop_time<ip_loop_time;temp_loop_time++)
-            {
-                //OUTREG16( (BASE_REG_MIU_PA+REG_ID_0D), ( ((miu0_clients[i].bw_client_id << 8) & 0xFF00) | 0x50)) ;//reset
-                //OUTREG16( (BASE_REG_MIU_PA+REG_ID_0D), ( ((miu0_clients[i].bw_client_id << 8) & 0xFF00) | 0x51)) ;//set to read peak
-                //mdelay(300);
-                //tempBW_val=0;
-                //tempBW_val=INREG16((BASE_REG_MIU_PA+REG_ID_0E));
-
-                tempBW_val=BW_measure(miu0_clients[i].bw_client_id);
-
-                if(miu0_clients[i].bw_val<tempBW_val)
-                {
-                    miu0_clients[i].bw_val=tempBW_val;
-                }
-            }
-        }
-        OUTREG16( (BASE_REG_MIU_PA+REG_ID_0D),0) ;//reset all
-    }
-
-    if('0'== (dev->kobj.name[3]))
-    {
-        for(i=0; i<(sizeof(miu0_clients)/sizeof(miu0_clients[0]));i++)
-        {
-            if(miu0_clients[i].bw_enabled)
-            {
-                //read from bw register and saved back to bw_val
-                str += scnprintf(str, end - str, "%2d:%s[0x%04X] BW_val=%3d,%3d.%02d%%\n",(short)i,miu0_clients[i].name,
-                (short)miu0_clients[i].bw_client_id,miu0_clients[i].bw_val,miu0_clients[i].bw_val*100/1024,
-                (miu0_clients[i].bw_val*10000/1024)%100);
-
-            }
-        }
-    }
-
-    if (str > buf)  str--;
-
-    str += scnprintf(str, end - str, "\n");
-
-    return (str - buf);
-
-
-}
-
-
-static int set_bw_thread_enable(struct device *dev, const char *buf, size_t n)
-{
-    long idx=-1;
-    int i=0;
-    int ret;
-
-    if (kstrtol(buf, 10, &idx) != 0 || idx<0 || idx >= 2 ) return -EINVAL;
-
-    if(idx==1)//enable thread
-    {
-        for(i=0; i<(sizeof(miu0_clients)/sizeof(miu0_clients[0]));i++) //reset all bandwidth value
-        {
-            miu0_clients[i].bw_val_thread=0;
-        }
-
-        if(pBWmonitorThread==NULL)
-        {
-            pBWmonitorThread = kthread_create(BW_monitor,(void *)&pBWmonitorThread,"BW Monitor");
-            if (IS_ERR(pBWmonitorThread))
-            {
-                ret = PTR_ERR(pBWmonitorThread);
-                pBWmonitorThread = NULL;
-                return ret;
-            }
-            wake_up_process(pBWmonitorThread);
-        }
-    }
-    else if (idx==0 && (pBWmonitorThread!=NULL))//disable thread
-    {
-        kthread_stop(pBWmonitorThread);
-    }
-    return n;
-}
-
-
-static ssize_t bw_thread_store(struct device *dev,  struct device_attribute *attr, const char *buf, size_t n)
-{
-    return set_bw_thread_enable(dev,buf,n);
-}
-
-
-static ssize_t bw_thread_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-    char *str = buf;
-    char *end = buf + PAGE_SIZE;
-    int i=0;
-
-    if('0'== (dev->kobj.name[3]))
-    {
-        for(i=0; i<(sizeof(miu0_clients)/sizeof(miu0_clients[0]));i++)
-        {
-            if(miu0_clients[i].bw_enabled)
-            {
-                //read from bw register and saved back to bw_val
-                str += scnprintf(str, end - str, "%2d:%s[0x%04X] BW_val_thread=%3d,%3d.%02d%%\n",(short)i,miu0_clients[i].name,
-                (short)miu0_clients[i].bw_client_id,miu0_clients[i].bw_val_thread,miu0_clients[i].bw_val_thread*100/1024,
-                (miu0_clients[i].bw_val_thread*10000/1024)%100);
-
-            }
-        }
-    }
-
-    if (str > buf)  str--;
-
-    str += scnprintf(str, end - str, "\n");
-
-    return (str - buf);
-
-
-}
-
-
-DEVICE_ATTR(bw_enable, 0644, bw_enable_show, bw_enable_store);
-DEVICE_ATTR(bw_disable, 0644, bw_disable_show, bw_disable_store);
-DEVICE_ATTR(bw, 0644, bw_show, bw_store);
-DEVICE_ATTR(bw_thread, 0644, bw_thread_show, bw_thread_store);
-
-
-static void __init infinity_create_MIU_node(void)
-{
-    int ret;
-
-    miu0.index=0;
-    miu0.dev.kobj.name="miu0";
-    miu0.dev.bus=&miu_subsys;
-
-    ret = subsys_system_register(&miu_subsys, NULL);
-    if (ret)
-    {
-        printk(KERN_ERR "Failed to register miu sub system!! %d\n",ret);
-        return;
-    }
-
-
-    ret=device_register(&miu0.dev);
-
-    if(ret)
-    {
-        printk(KERN_ERR "Failed to register miu0 device!! %d\n",ret);
-        return;
-    }
-
-    device_create_file(&miu0.dev, &dev_attr_bw_enable);
-    device_create_file(&miu0.dev, &dev_attr_bw_disable);
-    device_create_file(&miu0.dev, &dev_attr_bw);
-    device_create_file(&miu0.dev, &dev_attr_bw_thread);
-    mutex_init(&bw_monitor_mutex);
+    //write log_buf address to mailbox
+    OUTREG16(BASE_REG_MAILBOX_PA+BK_REG(0x08), (int)log_buf_addr_get() & 0xFFFF);
+    OUTREG16(BASE_REG_MAILBOX_PA+BK_REG(0x09), ((int)log_buf_addr_get() >> 16 )& 0xFFFF);
 }
 
 struct mcm_client{
@@ -896,7 +543,7 @@ static ssize_t mcm_slow_ratio_show(struct device *dev, struct device_attribute *
 
 DEVICE_ATTR(mcm_slow_ratio, 0644, mcm_slow_ratio_show, mcm_slow_ratio_store);
 
-static void __init infinity_create_MCM_node(void)
+static void __init mstar_create_MCM_node(void)
 {
     int ret;
 
@@ -923,23 +570,68 @@ static void __init infinity_create_MCM_node(void)
 
 
 
-
-extern int infinity_pm_init(void);
+extern void mstar_create_MIU_node(void);
+extern int mstar_pm_init(void);
 extern void init_proc_zen(void);
-static inline void __init infinity_init_late(void)
+static inline void __init mstar_init_late(void)
 {
-    infinity_pm_init();
-    infinity_create_MIU_node();
-    infinity_create_MCM_node();
+#ifdef CONFIG_PM_SLEEP
+    mstar_pm_init();
+#endif
+    mstar_create_MIU_node();
+    mstar_create_MCM_node();
 }
 
-DT_MACHINE_START(MS_INFINITY_DT, "MStar Infinity3 (Flattened Device Tree)")
-    .dt_compat    = infinity_dt_compat,
-    .map_io = infinity_map_io,
-    .init_machine = infinity_init_machine,
-    .init_early = infinity_init_early,
+static void infinity_restart(enum reboot_mode mode, const char * cmd)
+{
+    U16 i=0;
+#if 0
+    //fsp
+    //Check flash status
+    SETREG16(0x1f002dbc, BIT0);//h6F
+    OUTREG16(0x1f002db0, 0x0000);//h6C
+//  do
+//  {
+        OUTREG16(0x1f002d80, 0x0005); //h60
+        OUTREG16(0x1f002da8, 0x0001); //h6A
+        OUTREG16(0x1f002dac, 0x0001); //h6B
+        OUTREG16(0x1f002db0, 0x2007); //h6C
+        OUTREG16(0x1f002db4, 0x0001); //h6D
+        while(!(INREG16(0x1f002db8)&BIT0)) //h6E
+        ;
+        SETREG16(0x1f002dbc, BIT0);   //h6F//
+    } while((INREG16(0x1f002d94)&BIT0) == BIT0); //h65
+#else
+    //riu_isp
+    OUTREG16(0x1f001000, 0xAAAA);
+    //password
+    do {
+        i++;
+        OUTREG16(0x1f001004, 0x0005);  //cmd
+        OUTREG16(0x1f001030, 0x0001);  //trigger
+        while((INREG16(0x1f001054) & 0x1) != 0x1)  //check read data ready
+        ;
+
+        if (Chip_Get_Storage_Type()!= MS_STORAGE_NOR) //if no nor-flash
+            break;
+    }while((INREG16(0x1f001014) & 0x1) != 0x0);//check WIP=0
+#endif
+
+    while(1)
+    {
+        OUTREG8(0x1f221000, 0x30+i);
+        mdelay(5);
+        OUTREG8(0x1f001cb8, 0x79);
+    }
+}
+
+DT_MACHINE_START(MS_DT, "MStar Infinity3 (Flattened Device Tree)")
+    .dt_compat    = mstar_dt_compat,
+    .map_io = mstar_map_io,
+    .init_machine = mstar_init_machine,
+    .init_early = mstar_init_early,
 //    .init_time =  ms_init_timer,
-//    .init_irq = infinity_init_irqchip,
-    .init_late = infinity_init_late,
+//    .init_irq = mstar_init_irqchip,
+    .init_late = mstar_init_late,
     .restart = infinity_restart,  //in reset.S
 MACHINE_END

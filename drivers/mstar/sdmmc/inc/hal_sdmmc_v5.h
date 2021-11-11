@@ -16,6 +16,14 @@
 #define WT_EVENT_WRITE              3000    //(ms)
 
 //###########################################################################################################
+#elif (D_PROJECT == D_PROJECT__iNF3)
+//###########################################################################################################
+
+#define WT_EVENT_RSP                10      //(ms)
+#define WT_EVENT_READ               2000    //(ms)
+#define WT_EVENT_WRITE              3000    //(ms)
+
+//###########################################################################################################
 #else
 //###########################################################################################################
 
@@ -164,7 +172,7 @@ RspStruct* Hal_SDMMC_GetRspToken(IPEmType eIP);
 void Hal_SDMMC_TransCmdSetting(IPEmType eIP, TransEmType eTransType, U16_T u16BlkCnt, U16_T u16BlkSize, volatile U32_T u32BufAddr, volatile U8_T *pu8Buf);
 RspErrEmType Hal_SDMMC_SendCmdAndWaitProcess(IPEmType eIP, TransEmType eTransType, CmdEmType eCmdType, SDMMCRspEmType eRspType, BOOL_T bCloseClk);
 RspErrEmType Hal_SDMMC_RunBrokenDmaAndWaitProcess(IPEmType eIP, CmdEmType eCmdType);
-void Hal_SDMMC_ADMASetting(IPEmType eIP, volatile void *pDMATable, U8_T u8Item, U32_T u32SubDMALen, U32_T u32SubDMAAddr, U8_T u8MIUSel, BOOL_T bEnd);
+void Hal_SDMMC_ADMASetting(volatile void *pDMATable, U8_T u8Item, U32_T u32SubLen, U16_T u16SubBCnt, U32_T u32SubAddr, U8_T u8MIUSel, BOOL_T bEnd);
 
 //  SDMMC Special Operation Function
 //----------------------------------------------------------------------------------------------------------

@@ -1,9 +1,8 @@
+
+CONFIG_MSTAR_CHIP_NAME := $(subst ",,$(CONFIG_MSTAR_CHIP_NAME))
 EXTRA_CFLAGS      +=  -Idrivers/mstar/include
+EXTRA_CFLAGS      +=  -Idrivers/mstar/include/$(CONFIG_MSTAR_CHIP_NAME)
 
-obj-y += ms_chip.o atags_to_fdt.o 
+obj-y += ms_chip.o atags_to_fdt.o
 obj-$(CONFIG_TI_CMEM_STUB) += cmemk_stub.o
-
-obj-$(CONFIG_ARCH_CEDRIC) += cedric/
-obj-$(CONFIG_ARCH_INFINITY) += infinity/
-obj-$(CONFIG_ARCH_CHICAGO) += chicago/
-obj-$(CONFIG_ARCH_INFINITY3) += infinity3/
+obj-y += $(CONFIG_MSTAR_CHIP_NAME)/

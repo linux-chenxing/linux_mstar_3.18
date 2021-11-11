@@ -12,6 +12,7 @@
 #include <linux/of.h>
 #include <linux/device.h>
 #include <linux/slab.h>
+#include <linux/init.h>
 
 #define DRIVER_NAME    "usclk"
 
@@ -19,6 +20,11 @@ struct usclk_data {
     struct clk_hw *hw;
     int enabled;
 };
+
+struct usclk_data *g_pdata;
+struct class *g_clk_class;
+struct device **g_dev;
+u32 g_clock_count;
 
 static ssize_t enable_show(struct device *dev, struct device_attribute *attr,
         char *buf)
@@ -107,44 +113,47 @@ static int usclk_setup(void)
 {
     int ret;
     int i;
-    struct usclk_data *pdata;
-    u32 clock_count;
-    struct class *clk_class;
-    struct device *dev;
     struct device_node *np = of_find_compatible_node(NULL, NULL, "usclk");
 
 
 //    printk(KERN_INFO"setup ms_usclk interface\n");
-    ret = of_property_read_u32(np, "clock-count", &clock_count);
-    if (ret || !clock_count)
+    ret = of_property_read_u32(np, "clock-count", &g_clock_count);
+    if (ret || !g_clock_count)
         return ret;
 
-    pdata = kzalloc(clock_count * sizeof(*pdata), GFP_KERNEL);
-    if (!pdata)
+    g_pdata = kzalloc(g_clock_count * sizeof(*g_pdata), GFP_KERNEL);
+    if (!g_pdata)
         return -ENOMEM;
 
-    clk_class = class_create(THIS_MODULE, "usclk");
-    if (!clk_class) {
+    g_dev = kzalloc(g_clock_count * sizeof(struct dev*), GFP_KERNEL);
+    if (!g_dev)
+        return -ENOMEM;
+
+    g_clk_class = class_create(THIS_MODULE, "usclk");
+    if (!g_clk_class) {
         pr_err("unable to create class\n");
         goto err_free;
     }
 
-    for (i = 0; i < clock_count; i++) {
-        pdata[i].hw = __clk_get_hw(of_clk_get(np, i));
-        if (IS_ERR(pdata[i].hw)) {
+
+
+    for (i = 0; i < g_clock_count; i++) {
+        g_pdata[i].hw = __clk_get_hw(of_clk_get(np, i));
+        if (IS_ERR(g_pdata[i].hw)) {
             pr_warn("input clock #%u not found\n", i);
             continue;
         }
 
-        dev = device_create(clk_class, NULL, MKDEV(0, 0), NULL,
+        g_dev[i] = device_create(g_clk_class, NULL, MKDEV(0, 0), NULL,
                 of_clk_get_parent_name(np, i));
-        if (!dev) {
+
+        if (!g_dev[i]) {
             pr_warn("unable to create device #%d\n", i);
             continue;
         }
 
-        dev_set_drvdata(dev, &pdata[i]);
-        if(0!=sysfs_create_group(&dev->kobj, &usclk_attr_grp))
+        dev_set_drvdata(g_dev[i], &g_pdata[i]);
+        if(0!=sysfs_create_group(&g_dev[i]->kobj, &usclk_attr_grp))
         {
             pr_warn("create device #%d failed...\n", i);
         }
@@ -154,7 +163,11 @@ static int usclk_setup(void)
     return 0;
 
 err_free:
-    kfree(pdata);
+    if(g_pdata)
+        kfree(g_pdata);
+
+    if(g_dev)
+        kfree(g_dev);
 
     return ret;
 }
@@ -173,7 +186,26 @@ static int __init ms_usclk_module_init(void)
 
 static void __exit ms_usclk_module_exit(void)
 {
+    int i;
 //    platform_driver_unregis.ter(&ms_ir_driver);
+    for (i = 0; i < g_clock_count; i++) {
+
+        if(g_dev[i])
+        {
+            sysfs_remove_group(&g_dev[i]->kobj, &usclk_attr_grp);
+            device_destroy(g_clk_class, g_dev[i]->devt);
+        }
+    }
+
+    if(g_clk_class)
+        class_destroy(g_clk_class);
+
+    if(g_pdata)
+        kfree(g_pdata);
+
+    if(g_dev)
+        kfree(g_dev);
+
 }
 
 

@@ -608,43 +608,18 @@ void Hal_CARD_PowerOff(PADEmType ePAD, U16_T u16DelayMs)
 // Card Detect and GPIO Setting for Card Platform
 //***********************************************************************************************************
 
-/*----------------------------------------------------------------------------------------------------------
- *
- * Function: Hal_CARD_GetGPIONum
- *     @author jeremy.wang (2012/5/22)
- * Desc:
- *
- * @param eGPIO :
- *
- * @return U32_T  :
- ----------------------------------------------------------------------------------------------------------*/
-U32_T Hal_CARD_GetGPIONum(GPIOEmType eGPIO)
-{
-    S32_T s32GPIO = -1;
-    if( eGPIO==EV_GPIO1 ) //EV_GPIO1 for Slot 0
-    {
-        //s32GPIO = DrvPadmuxGetGpio(IO_CHIP_INDEX_SD_CDZ);
-    }
-    else if( eGPIO==EV_GPIO2)
-    {
-    }
-
-    if(s32GPIO>0)
-        return (U32_T)s32GPIO;
-    else
-        return 0;
-}
 
 /*----------------------------------------------------------------------------------------------------------
  *
  * Function: Hal_CARD_InitGPIO
- *     @author jeremy.wang (2012/5/22)
- * Desc:
+ *     @author jeremy.wang (2016/12/15)
+ * Desc: Init GPIO Setting for CDZ or other GPIO (Pull high/low and driving, base SD/GPIO mode setting)
  *
- * @param eGPIO :
- * @param bEnable :
+ * @param eGPIO : GPIO1/GPIO2/...
+ * @param ePAD : PAD
+ * @param bEnable : Enable GPIO or disable GPIO to avoid loss power
  ----------------------------------------------------------------------------------------------------------*/
-void Hal_CARD_InitGPIO(GPIOEmType eGPIO, BOOL_T bEnable)
+void Hal_CARD_InitGPIO(GPIOEmType eGPIO, PADEmType ePAD, BOOL_T bEnable)
 {
     if( eGPIO==EV_GPIO1 ) //EV_GPIO1 for Slot 0
     {
@@ -674,17 +649,19 @@ void Hal_CARD_InitGPIO(GPIOEmType eGPIO, BOOL_T bEnable)
 
 }
 
+
 /*----------------------------------------------------------------------------------------------------------
  *
  * Function: Hal_CARD_GetGPIOState
- *     @author jeremy.wang (2012/5/22)
- * Desc: Get CDZ GPIO State
+ *     @author jeremy.wang (2016/12/15)
+ * Desc: Get GPIO input mode value (Include input mode setting)
  *
- * @param eGPIO : GPIO1/GPIO2/GPIO3...
+ * @param eGPIO : GPIO1/GPIO2/...
+ * @param ePAD : PAD
  *
  * @return BOOL_T  : Insert (TRUE) or Remove (FALSE)
  ----------------------------------------------------------------------------------------------------------*/
-BOOL_T Hal_CARD_GetGPIOState(GPIOEmType eGPIO)
+BOOL_T Hal_CARD_GetGPIOState(GPIOEmType eGPIO, PADEmType ePAD)
 {
     if( eGPIO==EV_GPIO1 ) //EV_GPIO1 for Slot 0
     {
@@ -701,16 +678,18 @@ BOOL_T Hal_CARD_GetGPIOState(GPIOEmType eGPIO)
     return (FALSE);
 }
 
+
 /*----------------------------------------------------------------------------------------------------------
  *
  * Function: Hal_CARD_SetGPIOState
- *     @author jeremy.wang (2015/1/7)
- * Desc: Switch CDZ GPIO to output state
+ *     @author jeremy.wang (2016/12/15)
+ * Desc: Set GPIO output mode value (Include output mode setting), it's for SDIO WIFI control using
  *
- * @param eGPIO : GPIO1/GPIO2/GPIO3...
- * @param bOutputState : SW control output state
+ * @param eGPIO : GPIO1/GPIO2/...
+ * @param ePAD : PAD
+ * @param bOutputState : TRUE or FALSE
  ----------------------------------------------------------------------------------------------------------*/
-void Hal_CARD_SetGPIOState(GPIOEmType eGPIO, BOOL_T bOutputState)
+void Hal_CARD_SetGPIOState(GPIOEmType eGPIO, PADEmType ePAD, BOOL_T bOutputState)
 {
 
     if( eGPIO==EV_GPIO1 ) //EV_GPIO1 for Slot 0
@@ -741,21 +720,52 @@ void Hal_CARD_SetGPIOState(GPIOEmType eGPIO, BOOL_T bOutputState)
 }
 
 
+/*----------------------------------------------------------------------------------------------------------
+ *
+ * Function: Hal_CARD_GetGPIONum
+ *     @author jeremy.wang (2016/12/15)
+ * Desc: Get GPIO number for special platform (like Linux) to use it get irq number
+ *
+ * @param eGPIO : GPIO1/GPIO2/...
+ * @param ePAD : PAD
+ *
+ * @return U32_T  : GPIO number
+ ----------------------------------------------------------------------------------------------------------*/
+U32_T Hal_CARD_GetGPIONum(GPIOEmType eGPIO, PADEmType ePAD)
+{
+    S32_T s32GPIO = -1;
+    if( eGPIO==EV_GPIO1 ) //EV_GPIO1 for Slot 0
+    {
+        //s32GPIO = DrvPadmuxGetGpio(IO_CHIP_INDEX_SD_CDZ);
+    }
+    else if( eGPIO==EV_GPIO2)
+    {
+    }
+
+    if(s32GPIO>0)
+        return (U32_T)s32GPIO;
+    else
+        return 0;
+}
+
 
 #if (D_OS == D_OS__LINUX)
 //#include <mach/irqs.h>
 #include <linux/irq.h>
 #endif
+
+
 /*----------------------------------------------------------------------------------------------------------
  *
  * Function: Hal_CARD_SetGPIOIntAttr
- *     @author jeremy.wang (2012/5/22)
- * Desc:
+ *     @author jeremy.wang (2016/12/15)
+ * Desc: Set GPIO Interrupt Attribute (Option 1..5), it could design for different requirement
  *
- * @param eGPIO :
- * @param eGPIOOPT :
+ * @param eGPIO : GPIO1/GPIO2/...
+ * @param ePAD : PAD
+ * @param eGPIOOPT :  Option1/Option2/...
  ----------------------------------------------------------------------------------------------------------*/
-void Hal_CARD_SetGPIOIntAttr(GPIOEmType eGPIO, GPIOOptEmType eGPIOOPT)
+void Hal_CARD_SetGPIOIntAttr(GPIOEmType eGPIO, PADEmType ePAD, GPIOOptEmType eGPIOOPT)
 {
 
 #if (D_OS == D_OS__LINUX)
@@ -814,14 +824,15 @@ void Hal_CARD_SetGPIOIntAttr(GPIOEmType eGPIO, GPIOOptEmType eGPIOOPT)
 /*----------------------------------------------------------------------------------------------------------
  *
  * Function: Hal_CARD_GPIOIntFilter
- *     @author jeremy.wang (2012/5/9)
- * Desc:
+ *     @author jeremy.wang (2016/12/15)
+ * Desc: GPIO Interrupt Filter, it could design to filter GPIO Interrupt (Many sources belong to the same one)
  *
- * @param eGPIO :
+ * @param eGPIO : GPIO1/GPIO2/...
+ * @param ePAD : PAD
  *
- * @return BOOL_T  :
+ * @return BOOL_T  : TRUE or FALSE
  ----------------------------------------------------------------------------------------------------------*/
-BOOL_T Hal_CARD_GPIOIntFilter(GPIOEmType eGPIO)
+BOOL_T Hal_CARD_GPIOIntFilter(GPIOEmType eGPIO, PADEmType ePAD)
 {
 
     if( eGPIO==EV_GPIO1 ) //EV_GPIO1 for Slot 0

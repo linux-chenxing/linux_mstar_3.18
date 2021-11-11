@@ -82,12 +82,13 @@ phys_addr_t     TX_SKB_BASE;                        //= (RX_BUFFER_SIZE+RBQP_SIZ
 #define ETHERNET_TEST_INIT_FAIL             0x00000010UL
 
 #ifdef  RX_ZERO_COPY
-#define RX_RING_SIZE                       (RBQP_LENG*2)
+//#define RX_RING_SIZE                       (RBQP_LENG*2)
 #endif
 
 u8 MY_DEV[16] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
 u8 MY_MAC[6] = { 0x00UL, 0x30UL, 0x1BUL, 0xBAUL, 0x02UL, 0xDBUL };
 u8 PC_MAC[6] = { 0x00UL, 0x1AUL, 0x4BUL, 0x5CUL, 0x39UL, 0xDFUL };
+u8 ETH_PAUSE_FRAME_DA_MAC[6] = { 0x01UL, 0x80UL, 0xC2UL, 0x00UL, 0x00UL, 0x01UL };
 
 #ifdef INT_JULIAN_D
    u32 xoffsetValue, xReceiveNum;
@@ -150,7 +151,7 @@ struct EMAC_private
     unsigned int tx_swq_full_cnt;       /* TX_SW_QUEUE full stopped count*/
 #else
     struct tx_ring tx_swq[TX_RING_SIZE];
-    unsigned int tx_rdidx;
+    //unsigned int tx_rdidx;
     unsigned int tx_wridx;
 #endif
 #endif
@@ -161,11 +162,11 @@ struct EMAC_private
 //	struct rx_ring rx_ring_list[RX_RING_SIZE];
 	/* RX variables only touched in napi_poll.  No locking necessary. */
 	//u64 *rx_ring;
-	dma_addr_t rx_ring_handle;
-	unsigned int rx_next;
-	unsigned int rx_next_fill;
-	unsigned int rx_current_fill;
-	struct sk_buff_head rx_list;
+	//dma_addr_t rx_ring_handle;
+	//unsigned int rx_next;
+	//unsigned int rx_next_fill;
+	//unsigned int rx_current_fill;
+	//struct sk_buff_head rx_list;
 #endif
 
 

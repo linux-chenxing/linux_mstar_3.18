@@ -51,11 +51,19 @@ static void __init mdrvinfinityfb_updateinfo(void)
 {
     static int main_videomemory_size=0;
 
+    //default settings for Stretch mode
+    genGOPGernelSettings.u32Width=sg_mdrvinfinityfb_default_var.xres;
+    genGOPGernelSettings.u32Height=sg_mdrvinfinityfb_default_var.yres;
+    genGOPGernelSettings.enBufferNum=FB_DOUBLE_BUFFER;
+    genGOPGernelSettings.enStretchH_Ratio=FB_STRETCH_H_RATIO_1;
+    genGOPGernelSettings.u32DisplayWidth=genGOPGernelSettings.u32Width*genGOPGernelSettings.enStretchH_Ratio;
+    genGOPGernelSettings.u32DisplayHeight=genGOPGernelSettings.u32Height;
+
     //default settings for global structure of fb_var_screeninfo
     sg_mdrvinfinityfb_default_var.xres         = 0;
     sg_mdrvinfinityfb_default_var.yres         = 0;
     sg_mdrvinfinityfb_default_var.xres_virtual = sg_mdrvinfinityfb_default_var.xres;
-    sg_mdrvinfinityfb_default_var.yres_virtual = sg_mdrvinfinityfb_default_var.yres * (ANDROID_NUMBER_OF_BUFFERS+1);//double buffer for pan display
+    sg_mdrvinfinityfb_default_var.yres_virtual = sg_mdrvinfinityfb_default_var.yres * (genGOPGernelSettings.enBufferNum);//double buffer for pan display
     sg_mdrvinfinityfb_default_var.width        = sg_mdrvinfinityfb_default_var.xres;
     sg_mdrvinfinityfb_default_var.height       = sg_mdrvinfinityfb_default_var.yres;
 
@@ -64,7 +72,7 @@ static void __init mdrvinfinityfb_updateinfo(void)
     genGWinInfo.u18HEnd   = genGWinInfo.u18HStart + sg_mdrvinfinityfb_default_var.xres;
     genGWinInfo.u18VStart = 0;
     genGWinInfo.u18VEnd   = genGWinInfo.u18VStart + sg_mdrvinfinityfb_default_var.yres;
-    main_videomemory_size = (sg_mdrvinfinityfb_default_var.xres * sg_mdrvinfinityfb_default_var.yres * ANDROID_BYTES_PER_PIXEL * (ANDROID_NUMBER_OF_BUFFERS+1));
+    main_videomemory_size = (sg_mdrvinfinityfb_default_var.xres * sg_mdrvinfinityfb_default_var.yres * ANDROID_BYTES_PER_PIXEL * (genGOPGernelSettings.enBufferNum));
 
 
     sg_videomemorysize = main_videomemory_size;
@@ -89,16 +97,22 @@ static int mdrvinfinityfb_infinity_updateinfo_par(unsigned int setWidth,unsigned
     sg_mdrvinfinityfb_default_var.xres         = setWidth;
     sg_mdrvinfinityfb_default_var.yres         = setHeight;
     sg_mdrvinfinityfb_default_var.xres_virtual = sg_mdrvinfinityfb_default_var.xres;
-    sg_mdrvinfinityfb_default_var.yres_virtual = sg_mdrvinfinityfb_default_var.yres * (ANDROID_NUMBER_OF_BUFFERS+1);//double buffer for pan display
+    sg_mdrvinfinityfb_default_var.yres_virtual = sg_mdrvinfinityfb_default_var.yres * (genGOPGernelSettings.enBufferNum);//double buffer for pan display
     sg_mdrvinfinityfb_default_var.width        = sg_mdrvinfinityfb_default_var.xres;
     sg_mdrvinfinityfb_default_var.height       = sg_mdrvinfinityfb_default_var.yres;
+
+    //update settings for global structure of Stetch mode
+    genGOPGernelSettings.u32Width=sg_mdrvinfinityfb_default_var.xres;
+    genGOPGernelSettings.u32Height=sg_mdrvinfinityfb_default_var.yres;
+    genGOPGernelSettings.u32DisplayWidth=genGOPGernelSettings.u32Width*genGOPGernelSettings.enStretchH_Ratio;
+    genGOPGernelSettings.u32DisplayHeight=genGOPGernelSettings.u32Height;
 
     //GWin init, same size as screen
     genGWinInfo.u18HStart = 0;
     genGWinInfo.u18HEnd   = genGWinInfo.u18HStart + sg_mdrvinfinityfb_default_var.xres;
     genGWinInfo.u18VStart = 0;
     genGWinInfo.u18VEnd   = genGWinInfo.u18VStart + sg_mdrvinfinityfb_default_var.yres;
-    main_videomemory_size = (sg_mdrvinfinityfb_default_var.xres * sg_mdrvinfinityfb_default_var.yres * ANDROID_BYTES_PER_PIXEL * (ANDROID_NUMBER_OF_BUFFERS+1));
+    main_videomemory_size = (sg_mdrvinfinityfb_default_var.xres * sg_mdrvinfinityfb_default_var.yres * ANDROID_BYTES_PER_PIXEL * (genGOPGernelSettings.enBufferNum));
 
     // free memory if it has
     if(sg_videomemorysize > 0)
@@ -118,7 +132,7 @@ static int mdrvinfinityfb_infinity_updateinfo_par(unsigned int setWidth,unsigned
                                              PAGE_ALIGN(sg_videomemorysize),
                                              &sg_G3D_fb2_bus_addr1)))
     {
-        FBDBG("[FB Driver] Error: updateinfo_par: unable to allocate screen memory\n");
+        FBDBGERR("[FB Driver] Error: updateinfo_par: unable to allocate screen memory\n");
         return -ENOMEM;
     }
 
@@ -144,7 +158,7 @@ static int mdrvinfinityfb_infinity_SetPalette(FB_GOP_PaletteEntry *pPalEntry, in
     //open scl0 fclk to load palette
     if (IS_ERR(gop_clks[1]))
     {
-        FBDBG( "[FB Driver] Error: SetPalette Fail to get gop fclk of scl!\n" );
+        FBDBGERR( "[FB Driver] Error: SetPalette Fail to get gop fclk of scl!\n" );
         return ret;
     }
     else
@@ -178,6 +192,10 @@ static int mdrvinfinityfb_set_par(struct fb_info *info)
     int ret = 0;
     FBDBG( "[FB Driver] Test I3!\n" );
 
+    //Stretch mode settings, if use back to this to set resolution, it will set to default
+    genGOPGernelSettings.enStretchH_Ratio=FB_STRETCH_H_RATIO_1;
+    genGOPGernelSettings.enBufferNum=FB_DOUBLE_BUFFER;
+
     ret=mdrvinfinityfb_infinity_updateinfo_par(info->var.xres,info->var.yres);
 
     info->fix.smem_start  = sg_mdrvinfinityfb_fix.smem_start;
@@ -186,7 +204,7 @@ static int mdrvinfinityfb_set_par(struct fb_info *info)
     info->var.width       = info->var.xres;
     info->var.height      = info->var.yres;
 
-    info->screen_base     = CAST_2_IOMEM_CHAR_P( sg_pG3D_fb2_vir_addr1);
+    info->screen_base     = (char *)CAST_2_IOMEM_CHAR_P( sg_pG3D_fb2_vir_addr1);
     info->fix.line_length = info->var.xres * ANDROID_BYTES_PER_PIXEL;
 
     //GOP_Setmode(FALSE, 0,sg_mdrvinfinityfb_default_var.xres,sg_mdrvinfinityfb_default_var.yres,sg_G3D_fb2_bus_addr1,ANDROID_FB_FORMAT,ANDROID_BYTES_PER_PIXEL, 0);
@@ -222,18 +240,18 @@ static int mdrvinfinityfb_mmap(struct fb_info *pinfo, struct vm_area_struct *vma
 
     if (sg_videomemorysize<1)
     {
-        FBDBG("[FB Driver] ERROR: mmap, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
+        FBDBGERR("[FB Driver] ERROR: mmap, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
         return -ENOMEM;
     }
 
     if (NULL == pinfo)
     {
-        FBDBG("[FB Driver] ERROR: mmap, pinfo is NULL pointer !\n");
+        FBDBGERR("[FB Driver] ERROR: mmap, pinfo is NULL pointer !\n");
         return -ENOTTY;
     }
     if (NULL == vma)
     {
-        FBDBG("[FB Driver] ERROR: mmap, vma is NULL pointer !\n");
+        FBDBGERR("[FB Driver] ERROR: mmap, vma is NULL pointer !\n");
         return -ENOTTY;
     }
 
@@ -254,6 +272,125 @@ static int mdrvinfinityfb_mmap(struct fb_info *pinfo, struct vm_area_struct *vma
     return 0;
 }
 
+//sw update inverse color's inverse table thread when rotate case happens
+static int mdrvinfinityfb_SWupdate_InvTable(void *arg)
+{
+    int ret=0;
+    while(1)
+    {
+        if (kthread_should_stop()) break;
+
+        ret=GOP0_invColor_CPU_Upate_InvTable(genAE_info.u32AEBlkWidth,
+                                             genAE_info.u32AEBlkHeight,
+                                             genAE_info.u32AEDisplayWidth,
+                                             genAE_info.u32AEDisplayHeight);
+        if(!ret)//if update wrong, break
+        {
+            FBDBGERR("[FB Driver] ERROR: mdrvinfinityfb_SWupdate_InvTable wrong!\n");
+            genTreadisError=1;
+            break;
+        }
+
+
+    }
+
+   return 0;
+
+}
+
+static int mdrvinfinityfb_SWupdate_InvTable_debugmode(void *arg)
+{
+
+    while(1)
+    {
+        if (kthread_should_stop()) break;
+
+        GOP0_invColor_DebugMode_UpdateInvTable();
+        msleep(1000);
+    }
+
+   return 0;
+
+}
+
+
+//check whether need doing sw update inverse color's inverse table or not
+static void mdrvinfinityfb_checkInvTable_UpdateMode(void)
+{
+    int idx=0;
+    int ret;
+
+    if((genInv_Color==1) && (genSC_info.bRotateEn==1))
+    {
+        idx=1;
+    }
+    else
+    {
+        idx=0;
+    }
+
+    if(genTreadisError==1)
+    {
+        pSWupdateInvThread=NULL;
+        genTreadisError=0;
+    }
+
+    if(idx==1)//enable thread
+    {
+        if(pSWupdateInvThread==NULL)
+        {
+            pSWupdateInvThread = kthread_create(mdrvinfinityfb_SWupdate_InvTable,(void *)&pSWupdateInvThread,"GOP0_SWupdate_InvColor");
+            if (IS_ERR(pSWupdateInvThread))
+            {
+                ret = PTR_ERR(pSWupdateInvThread);
+                pSWupdateInvThread = NULL;
+                FBDBGERR("[FB Driver] ERROR: mdrvinfinityfb_checkInvTable_UpdateMode wrong! Create thread fail! ret=%d\n",ret);
+            }
+            else
+            {
+                wake_up_process(pSWupdateInvThread);
+            }
+
+        }
+    }
+    else if (idx==0 && (pSWupdateInvThread!=NULL))//disable thread
+    {
+        kthread_stop(pSWupdateInvThread);
+        pSWupdateInvThread = NULL;
+    }
+
+}
+
+//sw patch for inverse color hw error
+static int mdrvinfinityfb_InverseColor_RefineBlkHeightMode(int u32ScalerWidth, int u32BlkHeight)
+{
+    if((u32ScalerWidth<=1040)&&(u32ScalerWidth>=976))
+    {
+        u32BlkHeight=u32BlkHeight*2;
+    }
+    else if((u32ScalerWidth<=960)&&(u32ScalerWidth>=912))
+    {
+        u32BlkHeight=u32BlkHeight*3;
+    }
+    else if((u32ScalerWidth<=896)&&(u32ScalerWidth>=480))
+    {
+        u32BlkHeight=u32BlkHeight*2;
+    }
+    else if((u32ScalerWidth<=464)&&(u32ScalerWidth>=400))
+    {
+        u32BlkHeight=u32BlkHeight*3;
+    }
+    else if((u32ScalerWidth<=384)&&(u32ScalerWidth>=272))
+    {
+        u32BlkHeight=u32BlkHeight*4;
+    }
+    else if(u32ScalerWidth==256)
+    {
+        u32BlkHeight=u32BlkHeight*8;
+    }
+
+    return u32BlkHeight;
+}
 
 
 // FB Ioctl Functions
@@ -308,13 +445,33 @@ int _MDrv_FBIO_IOC_Set_GWIN(unsigned long arg)
     unsigned short MIU_BUS     = 0x04;
     unsigned short u16FrameBuffer_Bytes_Per_Pixel = ANDROID_BYTES_PER_PIXEL;
     unsigned long u32TempVal   = 0;
-    unsigned long GOP_Reg_DB   = 0x0400;
+    unsigned long GOP_Reg_DB   = GOP_BANK_DOUBLE_WR_G0;
+    int Panel_Width            = 0;
+    int Panel_Height           = 0;
 
     if (sg_videomemorysize<1)
     {
-        FBDBG("[FB Driver] ERROR: _MDrv_FBIO_IOC_Set_GWIN, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
+        FBDBGERR("[FB Driver] ERROR: _MDrv_FBIO_IOC_Set_GWIN, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
         return -ENOMEM;
     }
+
+    if(copy_from_user(&stCfg, (FB_GOP_GWIN_CONFIG __user *)arg, sizeof(FB_GOP_GWIN_CONFIG)))
+    {
+        return -EFAULT;
+    }
+
+    Panel_Width  = (int)(stCfg.u18HEnd-stCfg.u18HStart+1);
+    Panel_Height = (int)(stCfg.u18VEnd-stCfg.u18VStart+1);
+
+    /// GOP0_0 settings
+    GOP_Reg_Base = mdrv_BASE_REG_GOP00_PA;
+
+    // GOP global settings
+    OUTREG16(GOP_Reg_Base+REG_GOP_0E,(Panel_Width >>1)+1);//miu efficiency = Stretch Window H size (unit:2 pixel) /2 +1
+
+    // GOP display area global settings
+    OUTREG16(GOP_Reg_Base+REG_GOP_30,Panel_Width >>1); //Stretch Window H size (unit:2 pixel)
+    OUTREG16(GOP_Reg_Base+REG_GOP_31,Panel_Height);    //Stretch window V size
 
     // gwin info is in GOP01
     GOP_Reg_Base = mdrv_BASE_REG_GOP01_PA;
@@ -323,11 +480,6 @@ int _MDrv_FBIO_IOC_Set_GWIN(unsigned long arg)
     if(mdrv_BASE_REG_GOP01_PA==mdrv_BASE_REG_GOP00_PA)
     {
         SwitchSubBank(1);
-    }
-
-    if(copy_from_user(&stCfg, (FB_GOP_GWIN_CONFIG __user *)arg, sizeof(FB_GOP_GWIN_CONFIG)))
-    {
-        return -EFAULT;
     }
 
     genGWinInfo.u18HStart = stCfg.u18HStart;
@@ -388,7 +540,7 @@ int _MDrv_FBIO_IOC_Set_EnGOP(unsigned long arg)
 
     if (sg_videomemorysize<1)
     {
-        FBDBG("[FB Driver] ERROR: _MDrv_FBIO_IOC_Set_EnGOP, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
+        FBDBGERR("[FB Driver] ERROR: _MDrv_FBIO_IOC_Set_EnGOP, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
         return -ENOMEM;
     }
 
@@ -453,7 +605,7 @@ int _MDrv_FBIO_IOC_Set_Constant_Alpha(unsigned long arg)
 
     if (sg_videomemorysize<1)
     {
-        FBDBG("[FB Driver] ERROR: _MDrv_FBIO_IOC_Set_Constant_Alpha, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
+        FBDBGERR("[FB Driver] ERROR: _MDrv_FBIO_IOC_Set_Constant_Alpha, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
         return -ENOMEM;
     }
     if(copy_from_user(&stCfg, (FB_GOP_ALPHA_CONFIG __user *)arg, sizeof(FB_GOP_ALPHA_CONFIG)))
@@ -522,7 +674,7 @@ int _MDrv_FBIO_IOC_Set_Color_Key(unsigned long arg)
 
     if (sg_videomemorysize<1)
     {
-        FBDBG("[FB Driver] ERROR: _MDrv_FBIO_IOC_Set_Color_Key, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
+        FBDBGERR("[FB Driver] ERROR: _MDrv_FBIO_IOC_Set_Color_Key, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
         return -ENOMEM;
     }
     if(copy_from_user(&stCfg, (FB_GOP_COLORKEY_CONFIG __user *)arg, sizeof(FB_GOP_COLORKEY_CONFIG)))
@@ -543,11 +695,17 @@ int _MDrv_FBIO_IOC_Set_Color_Key(unsigned long arg)
 
 int _MDrv_FBIO_IOC_imageblit(struct fb_info *info,unsigned long arg)
 {
+    int ret = 0;
+
+// this ioctl is unused, the same fuction can be accessed by fb_ops -> fb_imageblit
+#if 0
     struct fb_image stCfg;
+    int i = 0;
+
 
     if (sg_videomemorysize<1)
     {
-        FBDBG("[FB Driver] ERROR: _MDrv_FBIO_IOC_imageblit, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
+        FBDBGERR("[FB Driver] ERROR: _MDrv_FBIO_IOC_imageblit, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
         return -ENOMEM;
     }
 
@@ -558,15 +716,57 @@ int _MDrv_FBIO_IOC_imageblit(struct fb_info *info,unsigned long arg)
 
     if (NULL == stCfg.data)
     {
-        FBDBG("[FB Driver] ERROR:in mdrvinfinityfb_ioctl, fb_image.data is NULL pointer\r\n");
+        FBDBGERR("[FB Driver] ERROR:in mdrvinfinityfb_ioctl, fb_image.data is NULL pointer\r\n");
         return -EFAULT;
     }
+
+
+    if (stCfg.fg_color>255)
+    {
+        FBDBGERR("[FB Driver] ERROR:in mdrvinfinityfb_ioctl, parameter wrong\r\n");
+        return -EFAULT;
+    }
+
+    if (stCfg.bg_color>255)
+    {
+        FBDBGERR("[FB Driver] ERROR:in mdrvinfinityfb_ioctl, parameter wrong\r\n");
+        return -EFAULT;
+    }
+
+    if (stCfg.width>1920)
+    {
+        FBDBGERR("[FB Driver] ERROR:in mdrvinfinityfb_ioctl, parameter wrong\r\n");
+        return -EFAULT;
+    }
+    if (stCfg.height>1920)
+    {
+        FBDBGERR("[FB Driver] ERROR:in mdrvinfinityfb_ioctl, parameter wrong\r\n");
+        return -EFAULT;
+    }
+
+    if (info->fix.visual == FB_VISUAL_TRUECOLOR || info->fix.visual == FB_VISUAL_DIRECTCOLOR )
+    {
+        for(i=0;i<(stCfg.width*stCfg.height);i++)
+        {
+            if(stCfg.data[i]>255)
+            {
+                ret = 1;
+            }
+        }
+        if(ret)
+        {
+            FBDBGERR("[FB Driver] ERROR:in mdrvinfinityfb_ioctl, parameter wrong\r\n");
+            return -EFAULT;
+        }
+    }
+
 
     FBDBGMORE( "[FB Driver] Imgblit test, dst (x,y)=(%d,%d), width=%d, height=%d, colordepth=%d \n" ,stCfg.dx,stCfg.dy,stCfg.width,stCfg.height,stCfg.depth);
 
     sys_imageblit(info,&stCfg);
+#endif
 
-    return 0;
+    return ret;
 }
 
 int _MDrv_FBIO_IOC_Set_Palette(unsigned long arg)
@@ -579,6 +779,713 @@ int _MDrv_FBIO_IOC_Set_Palette(unsigned long arg)
     }
 
     mdrvinfinityfb_infinity_SetPalette(stCfg,0,255);
+
+    return 0;
+}
+
+int _MDrv_FBIO_IOC_Get_General_Config(unsigned long arg)
+{
+    FB_GOP_RESOLUTION_STRETCH_H_CONFIG stCfg;
+
+    if(copy_from_user(&stCfg, (FB_GOP_RESOLUTION_STRETCH_H_CONFIG __user *)arg, sizeof(FB_GOP_RESOLUTION_STRETCH_H_CONFIG)))
+    {
+        return -EFAULT;
+    }
+
+    stCfg.u32Height   = genGOPGernelSettings.u32Height;
+    stCfg.u32Width    = genGOPGernelSettings.u32Width;
+    stCfg.enBufferNum = genGOPGernelSettings.enBufferNum;
+    stCfg.u32DisplayHeight = genGOPGernelSettings.u32DisplayHeight;
+    stCfg.u32DisplayWidth  = genGOPGernelSettings.u32DisplayWidth;
+    stCfg.enStretchH_Ratio = genGOPGernelSettings.enStretchH_Ratio;
+
+    if(copy_to_user((FB_GOP_RESOLUTION_STRETCH_H_CONFIG __user *)arg, &stCfg, sizeof(FB_GOP_RESOLUTION_STRETCH_H_CONFIG)))
+    {
+        return -EFAULT;
+    }
+
+    return 0;
+}
+
+
+int _MDrv_FBIO_IOC_Set_General_Config(struct fb_info *info,unsigned long arg)
+{
+    FB_GOP_RESOLUTION_STRETCH_H_CONFIG stCfg;
+    int MiuBusLen=128;//miu bus length in iNfinity
+    int DisplayPerPixel=0;
+    int max_x_res=2560;
+    int max_y_res=2048;
+    int ret = 0;
+
+    if(copy_from_user(&stCfg, (FB_GOP_RESOLUTION_STRETCH_H_CONFIG __user *)arg, sizeof(FB_GOP_RESOLUTION_STRETCH_H_CONFIG)))
+    {
+        return -EFAULT;
+    }
+
+    FBDBG( "[FB Driver] Set General_Config GOP_Width=%d, GOP_Height=%d, Display_Width=%d, Display_Height=%d, Buffer Num=%d, Stretch Ratio=%d\n",(int)stCfg.u32Width,(int)stCfg.u32Height,(int)stCfg.u32DisplayWidth,(int)stCfg.u32DisplayHeight,(int)stCfg.enBufferNum,(int)stCfg.enStretchH_Ratio);
+
+    ///check variable valid/invalid
+    DisplayPerPixel=MiuBusLen/(ANDROID_BYTES_PER_PIXEL*8);
+
+    //single/double buffer check
+    if((stCfg.enBufferNum!=FB_SINGLE_BUFFER)&&(stCfg.enBufferNum!=FB_DOUBLE_BUFFER))
+    {
+        FBDBG( "[FB Driver] Error: Set_General_Config: buffer num should be 1 or 2 !\n ");
+        return -EINVAL;
+    }
+    //stretch ratio check
+    if((stCfg.enStretchH_Ratio!=FB_STRETCH_H_RATIO_1)&&(stCfg.enStretchH_Ratio!=FB_STRETCH_H_RATIO_2)&&(stCfg.enStretchH_Ratio!=FB_STRETCH_H_RATIO_4)&&(stCfg.enStretchH_Ratio!=FB_STRETCH_H_RATIO_8))
+    {
+        FBDBG( "[FB Driver] Error: Set_General_Config: stretch H ratio should be 1, 2, 4 or 8 !\n ");
+        return -EINVAL;
+    }
+    //x & y should > 0
+    if((stCfg.u32Height<1)||(stCfg.u32Width<1)||(stCfg.u32DisplayHeight<1)||(stCfg.u32DisplayWidth<1))
+    {
+        FBDBG( "[FB Driver] Error: Set_General_Config: buffer x or y size should be > 0 !\n ");
+        return -EINVAL;
+    }
+    //x & y should < 1920
+    if((stCfg.u32Height>1920)||(stCfg.u32Width>1920)||(stCfg.u32DisplayHeight>1920)||(stCfg.u32DisplayWidth>1920))
+    {
+        FBDBG( "[FB Driver] Error: Set_General_Config: buffer x or y size should be < 1920 !\n ");
+        return -EINVAL;
+    }
+    //max size for display is 1920*1088
+    if(((stCfg.u32Height * stCfg.u32Width)>(max_x_res*max_y_res))||((stCfg.u32DisplayHeight* stCfg.u32DisplayWidth)>(max_x_res*max_y_res)))
+    {
+        FBDBG( "[FB Driver] Error: Set_General_Config: total buffer size should be lower than 1920*1088!\n ");
+        return -EINVAL;
+    }
+    //miu alignment
+    if(((stCfg.u32Width % DisplayPerPixel)!=0)||((stCfg.u32DisplayWidth% DisplayPerPixel)!=0))
+    {
+        FBDBG( "[FB Driver] Error: Set_General_Config: Display Per Pixel for Buffer Width should be %d!\n ",DisplayPerPixel);
+        return -EINVAL;
+    }
+    //Stretch H parameter check
+    if((stCfg.u32Width*stCfg.enStretchH_Ratio)!=stCfg.u32DisplayWidth)
+    {
+        FBDBG( "[FB Driver] Error: Set_General_Config: DisplayWidth should = Width * StretchH_Ratio!\n ");
+        return -EINVAL;
+    }
+    //Stretch V parameter check
+    if(stCfg.u32Height != stCfg.u32DisplayHeight)
+    {
+        FBDBG( "[FB Driver] Error: Set_General_Config: DisplayHeight should = Height!\n");
+        return -EINVAL;
+    }
+
+    //after checking valid parameter, save to global variable
+    genGOPGernelSettings.u32Width         = stCfg.u32Width;
+    genGOPGernelSettings.u32Height        = stCfg.u32Height;
+    genGOPGernelSettings.u32DisplayWidth  = stCfg.u32DisplayWidth;
+    genGOPGernelSettings.u32DisplayHeight = stCfg.u32DisplayHeight;
+    genGOPGernelSettings.enBufferNum      = stCfg.enBufferNum;
+    genGOPGernelSettings.enStretchH_Ratio = stCfg.enStretchH_Ratio;
+
+    info->var.xres=stCfg.u32Width;
+    info->var.yres=stCfg.u32Height;
+
+    ret=mdrvinfinityfb_infinity_updateinfo_par(info->var.xres,info->var.yres);
+
+    info->fix.smem_start=sg_mdrvinfinityfb_fix.smem_start;
+    info->fix.smem_len=sg_mdrvinfinityfb_fix.smem_len;
+
+    info->var.width=info->var.xres;
+    info->var.height=info->var.yres;
+
+    info->screen_base = (char *)CAST_2_IOMEM_CHAR_P( sg_pG3D_fb2_vir_addr1);
+    info->fix.line_length      = info->var.xres * ANDROID_BYTES_PER_PIXEL;
+
+    GOP_Setmode_Stretch_H(FALSE, 0,sg_mdrvinfinityfb_default_var.xres,sg_mdrvinfinityfb_default_var.yres,sg_G3D_fb2_bus_addr1,ANDROID_FB_FORMAT,ANDROID_BYTES_PER_PIXEL, 0,(int)genGOPGernelSettings.enStretchH_Ratio);
+
+    return ret;
+}
+
+
+int _MDrv_FBIO_IOC_Set_EnInvColor(unsigned long arg)
+{
+    unsigned char enInvColor;
+    int ret=0;
+
+    if (sg_videomemorysize<1)
+    {
+        FBDBGERR("[FB Driver] ERROR: _MDrv_FBIO_IOC_Set_EnInvColor, memory is not set! Please use ioctl FBIOPUT_VSCREENINFO first!\n");
+        return -ENOMEM;
+    }
+
+    if(copy_from_user(&enInvColor, (unsigned char __user *)arg, sizeof(unsigned char)))
+    {
+        return -EFAULT;
+    }
+
+    FBDBG( "[FB Driver] enable inverse color=%d \n",(int)enInvColor);
+
+    // record in global variable
+    genInv_Color=enInvColor;
+
+    GOP0_invColor_Enable(enInvColor);
+
+    //check whether do sw update inverse color
+    mdrvinfinityfb_checkInvTable_UpdateMode();
+
+    if(enInvColor==1)
+    {
+        GOP0_invColor_Debug_Mode();
+
+        if(pSWupdateInvDebugThread==NULL)
+        {
+            pSWupdateInvDebugThread = kthread_create(mdrvinfinityfb_SWupdate_InvTable_debugmode,(void *)&pSWupdateInvDebugThread,"GOP0_debug_SWupdate_InvColor");
+            if (IS_ERR(pSWupdateInvDebugThread))
+            {
+                ret=PTR_ERR(pSWupdateInvDebugThread);
+                pSWupdateInvDebugThread = NULL;
+                FBDBGERR("[FB Driver] ERROR: debug mode! Create thread fail!%d\n",ret);
+            }
+            else
+            {
+                wake_up_process(pSWupdateInvDebugThread);
+            }
+        }
+    }
+    else if((enInvColor==0)&&(pSWupdateInvDebugThread!=NULL))
+    {
+        kthread_stop(pSWupdateInvDebugThread);
+        pSWupdateInvDebugThread = NULL;
+    }
+
+    return 0;
+}
+
+int _MDrv_FBIO_IOC_Set_AEinfoConfig(unsigned long arg)
+{
+    FB_GOP_INVCOLOR_AE_CONFIG stAECfg;
+    unsigned long tempcorpAEwidth=0;
+    unsigned long tempcorpAEheight=0;
+    int tempAEblkwidth=0;
+    int tempAEblkheight=0;
+    int tempAEblkxnum=0;
+
+    if(copy_from_user(&stAECfg, (FB_GOP_INVCOLOR_AE_CONFIG __user *)arg, sizeof(FB_GOP_INVCOLOR_AE_CONFIG)))
+    {
+        return -EFAULT;
+    }
+
+    FBDBG( "[FB Driver] set AE config, AExres=%d, AEyres=%d, AEblkW=%d, AEblkH=%d\n",
+    (int)stAECfg.u32AEDisplayWidth,(int)stAECfg.u32AEDisplayHeight,(int)stAECfg.u32AEBlkWidth,(int)stAECfg.u32AEBlkHeight);
+
+    // record in global variable
+    genAE_info.u32AEDisplayWidth  = stAECfg.u32AEDisplayWidth;
+    genAE_info.u32AEDisplayHeight = stAECfg.u32AEDisplayHeight;
+    genAE_info.u32AEBlkWidth      = stAECfg.u32AEBlkWidth;
+    genAE_info.u32AEBlkHeight     = stAECfg.u32AEBlkHeight;
+
+    // when scaling happens, change AE block size with this scale
+    if(genSC_info.bScalingEn)
+    {
+        if((genAE_info.u32AEBlkWidth!=0)&&(genAE_info.u32AEBlkHeight!=0)&&(genAE_info.u32AEDisplayWidth!=0)&&(genAE_info.u32AEDisplayHeight!=0))
+        {
+            if(genSC_info.bCropEn)//if do crop, should add crop information to calculate scaling ratio
+            {
+                if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+                {
+                    tempcorpAEwidth=genSC_info.u32CropYend-genSC_info.u32CropYstart;
+                    tempcorpAEheight=genSC_info.u32CropXend-genSC_info.u32CropXstart;
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerHeight/(int)tempcorpAEwidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerWidth/(int)tempcorpAEheight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkheight,tempAEblkwidth,tempAEblkxnum);
+                }
+                else
+                {
+                    tempcorpAEwidth=genSC_info.u32CropXend-genSC_info.u32CropXstart;
+                    tempcorpAEheight=genSC_info.u32CropYend-genSC_info.u32CropYstart;
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerWidth/(int)tempcorpAEwidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerHeight/(int)tempcorpAEheight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkwidth,tempAEblkheight,tempAEblkxnum);
+                }
+            }
+            else// if no crop, calculate the scaling ratio directly
+            {
+                if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+                {
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerHeight/(int)genAE_info.u32AEDisplayWidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerWidth/(int)genAE_info.u32AEDisplayHeight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkheight,tempAEblkwidth,tempAEblkxnum);
+                }
+                else
+                {
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerWidth/(int)genAE_info.u32AEDisplayWidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerHeight/(int)genAE_info.u32AEDisplayHeight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkwidth,tempAEblkheight,tempAEblkxnum);
+                }
+            }
+        }
+        else
+        {
+            FBDBGERR( "[FB Driver] Error: _MDrv_FBIO_IOC_Set_AEinfoConfig fail2!!! No AE info\n");
+            return -EFAULT;
+        }
+    }
+    else//if disable scaling, set original settings
+    {
+        if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+        {
+            GOP0_invColor_Set_AE_Config((int)stAECfg.u32AEBlkHeight,(int)stAECfg.u32AEBlkWidth,(int)stAECfg.u32AEDisplayHeight);
+        }
+        else
+        {
+            GOP0_invColor_Set_AE_Config((int)stAECfg.u32AEBlkWidth,(int)stAECfg.u32AEBlkHeight,(int)stAECfg.u32AEDisplayWidth);
+        }
+    }
+
+    if(genSC_info.bCropEn)//if crop enable, reset crop information when AE info change
+    {
+        if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+        {
+            GOP0_invColor_Set_Crop_Config((int)genSC_info.u32CropXstart,(int)genSC_info.u32CropYstart,(int)stAECfg.u32AEBlkHeight,(int)stAECfg.u32AEBlkWidth,(int)stAECfg.u32AEDisplayHeight);
+        }
+        else
+        {
+            GOP0_invColor_Set_Crop_Config((int)genSC_info.u32CropXstart,(int)genSC_info.u32CropYstart,(int)stAECfg.u32AEBlkWidth,(int)stAECfg.u32AEBlkHeight,(int)stAECfg.u32AEDisplayWidth);
+        }
+    }
+
+    return 0;
+}
+
+int _MDrv_FBIO_IOC_Set_YThres(unsigned long arg)
+{
+    unsigned long YThres;
+
+    if(copy_from_user(&YThres, (unsigned long __user *)arg, sizeof(unsigned long)))
+    {
+        return -EFAULT;
+    }
+
+    FBDBG( "[FB Driver] set Y threshold=%d \n",(int)YThres);
+
+    // record in global variable
+    genY_Thres=YThres;
+
+    GOP0_invColor_Set_Y_Threshold((int)YThres);
+
+    return 0;
+}
+
+int _MDrv_FBIO_IOC_Set_ScalerinfoConfig(unsigned long arg)
+{
+    FB_GOP_INVCOLOR_SCALER_CONFIG stSclCfg;
+    unsigned long tempcorpAEwidth=0;
+    unsigned long tempcorpAEheight=0;
+    int tempAEblkwidth=0;
+    int tempAEblkheight=0;
+    int tempAEblkxnum=0;
+    int tempAEblkynum=0;
+
+    if(copy_from_user(&stSclCfg, (FB_GOP_INVCOLOR_SCALER_CONFIG __user *)arg, sizeof(FB_GOP_INVCOLOR_SCALER_CONFIG)))
+    {
+        return -EFAULT;
+    }
+
+    FBDBG( "[FB Driver] set Scl config, CropEn=%d, ScalingEn=%d, RotateEn=%d\n",
+    (int)stSclCfg.bCropEn,(int)stSclCfg.bScalingEn,(int)stSclCfg.bRotateEn);
+
+    if((stSclCfg.u32ScalerWidth<1)||(stSclCfg.u32ScalerWidth>1920))
+    {
+        FBDBGERR( "[FB Driver] Error: _MDrv_FBIO_IOC_Set_ScalerinfoConfig fail!!! parameter wrong\n");
+        return -EFAULT;
+    }
+    if((stSclCfg.u32ScalerHeight<1)||(stSclCfg.u32ScalerHeight>1920))
+    {
+        FBDBGERR( "[FB Driver] Error: _MDrv_FBIO_IOC_Set_ScalerinfoConfig fail!!! parameter wrong\n");
+        return -EFAULT;
+    }
+
+    // record in global variable
+    genSC_info.bCropEn        = stSclCfg.bCropEn;
+    genSC_info.bScalingEn     = stSclCfg.bScalingEn;
+    genSC_info.u32ScalerWidth = stSclCfg.u32ScalerWidth;
+    genSC_info.u32ScalerHeight= stSclCfg.u32ScalerHeight;
+    genSC_info.u32CropXstart  = stSclCfg.u32CropXstart;
+    genSC_info.u32CropXend    = stSclCfg.u32CropXend;
+    genSC_info.u32CropYstart  = stSclCfg.u32CropYstart;
+    genSC_info.u32CropYend    = stSclCfg.u32CropYend;
+    // rotate will be get from ISP driver
+    //genSC_info.bRotateEn      = stSclCfg.bRotateEn;
+    //genSC_info.enRotateA      = stSclCfg.enRotateA;
+
+    if(stSclCfg.bCropEn)
+    {
+        if((genAE_info.u32AEBlkWidth!=0)&&(genAE_info.u32AEBlkHeight!=0)&&(genAE_info.u32AEDisplayWidth!=0)&&(genAE_info.u32AEDisplayHeight!=0))
+        {
+            if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+            {
+                GOP0_invColor_Set_Crop_Config((int)stSclCfg.u32CropXstart,(int)stSclCfg.u32CropYstart,(int)genAE_info.u32AEBlkHeight,(int)genAE_info.u32AEBlkWidth,(int)genAE_info.u32AEDisplayHeight);
+            }
+            else
+            {
+                GOP0_invColor_Set_Crop_Config((int)stSclCfg.u32CropXstart,(int)stSclCfg.u32CropYstart,(int)genAE_info.u32AEBlkWidth,(int)genAE_info.u32AEBlkHeight,(int)genAE_info.u32AEDisplayWidth);
+            }
+        }
+        else
+        {
+            FBDBGERR( "[FB Driver] Error: _MDrv_FBIO_IOC_Set_ScalerinfoConfig fail!!! No AE info\n");
+            return -EFAULT;
+        }
+    }
+
+    // when scaling happens, change AE block size with this scale
+    if(stSclCfg.bScalingEn)
+    {
+        if((genAE_info.u32AEBlkWidth!=0)&&(genAE_info.u32AEBlkHeight!=0)&&(genAE_info.u32AEDisplayWidth!=0)&&(genAE_info.u32AEDisplayHeight!=0))
+        {
+            if(stSclCfg.bCropEn)//if do crop, should add crop information to calculate scaling ratio
+            {
+                if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+                {
+                    tempcorpAEwidth=genSC_info.u32CropYend-genSC_info.u32CropYstart;
+                    tempcorpAEheight=genSC_info.u32CropXend-genSC_info.u32CropXstart;
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerHeight/(int)tempcorpAEwidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerWidth/(int)tempcorpAEheight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    tempAEblkynum=((int)genAE_info.u32AEDisplayWidth/(int)genAE_info.u32AEBlkWidth);
+                    if(tempAEblkheight > 0)
+                    {
+                        while(((genSC_info.u32ScalerWidth%tempAEblkheight)!=0))//find proper blk_width, scaler's width mod blk_width should be 0
+                        {
+                            tempAEblkheight++;
+                            if(tempAEblkheight>genSC_info.u32ScalerWidth)
+                            {
+                                tempAEblkheight=genSC_info.u32ScalerWidth;
+                                break;
+                            }
+                        }
+                    }
+                    if(tempAEblkynum > 0)
+                    {
+                        while(genSC_info.u32ScalerHeight>(tempAEblkwidth*tempAEblkynum))//find proper blk_height, add 1 if blk_H * blk_y_num <Scl_res
+                        {
+                            tempAEblkwidth++;
+                        }
+                    }
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkheight,tempAEblkwidth,tempAEblkxnum);
+                }
+                else
+                {
+                    tempcorpAEwidth=genSC_info.u32CropXend-genSC_info.u32CropXstart;
+                    tempcorpAEheight=genSC_info.u32CropYend-genSC_info.u32CropYstart;
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerWidth/(int)tempcorpAEwidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerHeight/(int)tempcorpAEheight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayWidth/(int)genAE_info.u32AEBlkWidth);
+                    tempAEblkynum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    FBDBGMORE("[FB Driver] crop:x_start=%d, x_end=%d\n",(int)genSC_info.u32CropXstart,(int)genSC_info.u32CropXend);
+                    FBDBGMORE("[FB Driver] AE:D_width=%d, Blk_width=%d\n",(int)genAE_info.u32AEDisplayWidth,(int)genAE_info.u32AEBlkWidth);
+                    FBDBGMORE("[FB Driver] tempcorpAEwidth=%d, tempcorpAEheight=%d\n",(int)tempcorpAEwidth,(int)tempcorpAEheight);
+                    FBDBGMORE("[FB Driver] before tempAEblkwidth=%d, tempAEblkheight=%d\n",(int)tempAEblkwidth,(int)tempAEblkheight);
+                    if(tempAEblkwidth > 0)
+                    {
+                        while(((genSC_info.u32ScalerWidth%tempAEblkwidth)!=0))//find proper blk_width, scaler's width mod blk_width should be 0
+                        {
+                            tempAEblkwidth++;
+                            if(tempAEblkwidth>genSC_info.u32ScalerWidth)
+                            {
+                                tempAEblkwidth=genSC_info.u32ScalerWidth;
+                                break;
+                            }
+                        }
+                    }
+                    if(tempAEblkynum > 0)
+                    {
+                        while(genSC_info.u32ScalerHeight>(tempAEblkheight*tempAEblkynum))//find proper blk_height, add 1 if blk_H * blk_y_num <Scl_res
+                        {
+                            tempAEblkheight++;
+                        }
+                    }
+                    FBDBGMORE("[FB Driver] after tempAEblkwidth=%d, tempAEblkheight=%d\n",(int)tempAEblkwidth,(int)tempAEblkheight);
+
+                    //sw patch for hw error
+                    tempAEblkheight=mdrvinfinityfb_InverseColor_RefineBlkHeightMode((int)genSC_info.u32ScalerWidth,tempAEblkheight);
+                    FBDBGMORE("[FB Driver] after sw patch tempAEblkwidth=%d, tempAEblkheight=%d\n",(int)tempAEblkwidth,(int)tempAEblkheight);
+
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkwidth,tempAEblkheight,tempAEblkxnum);
+                }
+            }
+            else// if no crop, calculate the scaling ratio directly
+            {
+                if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+                {
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerHeight/(int)genAE_info.u32AEDisplayWidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerWidth/(int)genAE_info.u32AEDisplayHeight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    tempAEblkynum=((int)genAE_info.u32AEDisplayWidth/(int)genAE_info.u32AEBlkWidth);
+                    if(tempAEblkheight > 0)
+                    {
+                        while(((genSC_info.u32ScalerWidth%tempAEblkheight)!=0))//find proper blk_width, scaler's width mod blk_width should be 0
+                        {
+                            tempAEblkheight++;
+                            if(tempAEblkheight>genSC_info.u32ScalerWidth)
+                            {
+                                tempAEblkheight=genSC_info.u32ScalerWidth;
+                                break;
+                            }
+                        }
+                    }
+                    if(tempAEblkynum > 0)
+                    {
+                        while(genSC_info.u32ScalerHeight>(tempAEblkwidth*tempAEblkynum))//find proper blk_height, add 1 if blk_H * blk_y_num <Scl_res
+                        {
+                            tempAEblkwidth++;
+                        }
+                    }
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkheight,tempAEblkwidth,tempAEblkxnum);
+                }
+                else
+                {
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerWidth/genAE_info.u32AEDisplayWidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerHeight/genAE_info.u32AEDisplayHeight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayWidth/(int)genAE_info.u32AEBlkWidth);
+                    tempAEblkynum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    FBDBGMORE("[FB Driver] crop:x_start=%d, x_end=%d\n",genSC_info.u32CropXstart,genSC_info_.u32CropXend);
+                    FBDBGMORE("[FB Driver] AE:D_width=%d, Blk_width=%d\n",genAE_info.u32AEDisplayWidth,genAE_info.u32AEBlkWidth);
+                    FBDBGMORE("[FB Driver] before tempAEblkwidth=%d, tempAEblkheight=%d\n",tempAEblkwidth,tempAEblkheight);
+                    if(tempAEblkwidth > 0)
+                    {
+                        while(((genSC_info.u32ScalerWidth%tempAEblkwidth)!=0))//find proper blk_width, scaler's width mod blk_width should be 0
+                        {
+                            tempAEblkwidth++;
+                            if(tempAEblkwidth>genSC_info.u32ScalerWidth)
+                            {
+                                tempAEblkwidth=genSC_info.u32ScalerWidth;
+                                break;
+                            }
+                        }
+                    }
+                    if(tempAEblkynum > 0)
+                    {
+                        while(genSC_info.u32ScalerHeight>(tempAEblkheight*tempAEblkynum))//find proper blk_height, add 1 if blk_H * blk_y_num <Scl_res
+                        {
+                            tempAEblkheight++;
+                        }
+                    }
+                    FBDBGMORE("[FB Driver] after tempAEblkwidth=%d, tempAEblkheight=%d\n",tempAEblkwidth,tempAEblkheight);
+
+                    //sw patch for hw error
+                    tempAEblkheight=mdrvinfinityfb_InverseColor_RefineBlkHeightMode((int)genSC_info.u32ScalerWidth,tempAEblkheight);
+                    FBDBGMORE("[FB Driver] after sw patch tempAEblkwidth=%d, tempAEblkheight=%d\n",(int)tempAEblkwidth,(int)tempAEblkheight);
+
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkwidth,tempAEblkheight,tempAEblkxnum);
+                }
+            }
+        }
+        else
+        {
+            FBDBGERR( "[FB Driver] Error: _MDrv_FBIO_IOC_Set_ScalerinfoConfig fail2!!! No AE info\n");
+            return -EFAULT;
+        }
+    }
+    else//if disable scaling, set original settings
+    {
+        if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+        {
+            GOP0_invColor_Set_AE_Config((int)genAE_info.u32AEBlkHeight,(int)genAE_info.u32AEBlkWidth,(int)genAE_info.u32AEDisplayHeight);
+        }
+        else
+        {
+            GOP0_invColor_Set_AE_Config((int)genAE_info.u32AEBlkWidth,(int)genAE_info.u32AEBlkHeight,(int)genAE_info.u32AEDisplayWidth);
+        }
+    }
+
+    return 0;
+}
+
+int _MDrv_FBIO_IOC_AutoAEConfig(unsigned long arg)
+{
+    FB_GOP_INVCOLOR_AE_CONFIG stGOPAEConfig={0};
+    isp_isr_ae_img_info stISPAEconfig={0};
+    unsigned long tempcorpAEwidth=0;
+    unsigned long tempcorpAEheight=0;
+    int tempAEblkwidth=0;
+    int tempAEblkheight=0;
+    int tempAEblkxnum=0;
+    int tempAEblkynum=0;
+    int InvTblupdateMode=0;
+
+    isp_get_ae_img_info(&stISPAEconfig);
+
+    if((stISPAEconfig.blk_w<1)||(stISPAEconfig.blk_h<1)||(stISPAEconfig.img_w<1)||(stISPAEconfig.img_h<1))
+    {
+        FBDBGERR( "[FB Driver] Error: auto AE config fail!!! No proper AE value\n");
+        FBDBGERR( "[FB Driver] auto AE config, AExres=%d, AEyres=%d, AEblkW=%d, AEblkH=%d, rotate en=%d\n",
+        (int)stGOPAEConfig.u32AEDisplayWidth,(int)stGOPAEConfig.u32AEDisplayHeight,(int)stGOPAEConfig.u32AEBlkWidth,(int)stGOPAEConfig.u32AEBlkHeight,genSC_info.bRotateEn);
+        return -EFAULT;
+    }
+
+    stGOPAEConfig.u32AEBlkWidth= (unsigned long)stISPAEconfig.blk_w;
+    stGOPAEConfig.u32AEBlkHeight= (unsigned long)stISPAEconfig.blk_h;
+    stGOPAEConfig.u32AEDisplayWidth= (unsigned long)stISPAEconfig.img_w;
+    stGOPAEConfig.u32AEDisplayHeight= (unsigned long)stISPAEconfig.img_h;
+
+    // record in global variable
+    genAE_info.u32AEDisplayWidth  = stGOPAEConfig.u32AEDisplayWidth;
+    genAE_info.u32AEDisplayHeight = stGOPAEConfig.u32AEDisplayHeight;
+    genAE_info.u32AEBlkWidth      = stGOPAEConfig.u32AEBlkWidth;
+    genAE_info.u32AEBlkHeight     = stGOPAEConfig.u32AEBlkHeight;
+    if(stISPAEconfig.rot==1)
+    {
+        genSC_info.bRotateEn=1;
+        InvTblupdateMode=1;//by cpu
+    }
+    else
+    {
+        genSC_info.bRotateEn=0;
+        InvTblupdateMode=0;//by hw engine
+    }
+
+    GOP0_invColor_Set_UpdateMode(InvTblupdateMode);
+
+    FBDBG( "[FB Driver] auto AE config, AExres=%d, AEyres=%d, AEblkW=%d, AEblkH=%d, rotate en=%d\n",
+    (int)stGOPAEConfig.u32AEDisplayWidth,(int)stGOPAEConfig.u32AEDisplayHeight,(int)stGOPAEConfig.u32AEBlkWidth,(int)stGOPAEConfig.u32AEBlkHeight,genSC_info.bRotateEn);
+
+    // when scaling happens, change AE block size with this scale
+    if(genSC_info.bScalingEn)
+    {
+        if((genAE_info.u32AEBlkWidth!=0)&&(genAE_info.u32AEBlkHeight!=0)&&(genAE_info.u32AEDisplayWidth!=0)&&(genAE_info.u32AEDisplayHeight!=0))
+        {
+            if(genSC_info.bCropEn)//if do crop, should add crop information to calculate scaling ratio
+            {
+                if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+                {
+                    tempcorpAEwidth=genSC_info.u32CropYend-genSC_info.u32CropYstart;
+                    tempcorpAEheight=genSC_info.u32CropXend-genSC_info.u32CropXstart;
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerHeight/(int)tempcorpAEwidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerWidth/(int)tempcorpAEheight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    tempAEblkynum=((int)genAE_info.u32AEDisplayWidth/(int)genAE_info.u32AEBlkWidth);
+                    while(((genSC_info.u32ScalerWidth%tempAEblkheight)!=0))//find proper blk_width, scaler's width mod blk_width should be 0
+                    {
+                        tempAEblkheight++;
+                        if(tempAEblkheight>genSC_info.u32ScalerWidth)
+                        {
+                            tempAEblkheight=genSC_info.u32ScalerWidth;
+                            break;
+                        }
+                    }
+                    while(genSC_info.u32ScalerHeight>(tempAEblkwidth*tempAEblkynum))//find proper blk_height, add 1 if blk_H * blk_y_num <Scl_res
+                    {
+                        tempAEblkwidth++;
+                    }
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkheight,tempAEblkwidth,tempAEblkxnum);
+                }
+                else
+                {
+                    tempcorpAEwidth=genSC_info.u32CropXend-genSC_info.u32CropXstart;
+                    tempcorpAEheight=genSC_info.u32CropYend-genSC_info.u32CropYstart;
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerWidth/(int)tempcorpAEwidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerHeight/(int)tempcorpAEheight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayWidth/(int)genAE_info.u32AEBlkWidth);
+                    tempAEblkynum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    while(((genSC_info.u32ScalerWidth%tempAEblkwidth)!=0))//find proper blk_width, scaler's width mod blk_width should be 0
+                    {
+                        tempAEblkwidth++;
+                        if(tempAEblkwidth>genSC_info.u32ScalerWidth)
+                        {
+                            tempAEblkwidth=genSC_info.u32ScalerWidth;
+                            break;
+                        }
+                    }
+                    while(genSC_info.u32ScalerHeight>(tempAEblkheight*tempAEblkynum))//find proper blk_height, add 1 if blk_H * blk_y_num <Scl_res
+                    {
+                        tempAEblkheight++;
+                    }
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkwidth,tempAEblkheight,tempAEblkxnum);
+                }
+            }
+            else// if no crop, calculate the scaling ratio directly
+            {
+                if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+                {
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerHeight/(int)genAE_info.u32AEDisplayWidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerWidth/(int)genAE_info.u32AEDisplayHeight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    tempAEblkynum=((int)genAE_info.u32AEDisplayWidth/(int)genAE_info.u32AEBlkWidth);
+                    while(((genSC_info.u32ScalerWidth%tempAEblkheight)!=0))//find proper blk_width, scaler's width mod blk_width should be 0
+                    {
+                        tempAEblkheight++;
+                        if(tempAEblkheight>genSC_info.u32ScalerWidth)
+                        {
+                            tempAEblkheight=genSC_info.u32ScalerWidth;
+                            break;
+                        }
+                    }
+                    while(genSC_info.u32ScalerHeight>(tempAEblkwidth*tempAEblkynum))//find proper blk_height, add 1 if blk_H * blk_y_num <Scl_res
+                    {
+                        tempAEblkwidth++;
+                    }
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkheight,tempAEblkwidth+1,tempAEblkxnum);
+                }
+                else
+                {
+                    tempAEblkwidth=((int)genAE_info.u32AEBlkWidth*(int)genSC_info.u32ScalerWidth/genAE_info.u32AEDisplayWidth);
+                    tempAEblkheight=((int)genAE_info.u32AEBlkHeight*(int)genSC_info.u32ScalerHeight/genAE_info.u32AEDisplayHeight);
+                    tempAEblkxnum=((int)genAE_info.u32AEDisplayWidth/(int)genAE_info.u32AEBlkWidth);
+                    tempAEblkynum=((int)genAE_info.u32AEDisplayHeight/(int)genAE_info.u32AEBlkHeight);
+                    while(((genSC_info.u32ScalerWidth%tempAEblkwidth)!=0))//find proper blk_width, scaler's width mod blk_width should be 0
+                    {
+                        tempAEblkwidth++;
+                        if(tempAEblkwidth>genSC_info.u32ScalerWidth)
+                        {
+                            tempAEblkwidth=genSC_info.u32ScalerWidth;
+                            break;
+                        }
+                    }
+                    while(genSC_info.u32ScalerHeight>(tempAEblkheight*tempAEblkynum))//find proper blk_height, add 1 if blk_H * blk_y_num <Scl_res
+                    {
+                        tempAEblkheight++;
+                    }
+                    GOP0_invColor_Set_AE_Config_Scaling(tempAEblkwidth,tempAEblkheight,tempAEblkxnum);
+                }
+            }
+        }
+        else
+        {
+            FBDBGERR( "[FB Driver] Error: _MDrv_FBIO_IOC_AutoAEConfig fail2!!! No AE info\n");
+            return -EFAULT;
+        }
+    }
+    else//if disable scaling, set original settings
+    {
+        if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+        {
+            GOP0_invColor_Set_AE_Config((int)stGOPAEConfig.u32AEBlkHeight,(int)stGOPAEConfig.u32AEBlkWidth,(int)stGOPAEConfig.u32AEDisplayHeight);
+        }
+        else
+        {
+            GOP0_invColor_Set_AE_Config((int)stGOPAEConfig.u32AEBlkWidth,(int)stGOPAEConfig.u32AEBlkHeight,(int)stGOPAEConfig.u32AEDisplayWidth);
+        }
+    }
+
+    if(genSC_info.bCropEn)//if crop enable, reset crop information when AE info change
+    {
+        if(genSC_info.bRotateEn)//if do rotate, switch AE's W and H
+        {
+            GOP0_invColor_Set_Crop_Config((int)genSC_info.u32CropXstart,(int)genSC_info.u32CropYstart,(int)stGOPAEConfig.u32AEBlkHeight,(int)stGOPAEConfig.u32AEBlkWidth,(int)stGOPAEConfig.u32AEDisplayHeight);
+        }
+        else
+        {
+            GOP0_invColor_Set_Crop_Config((int)genSC_info.u32CropXstart,(int)genSC_info.u32CropYstart,(int)stGOPAEConfig.u32AEBlkWidth,(int)stGOPAEConfig.u32AEBlkHeight,(int)stGOPAEConfig.u32AEDisplayWidth);
+        }
+    }
+
+    //return ae settings to user
+    if(copy_to_user((FB_GOP_INVCOLOR_AE_CONFIG __user *)arg, &stGOPAEConfig, sizeof(FB_GOP_INVCOLOR_AE_CONFIG)))
+    {
+        return -EFAULT;
+    }
 
     return 0;
 }
@@ -628,7 +1535,7 @@ mdrvinfinityfb_ioctl(struct fb_info *pinfo, unsigned int cmd, unsigned long arg)
 
     if (NULL == pinfo)
     {
-        FBDBG("[FB Driver] ERROR:in mdrvinfinityfb_ioctl, pinfo is NULL pointer\r\n");
+        FBDBGERR("[FB Driver] ERROR:in mdrvinfinityfb_ioctl, pinfo is NULL pointer\r\n");
         return -ENOTTY;
     }
 
@@ -715,13 +1622,49 @@ mdrvinfinityfb_ioctl(struct fb_info *pinfo, unsigned int cmd, unsigned long arg)
             FBDBG( "[FB Driver] Use Imageblit.\n");
             ret=_MDrv_FBIO_IOC_imageblit(pinfo,arg);
             break;
+
         case IOCTL_FB_SETPALETTE:
             FBDBG( "[FB Driver] Set Palette.\n");
             ret=_MDrv_FBIO_IOC_Set_Palette(arg);
             break;
 
+        case IOCTL_FB_GETGENERALCONFIG:
+            FBDBG( "[FB Driver] Get General Config.\n");
+            ret=_MDrv_FBIO_IOC_Get_General_Config(arg);
+            break;
+
+        case IOCTL_FB_SETGENERALCONFIG:
+            FBDBG( "[FB Driver] Set General Config.\n");
+            ret=_MDrv_FBIO_IOC_Set_General_Config(pinfo,arg);
+            break;
+
+        case IOCTL_FB_SETENABLEINVCOLOR:
+            FBDBG( "[FB Driver] Set Enable/Disable inverse color.\n");
+            ret=_MDrv_FBIO_IOC_Set_EnInvColor(arg);
+            break;
+
+        case IOCTL_FB_SETAECONFIG:
+            FBDBG( "[FB Driver] Set AE configurations.\n");
+            ret=_MDrv_FBIO_IOC_Set_AEinfoConfig(arg);
+            break;
+
+        case IOCTL_FB_SETYTHRES:
+            FBDBG( "[FB Driver] Set Y threshold.\n");
+            ret=_MDrv_FBIO_IOC_Set_YThres(arg);
+            break;
+
+        case IOCTL_FB_SETSCALERCONFIG:
+            FBDBG( "[FB Driver] Set Scl configurations.\n");
+            ret=_MDrv_FBIO_IOC_Set_ScalerinfoConfig(arg);
+            break;
+
+        case IOCTL_FB_AUTOUPDATEAE:
+            FBDBG( "[FB Driver] auto AE.\n");
+            ret=_MDrv_FBIO_IOC_AutoAEConfig(arg);
+            break;
+
         default:  /* redundant, as cmd was checked against MAXNR */
-            FBDBG("[FB Driver] in default ioct\r\n");
+            FBDBGERR("[FB Driver] in default ioct\r\n");
             return -ENOTTY;
     }
     return ret;
@@ -830,7 +1773,7 @@ static int mdrvinfinityfb_resume(struct platform_device *pdev)
         {
             if (IS_ERR(gop_clks[clockIdxtemp]))
             {
-                FBDBG( "[FB Driver] ERROR: Fail to get gop clk! Clock idx=%d\n",clockIdxtemp);
+                FBDBGERR( "[FB Driver] ERROR: Fail to get gop clk! Clock idx=%d\n",clockIdxtemp);
                 kfree(gop_clks);
                 return ret;
             }
@@ -873,6 +1816,12 @@ static int mdrvinfinityfb_probe(struct platform_device *dev)
     int ret=-1;
     int clockIdxtemp=0;
 
+    if (NULL == dev)
+    {
+        FBDBGERR("[FB Driver] ERROR: in mdrvinfinityfb_prob: dev is NULL pointer \r\n");
+        return -ENOTTY;
+    }
+
     // open all needed clocks
     num_parents_clocks = of_clk_get_parent_count(dev->dev.of_node);
     gop_clks=kzalloc(((sizeof(struct clk *) * num_parents_clocks)),GFP_KERNEL);
@@ -884,7 +1833,7 @@ static int mdrvinfinityfb_probe(struct platform_device *dev)
         {
             if (IS_ERR(gop_clks[clockIdxtemp]))
             {
-                FBDBG( "[FB Driver] ERROR: Fail to get gop clk! Clock idx=%d\n",clockIdxtemp);
+                FBDBGERR( "[FB Driver] ERROR: Fail to get gop clk! Clock idx=%d\n",clockIdxtemp);
                 kfree(gop_clks);
                 return ret;
             }
@@ -898,18 +1847,12 @@ static int mdrvinfinityfb_probe(struct platform_device *dev)
     // init global variable
     mdrvinfinityfb_updateinfo();
 
-    if (NULL == dev)
-    {
-        FBDBG("[FB Driver] ERROR: in mdrvinfinityfb_prob: dev is NULL pointer \r\n");
-        return -ENOTTY;
-    }
-
     pinfo = framebuffer_alloc(sizeof(struct fb_info), &dev->dev);
     if (!pinfo)
         goto err;
 
     // copy data for register framebuffer
-    pinfo->screen_base = CAST_2_IOMEM_CHAR_P( sg_pG3D_fb2_vir_addr1);
+    pinfo->screen_base = (char *)CAST_2_IOMEM_CHAR_P( sg_pG3D_fb2_vir_addr1);
     pinfo->fbops = &sg_mdrvinfinityfb_ops;
     pinfo->var = sg_mdrvinfinityfb_default_var;
     pinfo->fix = sg_mdrvinfinityfb_fix;
@@ -933,6 +1876,9 @@ static int mdrvinfinityfb_probe(struct platform_device *dev)
 
     // set gop register settings
     GOP_Setmode(FALSE, 0,sg_mdrvinfinityfb_default_var.xres,sg_mdrvinfinityfb_default_var.yres,sg_G3D_fb2_bus_addr1,ANDROID_FB_FORMAT,ANDROID_BYTES_PER_PIXEL, 0);
+
+    // set gop inverse color init settings
+    GOP0_invColor_init();
 
     // set init palette
     mdrvinfinityfb_infinity_SetPalette(DefaultPaletteEntry,0,255);
@@ -989,7 +1935,7 @@ static int mdrvinfinityfb_remove(struct platform_device *dev)
 
     if (NULL == dev)
     {
-        FBDBG("[FB Driver] ERROR: mdrvinfinityfb_remove: dev is NULL pointer \n");
+        FBDBGERR("[FB Driver] ERROR: mdrvinfinityfb_remove: dev is NULL pointer \n");
         return -ENOTTY;
     }
 
@@ -1023,17 +1969,26 @@ static int mdrvinfinityfb_pan_display(struct fb_var_screeninfo *var, struct fb_i
 
     FBDBGMORE( "[FB Driver]%s: var->yoffset=%x! info->var.height=%x\n ",__func__,var->yoffset,info->var.height);
 
-    if (var->yoffset >= info->var.height)
+    if(genGOPGernelSettings.enBufferNum==FB_DOUBLE_BUFFER)//double buffer
     {
-        fb2_pandisplay_PHY_ADD_SHOW = info->fix.smem_start + (info->var.width * info->var.height * ANDROID_BYTES_PER_PIXEL);
+        if (var->yoffset >= info->var.height)
+        {
+            fb2_pandisplay_PHY_ADD_SHOW = info->fix.smem_start + (info->var.width * info->var.height * ANDROID_BYTES_PER_PIXEL);
 
-        FBDBGMORE( "[FB Driver]%s: use buffer 1! Addr=%x\n ",__func__,fb2_pandisplay_PHY_ADD_SHOW);
+            FBDBGMORE( "[FB Driver]%s: use buffer 1! Addr=%x\n ",__func__,fb2_pandisplay_PHY_ADD_SHOW);
+        }
+        else
+        {
+            fb2_pandisplay_PHY_ADD_SHOW = info->fix.smem_start;
+
+            FBDBGMORE( "[FB Driver]%s: use buffer 0 Addr=%x!\n ",__func__,fb2_pandisplay_PHY_ADD_SHOW);
+        }
     }
     else
     {
         fb2_pandisplay_PHY_ADD_SHOW = info->fix.smem_start;
 
-        FBDBGMORE( "[FB Driver]%s: use buffer 0 Addr=%x!\n ",__func__,fb2_pandisplay_PHY_ADD_SHOW);
+        FBDBGMORE( "mdrvinfinityfb_pan_display: use buffer 0 Addr=%x!\n ",fb2_pandisplay_PHY_ADD_SHOW);
     }
 
     GOP_Pan_Display(0, fb2_pandisplay_PHY_ADD_SHOW);
@@ -1047,6 +2002,8 @@ static int mdrvinfinityfb_check_var(struct fb_var_screeninfo *var, struct fb_inf
 {
     int MiuBusLen=128;//miu bus length in iNfinity
     int DisplayPerPixel=0;
+    int max_x_res=2560;
+    int max_y_res=2048;
 
     DisplayPerPixel=MiuBusLen/(ANDROID_BYTES_PER_PIXEL*8);
 
@@ -1054,18 +2011,18 @@ static int mdrvinfinityfb_check_var(struct fb_var_screeninfo *var, struct fb_inf
 
     if((var->yres<1)||(var->xres<1))
     {
-        FBDBG( "[FB Driver] Error: fb_check_var: buffer x or y size should be > 0 !\n ");
+        FBDBGERR( "[FB Driver] Error: fb_check_var: buffer x or y size should be > 0 !\n ");
         return -EINVAL;
     }
-    if((var->yres * var->xres)>(1920*1088))
+    if((var->yres * var->xres)>(max_x_res*max_y_res))
     {
-        FBDBG( "[FB Driver] Error: fb_check_var: total buffer size should be lower than 1920*1088!\n ");
+        FBDBGERR( "[FB Driver] Error: fb_check_var: total buffer size should be lower than 1920*1088!\n ");
         return -EINVAL;
     }
 
     if((var->xres % DisplayPerPixel)!=0)
     {
-        FBDBG( "[FB Driver] Error: fb_check_var: Display Per Pixel for Buffer Width should be %d!\n ",DisplayPerPixel);
+        FBDBGERR( "[FB Driver] Error: fb_check_var: Display Per Pixel for Buffer Width should be %d!\n ",DisplayPerPixel);
         return -EINVAL;
     }
 

@@ -80,6 +80,24 @@
 #define A_FCIE3_2_BANK      GET_CARD_REG_ADDR(A_RIU_BASE, 0xA0200)
 
 //###########################################################################################################
+#elif (D_PROJECT == D_PROJECT__iNF3)
+//###########################################################################################################
+
+#define A_RIU_BASE          (0x1F000000)
+
+#define A_FCIE1_0_BANK      GET_CARD_REG_ADDR(A_RIU_BASE, 0xA0800)      //SDIO0_0_BANK
+#define A_FCIE1_1_BANK      GET_CARD_REG_ADDR(A_RIU_BASE, 0xA0880)      //SDIO0_1_BANK
+#define A_FCIE1_2_BANK      GET_CARD_REG_ADDR(A_RIU_BASE, 0xA0900)      //SDIO0_2_BANK
+
+#define A_FCIE2_0_BANK      GET_CARD_REG_ADDR(A_RIU_BASE, 0xA0100)      //FCIE0_0_BANK
+#define A_FCIE2_1_BANK      GET_CARD_REG_ADDR(A_RIU_BASE, 0xA0180)      //FCIE0_1_BANK
+#define A_FCIE2_2_BANK      GET_CARD_REG_ADDR(A_RIU_BASE, 0xA0200)      //FCIE0_2_BANK
+
+#define A_FCIE3_0_BANK      GET_CARD_REG_ADDR(A_RIU_BASE, 0xA0100)
+#define A_FCIE3_1_BANK      GET_CARD_REG_ADDR(A_RIU_BASE, 0xA0180)
+#define A_FCIE3_2_BANK      GET_CARD_REG_ADDR(A_RIU_BASE, 0xA0200)
+
+//###########################################################################################################
 #endif
 
 
@@ -90,10 +108,10 @@
 //###########################################################################################################
 #if (D_OS == D_OS__LINUX)
 //###########################################################################################################
-    #if (D_PROJECT == D_PROJECT__C3) || (D_PROJECT == D_PROJECT__C4) || (D_PROJECT == D_PROJECT__iNF)
+    //#if (D_PROJECT == D_PROJECT__C3) || (D_PROJECT == D_PROJECT__C4) || (D_PROJECT == D_PROJECT__iNF)
         #include "../../../mstar/include/ms_platform.h"  //IO_ADDRESS       // IO Mapping Address
         #define IO_MAPADDR(Reg_Addr)    IO_ADDRESS(Reg_Addr)
-    #endif
+    //#endif
 //###########################################################################################################
 #else
 //###########################################################################################################

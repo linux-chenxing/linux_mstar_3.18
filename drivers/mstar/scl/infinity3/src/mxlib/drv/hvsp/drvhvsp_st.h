@@ -98,6 +98,13 @@
 #define DRV_HVSP_CROP_1     0
 #define DRV_HVSP_CROP_2     1
 #define DRV_HVSP_CROP_NUM   2
+#define SetPostCrop 0
+#define HVSP_PRIMASK_SIZE 11*84
+#define HVSP_PRIMASK_Width_SIZE 11
+#define HVSP_PRIMASK_Height_SIZE 84
+#define HVSP_PRIMASK_BLOCK_SIZE 32
+#define BYTESIZE 8
+#define SCALING_BLOCK 0
 //-------------------------------------------------------------------------------------------------
 //  Defines & enum
 //-------------------------------------------------------------------------------------------------
@@ -108,6 +115,14 @@ typedef enum
     E_HVSP_CROP_ID_2,
     E_HVSP_CROP_ID_MAX,     // I1 has 2 crop IP
 }EN_HVSP_CROP_ID_TYPE;
+typedef enum
+{
+    E_HVSP_POLL_ID_1 = 0,
+    E_HVSP_POLL_ID_2,
+    E_HVSP_POLL_ID_3,
+    E_HVSP_POLL_ID_VIP,
+    E_HVSP_POLL_ID_MAX,      //I1 has 3 HVSP 1VIP
+}EN_HVSP_POLL_ID_TYPE;
 
 typedef enum
 {
@@ -143,6 +158,15 @@ typedef enum
 
 typedef enum
 {
+    EN_HVSP_PRIMASK_DISABLE =0,
+    EN_HVSP_PRIMASK_ENABLE,
+    EN_HVSP_PRIMASK_PENDING,
+    EN_HVSP_PRIMASK_ONLYHWOFF,
+    EN_HVSP_PRIMASK_MAX,      //I3 has 3mode
+}EN_HVSP_PRIMASK_TYPE;
+
+typedef enum
+{
     E_HVSP_CMD_TRIG_NONE,           //RIU
     E_HVSP_CMD_TRIG_POLL_LDC_SYNC,  //polling blanking region RIU
     E_HVSP_CMD_TRIG_CMDQ_FRMCNT,    //wait framecnt CMDQ
@@ -168,7 +192,28 @@ typedef enum
     EN_DRV_HVSP_FBMG_SET_DNR_COMDE_ON    = 0x200,
     EN_DRV_HVSP_FBMG_SET_DNR_COMDE_OFF   = 0x400,
     EN_DRV_HVSP_FBMG_SET_DNR_COMDE_265OFF   = 0x800,
+    EN_DRV_HVSP_FBMG_SET_PRVCROP_ON      = 0x1000,
+    EN_DRV_HVSP_FBMG_SET_PRVCROP_OFF     = 0x2000,
+    EN_DRV_HVSP_FBMG_SET_CIIR_ON      = 0x4000,
+    EN_DRV_HVSP_FBMG_SET_CIIR_OFF     = 0x8000,
+    EN_DRV_HVSP_FBMG_SET_LOCK          = 0x10000,
 }EN_DRV_HVSP_FBMG_SET_TYPE;
+typedef enum
+{
+    EN_DRV_HVSP_IQ_H_Tbl0,
+    EN_DRV_HVSP_IQ_H_Tbl1,
+    EN_DRV_HVSP_IQ_H_Tbl2,
+    EN_DRV_HVSP_IQ_H_Tbl3,
+    EN_DRV_HVSP_IQ_H_BYPASS,
+    EN_DRV_HVSP_IQ_H_BILINEAR,
+    EN_DRV_HVSP_IQ_V_Tbl0,
+    EN_DRV_HVSP_IQ_V_Tbl1,
+    EN_DRV_HVSP_IQ_V_Tbl2,
+    EN_DRV_HVSP_IQ_V_Tbl3,
+    EN_DRV_HVSP_IQ_V_BYPASS,
+    EN_DRV_HVSP_IQ_V_BILINEAR,
+    EN_DRV_HVSP_IQ_NUM,
+}EN_DRV_HVSP_IQ_TYPE;
 typedef enum
 {
     EN_DRV_HVSP_LDCLCBANKMODE_64,
@@ -200,13 +245,40 @@ typedef struct
 }ST_HVSP_CLK_CONFIG;
 typedef struct
 {
-    MS_BOOL bRead;      // DNR IP can Read from Buffer (if can read then DNR availability)
-    MS_BOOL bWrite;     // DNR IP can Write to Buffer
-    MS_U32  u32BaseAddr;// DNR Buffer phycal address(unit:Byte)
+    MS_BOOL bYCMRead;      // DNR IP can Read from Buffer (if can read then DNR availability)
+    MS_BOOL bYCMWrite;     // DNR IP can Write to Buffer
+    MS_BOOL bCIIRRead;      // DNR IP can Read from Buffer (if can read then DNR availability)
+    MS_BOOL bCIIRWrite;     // DNR IP can Write to Buffer
+    MS_U32  u32YCBaseAddr;// YC Buffer phycal address(unit:Byte)
+    MS_U32  u32MBaseAddr;// M Buffer phycal address(unit:Byte)
+    MS_U32  u32CIIRBaseAddr;// CIIR Buffer phycal address(unit:Byte)
     MS_U16  u16Vsize;   // DNR Frame Height size
     MS_U16  u16Fetch;   // DNR Frame Width size
     MS_U32  u32MemSize; // DNR buffer size
 }ST_HVSP_IPM_CONFIG;
+typedef struct
+{
+    MS_U32 u32AffCount;
+    MS_U32 u32ISPInCount;
+    MS_U32 u32ISPDoneCount;
+    MS_U32 u32SC1FrmDoneCount;
+    MS_U32 u32SC1SnpDoneCount;
+    MS_U32 u32SC2FrmDoneCount;
+    MS_U32 u32SC2Frm2DoneCount;
+    MS_U32 u32SC3DoneCount;
+    MS_U32 u32SCLMainDoneCount;
+    MS_U32 u32SC1FrmActiveTime;
+    MS_U32 u32SC1SnpActiveTime;
+    MS_U32 u32SC2FrmActiveTime;
+    MS_U32 u32SC2Frm2ActiveTime;
+    MS_U32 u32SC3ActiveTime;
+    MS_U32 u32SCLMainActiveTime;
+    MS_U32 u32ISPTime;
+    MS_U32 u32ISPBlanking;
+    MS_U32 u32ISPBlankingTime;
+    MS_U32 u32ErrorCount;
+    MS_U8 u8CountReset;
+}ST_HVSP_SCINTS_TYPE;
 
 
 typedef struct
@@ -227,6 +299,7 @@ typedef struct
     MS_U16 u16Crop_Height[DRV_HVSP_CROP_NUM]; // post crop2 height
     MS_U16 u16Dsp_Width;                      // After scl display width
     MS_U16 u16Dsp_Height;                     // After scl display height
+    MS_BOOL bRet;
 }ST_HVSP_SCALING_CONFIG;
 
 typedef struct
@@ -297,8 +370,13 @@ typedef struct
     EN_HVSP_IP_MUX_TYPE enMux;        // display width
     unsigned short u16inWidth; // isp width
     unsigned short u16inHeight;// isp height
+    unsigned short u16inCropWidth; // isp crop width
+    unsigned short u16inCropHeight;// isp crop height
+    unsigned short u16inCropX; // isp crop X
+    unsigned short u16inCropY;// isp crop Y
     unsigned short u16inWidthcount; // isp width
     unsigned short u16inHeightcount;// isp height
+    unsigned char  bEn;             //function En
 }ST_DRV_HVSP_INPUTINFORM_CONFIG;
 typedef struct
 {
@@ -316,6 +394,15 @@ typedef struct
     EN_DRV_HVSP_OSD_LOC_TYPE enOSD_loc;    ///< OSD locate
     ST_DRV_HVSP_OSD_ONOFF_CONFIG stOsdOnOff;
 }ST_DRV_HVSP_OSD_CONFIG;
+typedef struct
+{
+    unsigned char bMask; ///<Mask enable
+    unsigned short u16X;        ///< start x point
+    unsigned short u16Y;        ///<  start y point
+    unsigned short u16Width;    ///< width size
+    unsigned short u16Height;   ///< height size
+}ST_HVSP_PRIMASK_CONFIG;
+
 //-------------------------------------------------------------------------------------------------
 //  Prototype
 //-------------------------------------------------------------------------------------------------

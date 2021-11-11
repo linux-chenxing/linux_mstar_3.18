@@ -17,6 +17,7 @@
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/interrupt.h>
+#include <linux/delay.h>
 
 #include <ms_platform.h>
 #include <ms_msys.h>
@@ -99,7 +100,7 @@ dev_poweron(
     int i = on!=0;
     mhve_ios* mios = mdev->p_asicip;
     struct clk* clk = mdev->p_clocks[0];
-    mios->irq_mask(mios, 0X0F);
+    mios->irq_mask(mios, 0x0F);
     if (i == 0)
     {
         clk_set_parent(clk, clk_get_parent_by_index(clk, 0));
@@ -175,8 +176,10 @@ mvhedev_pushjob(
     mhve_ops* mops = mctx->p_handle;
     mhve_ios* mios = mdev->p_asicip;
     mhve_job* mjob = mops->mhve_job(mops);
-    int ot, it, id = mctx->i_index;
+    int err = 0, ot, it, id = mctx->i_index;
+    long tick;
 
+    /* tick calculate */
     ot = gettime();
     down(&mdev->m_sem);
     it = gettime();
@@ -184,11 +187,21 @@ mvhedev_pushjob(
     dev_poweron(mdev, 1);
 #endif
     mdev->i_state = MVHE_DEV_STATE_BUSY;
+    /* set register to hw */
     mios->enc_fire(mios, mjob);
-    wait_event(mdev->m_wqh,mdev->i_state==MVHE_DEV_STATE_IDLE);
+    /* wait encode done interrupt */
+    tick = wait_event_timeout(mdev->m_wqh, (mdev->i_state!=MVHE_DEV_STATE_BUSY), msecs_to_jiffies(1000));
+//    if (0 == tick || tick == msecs_to_jiffies(1000))
+    if (0 == tick || mdev->i_state != MVHE_DEV_STATE_IDLE)
+    {
+        mjob->i_code = MHVEJOB_TIME_OUT;
+        printk(KERN_ERR"vhe-wait event to(%ld)\n", tick);
+        err = -1;
+    }
 #if !defined(MVHE_MCM_ENABLE)
     dev_poweron(mdev, 0);
 #endif
+    /* tick calculate */
     it = gettime() - it;
     up(&mdev->m_sem);
     ot = gettime() - ot;
@@ -203,12 +216,15 @@ mvhedev_pushjob(
         mdev->i_counts[id][3] = (int)mjob->i_tick;
 #if MVHE_TIMER_SIZE>0
     id = mctx->i_numbr&((MVHE_TIMER_SIZE/8)-1);
+    if(id == 0){mctx->i_numbr = 0;}
+    mdev->i_counts[mctx->i_index][4] -= mctx->p_timer[id].tm_cycles/(MVHE_TIMER_SIZE/8);
     mctx->p_timer[id].tm_dur[0] = (unsigned char)ot;
     mctx->p_timer[id].tm_dur[1] = (unsigned char)it;
     mctx->p_timer[id].tm_cycles = (int)mjob->i_tick;
     mctx->i_numbr++;
+    mdev->i_counts[mctx->i_index][4] += mctx->p_timer[id].tm_cycles/(MVHE_TIMER_SIZE/8);
 #endif
-    return 0;
+    return err;
 }
 
 int
@@ -216,10 +232,8 @@ mvhedev_isr_fnx(
     mvhe_dev*   mdev)
 {
     mhve_ios* mios = mdev->p_asicip;
-    if (!mios->isr_func(mios, 0))
-    {
-        mdev->i_state = MVHE_DEV_STATE_IDLE;
-        wake_up(&mdev->m_wqh);
-    }
+    mios->isr_func(mios, 0);
+    mdev->i_state = MVHE_DEV_STATE_IDLE;
+    wake_up(&mdev->m_wqh);
     return 0;
 }

@@ -57,6 +57,17 @@ typedef enum
 }EN_DBGMG_SCLDMALEVEL_TYPE;
 typedef enum
 {
+    EN_DBGMG_PQLEVEL_BEFORECROP     = 0x1, //MCNR,LDC,NLM,XNR
+    EN_DBGMG_PQLEVEL_COLORENG       = 0x2, //color eng
+    EN_DBGMG_PQLEVEL_VIPY           = 0x4, // PK DLC ACK,LCE,UVC
+    EN_DBGMG_PQLEVEL_VIPC           = 0x8, // IHC,IBC,ICC,FCC
+    EN_DBGMG_PQLEVEL_AIP            = 0x10, //YEE,WDR,ADJUV,MXNR
+    EN_DBGMG_PQLEVEL_AIPPOST        = 0x20, //Gamma YCUVM,Colortran
+    EN_DBGMG_PQLEVEL_HVSP           = 0x40, //sc1,sc2,sc3
+    EN_DBGMG_PQLEVEL_ELSE           = 0x80, //else
+}EN_DBGMG_PQLEVEL_TYPE;
+typedef enum
+{
     EN_DBGMG_VIPLEVEL_NORMAL     = 0x1,
     EN_DBGMG_VIPLEVEL_VIPLOG     = 0x2,
     EN_DBGMG_VIPLEVEL_VIPSUP     = 0x4,
@@ -79,6 +90,9 @@ typedef enum
     EN_DBGMG_CMDQEVEL_NORMAL  = 0x2,  // by cmd
     EN_DBGMG_CMDQEVEL_HIGH    = 0x4,  // by loop in cmd
     EN_DBGMG_CMDQEVEL_ISR     = 0x8,
+    EN_DBGMG_CMDQEVEL_ISRCheck = 0x10,
+    EN_DBGMG_CMDQEVEL_SRAMCheck = 0x20,
+    EN_DBGMG_CMDQEVEL_DBG = 0x40,
 }EN_DBGMG_CMDQEVEL_TYPE;
 typedef enum
 {
@@ -96,7 +110,8 @@ typedef enum
     EN_DBGMG_IOCTLEVEL_VIP          = 0x8,
     EN_DBGMG_IOCTLEVEL_SC1HLEVEL    = 0x10,
     EN_DBGMG_IOCTLEVEL_SC2HLEVEL    = 0x20,
-    EN_DBGMG_IOCTLEVEL_ELSE         = 0x40,
+    EN_DBGMG_IOCTLEVEL_LCD          = 0x40,
+    EN_DBGMG_IOCTLEVEL_ELSE         = 0x80,
 }EN_DBGMG_IOCTLEVEL_TYPE;
 typedef enum
 {
@@ -111,7 +126,7 @@ typedef enum
     EN_DBG_PNL_CONFIG           = 0x100,    ///< PNL
     EN_DBG_SCL_CONFIG           = 0x1FF,
 }__attribute__ ((__packed__))EN_DBG_CONFIG_TYPE;
-extern unsigned int gu8DNRBufferReadyNum;
+extern unsigned int gu8FrameBufferReadyNum;
 extern unsigned int gbProbeAlready;
 extern unsigned char gbdbgmessage[EN_DBGMG_NUM_CONFIG];
 
@@ -212,7 +227,7 @@ extern unsigned char gbdbgmessage[EN_DBGMG_NUM_CONFIG];
                             bH = EN_DBGMG_SCLDMALEVEL_SC3FRM; \
                         }\
                         else \
-                         bH = EN_DBGMG_HVSPLEVEL_ELSE; \
+                         bH = EN_DBGMG_SCLDMALEVEL_ELSE; \
                                    bH;\
                     })
 
@@ -275,14 +290,14 @@ extern unsigned char gbdbgmessage[EN_DBGMG_NUM_CONFIG];
                                                         else\
                                                             bH = EN_DBGMG_SCLDMALEVEL_SC1SNPHIGH; \
                                                     }\
-                                                    else if(scldmacl == 3)\
+                                                    else if(scldmacl == 2)\
                                                     {\
                                                         if(level==0)\
                                                             bH = EN_DBGMG_SCLDMALEVEL_SC2FRM; \
                                                         else\
                                                             bH = EN_DBGMG_SCLDMALEVEL_SC2FRMHIGH; \
                                                     }\
-                                                    else if(scldmacl == 4)\
+                                                    else if(scldmacl == 3)\
                                                     {\
                                                         if(level==0)\
                                                             bH = EN_DBGMG_SCLDMALEVEL_SC2FRM; \
@@ -322,6 +337,7 @@ extern unsigned char gbdbgmessage[EN_DBGMG_NUM_CONFIG];
             printk(KERN_DEBUG _fmt, ## _args);       \
     }while(0)
 #define SCL_ERR(_fmt, _args...)       printk(KERN_WARNING _fmt, ## _args)
+#define SCL_DBGERR(_fmt, _args...)       printk(KERN_DEBUG _fmt, ## _args)
 #define VersionCheckSuccess 0
 
 #else

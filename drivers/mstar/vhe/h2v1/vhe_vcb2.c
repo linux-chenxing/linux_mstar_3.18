@@ -69,7 +69,7 @@ void* vcb2_allocate(void)
     vhe_vcb2* vcb2;
 
     if (!(rqct = MEM_ALLC(sizeof(vhe_vcb2))))
-        return NULL;
+        return rqct;
 
     MEM_COPY(rqct->name, VCB2_NAME, 5);
     rqct->release = _vcb2_ops_free;
@@ -234,7 +234,7 @@ static int vcb2_seq_conf(rqct_ops* rqct)
 
     vcb2->i_method = (int)rqcx->attr.i_method;
     vcb2->i_btrate = (int)rqcx->attr.i_btrate;
-    if (rqcx->attr.i_leadqp > 8 && rqcx->attr.i_leadqp < 48) 
+    if (rqcx->attr.i_leadqp > 8 && rqcx->attr.i_leadqp < 48)
         vcb2->i_levelq = (int)rqcx->attr.i_leadqp;
     vcb2->i_deltaq = (int)rqcx->attr.i_deltaq;
     vcb2->n_fmrate = (int)rqcx->attr.n_fmrate;
@@ -250,7 +250,7 @@ static int vcb2_seq_conf(rqct_ops* rqct)
     vcb2->i_smooth = rqcx->i_period;
     vcb2->i_frmbit = (int)div_s64((int64)vcb2->i_btrate*vcb2->d_fmrate,vcb2->n_fmrate);
     vcb2->i_pixbit = (int)div_s64((int64)vcb2->i_frmbit*BPP_FAC,vcb2->i_pixels);
-    vcb2->i_gopbit = vcb2->i_frmbit*rqcx->i_period; 
+    vcb2->i_gopbit = vcb2->i_frmbit*rqcx->i_period;
     vcb2->i_degree = vcb2->i_btrate/(QP_RANGE*2);
     vcb2->i_margin = vcb2->i_degree*(QP_RANGE);
     vcb2->i_bucket = vcb2->i_margin<<1;
@@ -300,7 +300,7 @@ static int vcb2_enc_conf(rqct_ops* rqct, mhve_job* mjob)
         }
         pqp = QP_LOWER+(vcb2->i_imbase-vcb2->i_margin)/vcb2->i_degree;
         dqp = qdelta((int)div_s64((int64)(vcb2->i_imbits-vcb2->i_imbase)*DQBIAS_FAC,vcb2->i_radius));
-        vcb2->i_levelq = pqp; 
+        vcb2->i_levelq = pqp;
         vcb2->i_budget = vcb2->i_frmbit-vcb2->i_ipbias;
         vcb2->i_budget = _MAX(vcb2->i_budget,vcb2->i_frmbit/16);
         rqct->i_enc_qp = _MAX(_MIN(vcb2->i_upperq,pqp+dqp),vcb2->i_lowerq);

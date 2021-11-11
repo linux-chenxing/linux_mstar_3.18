@@ -767,7 +767,7 @@ h265enc_acquire(void)
         vps_t* vps = NULL;
 
         if (!(hevc = MEM_ALLC(sizeof(hevc_enc))))
-            return NULL;
+            return hevc;
 
         hevc->release = _release;
         hevc->m_vps = vps_def;
@@ -790,7 +790,8 @@ h265enc_acquire(void)
     }
     while (0);
     hevc->release(hevc);
-    return NULL;
+    hevc = NULL;
+    return hevc;
 }
 
 int

@@ -2609,8 +2609,6 @@ static void __exit mmc_blk_exit(void)
 	unregister_blkdev(MMC_BLOCK_MAJOR, "mmc");
 }
 
-
-#if defined(CONFIG_MS_EMMC)
 struct mmc_card *mmc_blkdev_to_card(struct block_device *blkdev)
 {
 	struct mmc_blk_data *md;
@@ -2622,7 +2620,8 @@ struct mmc_card *mmc_blkdev_to_card(struct block_device *blkdev)
 
 	return NULL;
 }
-#endif
+
+EXPORT_SYMBOL(mmc_blkdev_to_card);
 
 module_init(mmc_blk_init);
 module_exit(mmc_blk_exit);

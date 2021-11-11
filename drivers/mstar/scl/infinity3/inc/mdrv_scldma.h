@@ -26,14 +26,34 @@
 #define MDRV_SCLDMA_BLOCK_POLL_ISR_EN   1
 #define BUFFER_BE_ALLOCATED_MAX         4
 #define MDRV_SCLDMA_BUFFER_QUEUE_OFFSET   sizeof(ST_MDRV_SCLDMA_FRAME_BUFFER_CONFIG)///<Buffer Queue Size For OMX
-#define PARSING_SCLDMA_IOBUFMD(x)       (x== E_MDRV_SCLDMA_BUFFER_MD_RING  ? "RING" : \
-                                       x==E_MDRV_SCLDMA_BUFFER_MD_SINGLE? "SINGLE" : \
-                                       x==E_MDRV_SCLDMA_BUFFER_MD_SWRING? "SWRING " : \
+
+#define PARSING_SCLDMA_IOID(x)           (x==E_MDRV_SCLDMA_ID_1   ? "SCLDMA_1" : \
+                                        x==E_MDRV_SCLDMA_ID_1   ? "SCLDMA_2" : \
+                                        x==E_MDRV_SCLDMA_ID_3   ? "SCLDMA_3" : \
+                                        x==E_MDRV_SCLDMA_ID_PNL   ? "SCLDMA_PNL" : \
+                                                               "UNKNOWN")
+
+#define PARSING_SCLDMA_IOMEM(x)           (x==E_MDRV_SCLDMA_MEM_FRM   ? "FRM" : \
+                                        x==E_MDRV_SCLDMA_MEM_SNP   ? "SNP" : \
+                                        x==E_MDRV_SCLDMA_MEM_FRM2   ? "FRM2" : \
+                                        x==E_MDRV_SCLDMA_MEM_IMI   ? "IMI" : \
+                                                               "UNKNOWN")
+
+
+
+#define PARSING_SCLDMA_IOBUFMD(x)       (x==E_MDRV_SCLDMA_BUFFER_MD_RING   ? "RING" : \
+                                        x==E_MDRV_SCLDMA_BUFFER_MD_SWRING ? "SWRING" : \
+                                       x==E_MDRV_SCLDMA_BUFFER_MD_SINGLE ? "SINGLE" : \
                                                                    "UNKNOWN")
 
-#define PARSING_SCLDMA_IOCOLOR(x)       (x==E_MDRV_SCLDMA_COLOR_YUV422 ? "YUV422" : \
-                                       x==E_MDRV_SCLDMA_COLOR_YUV420 ? "YUV420" : \
+#define PARSING_SCLDMA_IOCOLOR(x)       (x==E_MDRV_SCLDMA_COLOR_YUV422? "422PACK" : \
+                                       x==E_MDRV_SCLDMA_COLOR_YUV420 ? "YCSep420" : \
+                                       x==E_MDRV_SCLDMA_COLOR_YCSep422 ? "YCSep422" : \
+                                       x==E_MDRV_SCLDMA_COLOR_YUVSep422 ? "YUVSep422" : \
+                                       x==E_MDRV_SCLDMA_COLOR_YUVSep420 ? "YUVSep420" : \
                                                                   "UNKNOWN")
+
+
 typedef enum
 {
     E_MDRV_SCLDMA_ID_1,
@@ -98,6 +118,8 @@ typedef enum
 typedef struct
 {
     unsigned long u32Riubase;
+    unsigned long u32IRQNUM;
+    unsigned long u32CMDQIRQNUM;
 }ST_MDRV_SCLDMA_INIT_CONFIG;
 typedef struct
 {
@@ -143,7 +165,7 @@ typedef struct
     unsigned char u8ActiveBuffer;
     ST_MDRV_SCLDMA_TRIGGER_CONFIG stOnOff;
     unsigned char   u8ISPcount;
-    unsigned long   u32FRMDoneTime;
+    unsigned long long   u64FRMDoneTime;
 }ST_MDRV_SCLDMA_ACTIVE_BUFFER_CONFIG;
 typedef struct
 {
@@ -158,6 +180,15 @@ typedef struct
     unsigned long u32Base_C[BUFFER_BE_ALLOCATED_MAX]; ///< base address of CbCr
     unsigned long u32Base_V[BUFFER_BE_ALLOCATED_MAX]; ///< base address of Cr
     unsigned char bDMAEn;
+    unsigned char bDMAReadIdx;
+    unsigned char bDMAWriteIdx;
+    unsigned char bDMAFlag;
+    unsigned char bSendPoll;
+    unsigned long u32FrameDoneTime;
+    unsigned long u32SendTime;
+    unsigned char u8Count;
+    unsigned char  u8ResetCount;
+    unsigned char  u8DMAErrCount;
 }ST_MDRV_SCLDMA_ATTR_TYPE;
 
 typedef struct
@@ -189,6 +220,7 @@ typedef struct
 #define INTERFACE
 #endif
 INTERFACE unsigned char MDrv_SCLDMA_Init(EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID, ST_MDRV_SCLDMA_INIT_CONFIG *pCfg);
+INTERFACE unsigned char MDrv_SCLDMA_Exit(unsigned char bCloseISR);
 INTERFACE unsigned char MDrv_SCLDMA_SetDMAReadClientConfig
     (EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID, ST_MDRV_SCLDMA_BUFFER_CONFIG *pCfg);
 INTERFACE unsigned char MDrv_SCLDMA_SetDMAReadClientTrigger
@@ -207,8 +239,10 @@ INTERFACE unsigned char MDrv_SCLDMA_GetDMAWriteBufferAcitveIdx
     (EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID, ST_MDRV_SCLDMA_ACTIVE_BUFFER_CONFIG *pstCfg);
 INTERFACE unsigned char MDrv_SCLDMA_BufferQueueHandle
     (EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID, ST_MDRV_SCLDMA_BUFFER_QUEUE_CONFIG *pstCfg);
-INTERFACE ST_MDRV_SCLDMA_ATTR_TYPE MDrv_SCLDMA_GetDMAInformationByClient
-    (EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID,EN_MDRV_SCLDMA_MEM_TYPE enMemType,unsigned char bYC);
+INTERFACE void MDrv_SCLDMA_GetDMAInformationByClient
+    (EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID,EN_MDRV_SCLDMA_MEM_TYPE enMemType,unsigned char bYC,ST_MDRV_SCLDMA_ATTR_TYPE *stSendToIOCfg);
+INTERFACE ssize_t MDrv_SCLDMA_ProcShow
+    (char *buf, EN_MDRV_SCLDMA_ID_TYPE enID, EN_MDRV_SCLDMA_MEM_TYPE enMem, unsigned char bRread);
 INTERFACE void MDrv_SCLDMA_ResetTrigCountByClient
     (EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID,EN_MDRV_SCLDMA_MEM_TYPE enMemType,unsigned char bYC);
 INTERFACE void MDrv_SCLDMA_ResetTrigCountAllClient(void);
@@ -218,7 +252,7 @@ INTERFACE void MDrv_SCLDMA_ClkClose(ST_MDRV_SCLDMA_CLK_CONFIG* stclk);
 INTERFACE unsigned char MDrv_SCLDMA_Suspend(EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID);
 INTERFACE void MDrv_SCLDMA_SetPollWait(void *filp, void *pWaitQueueHead, void *pstPollQueue);
 INTERFACE unsigned char MDrv_SCLDMA_Resume(EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID);
-INTERFACE wait_queue_head_t * MDrv_SCLDMA_GetWaitQueueHead(EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID);
+INTERFACE void * MDrv_SCLDMA_GetWaitQueueHead(EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID);
 INTERFACE void MDrv_SCLDMA_SetForceCloseDMAClient
     (EN_MDRV_SCLDMA_ID_TYPE enSCLDMA_ID,EN_MDRV_SCLDMA_MEM_TYPE enMemType,unsigned char bYC,unsigned char bEn);
 INTERFACE unsigned char MDrv_SCLDMA_GetDoubleBufferStatus(void);

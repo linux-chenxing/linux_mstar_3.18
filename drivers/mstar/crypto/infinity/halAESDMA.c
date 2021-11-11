@@ -20,7 +20,7 @@
 #ifndef _HAL_AESDMA_H_
 #include "halAESDMA.h"
 #endif
-
+#include <linux/sysctl.h>
 #if 0
 void HAL_AESDMA_DisableXIUSelectCA9(void)
 {
@@ -46,6 +46,16 @@ void HAL_AESDMA_ShaFromInput(void)
     RIU[(AESDMA_BASE_ADDR+(0x5F<<1))]= ((RIU[(AESDMA_BASE_ADDR+(0x5F<<1))])|(AESDMA_CTRL_SHA_FROM_IN));
 }
 #endif
+void HAL_AESDMA_INTMASK(void)
+{
+	RIU[(AESDMA_BASE_ADDR+(0x5e<<1))]= ((RIU[(AESDMA_BASE_ADDR+(0x5e<<1))]) | (1<<7));
+}
+
+void HAL_AESDMA_INTDISABLE(void)
+{
+	RIU[(AESDMA_BASE_ADDR+(0x5e<<1))]= ((RIU[(AESDMA_BASE_ADDR+(0x5e<<1))]) & ~(1<<7));
+}
+
 
 void HAL_AESDMA_SetXIULength(U32 u32Size)
 {
@@ -244,17 +254,22 @@ void HAL_RSA_LoadSignInverse(U32 *ptr_Sign, U8 u8Signlentgh)
         // RIU[(RSA_BASE_ADDR+(0x23<<1))]= (U16)(((*(ptr_E+i))>>8)&0xFF00)|(((*(ptr_E+i))>>24)&0xFF);
        // RIU[(RSA_BASE_ADDR+(0x24<<1))]= (U16)(((*(ptr_E+i))>>8)&0xFF)|(((*(ptr_E+i))<<8)&0xFF00);
     U32 i;
+	U8 lentgh = u8Signlentgh;
 
     RIU[(RSA_BASE_ADDR+(0x22<<1))]= RSA_A_BASE_ADDR; //RSA A addr
     RIU[(RSA_BASE_ADDR+(0x20<<1))]= ((RIU[(RSA_BASE_ADDR+(0x20<<1))])|(RSA_IND32_START)); //RSA start
 
-    for( i = 0; i < u8Signlentgh ; i++ )
+    for( i = 0; i < lentgh ; i++ )
     {
         //RIU[(RSA_BASE_ADDR+(0x23<<1))]= (U16)(((*(ptr_Sign+63-i))>>8)&0xFF00)|(((*(ptr_Sign+63-i))>>24)&0xFF);
         //RIU[(RSA_BASE_ADDR+(0x24<<1))]= (U16)(((*(ptr_Sign+63-i))>>8)&0xFF)|(((*(ptr_Sign+63-i))<<8)&0xFF00);
-        RIU[(RSA_BASE_ADDR+(0x23<<1))]= (U16)(((*(ptr_Sign + i))>>8)&0xFF00)|(((*(ptr_Sign + i))>>24)&0xFF);
-        RIU[(RSA_BASE_ADDR+(0x24<<1))]= (U16)(((*(ptr_Sign + i))>>8)&0xFF)|(((*(ptr_Sign + i))<<8)&0xFF00);
-    }
+
+//        RIU[(RSA_BASE_ADDR+(0x23<<1))]= (U16)(((*(ptr_Sign + i))>>8)&0xFF00)|(((*(ptr_Sign + i))>>24)&0xFF);
+//        RIU[(RSA_BASE_ADDR+(0x24<<1))]= (U16)(((*(ptr_Sign + i))>>8)&0xFF)|(((*(ptr_Sign + i))<<8)&0xFF00);
+
+		RIU[(RSA_BASE_ADDR+(0x23<<1))]= (U16)(((*(ptr_Sign + (lentgh-1) - i))>>8)&0xFF00)|(((*(ptr_Sign + (lentgh-1) - i))>>24)&0xFF);
+		RIU[(RSA_BASE_ADDR+(0x24<<1))]= (U16)(((*(ptr_Sign + (lentgh-1) - i))>>8)&0xFF)|(((*(ptr_Sign + (lentgh-1) - i))<<8)&0xFF00);
+   }
 
     RIU[(RSA_BASE_ADDR+(0x20<<1))]= ((RIU[(RSA_BASE_ADDR+(0x20<<1))])&(~RSA_IND32_START)); //RSA stop
 }
@@ -287,9 +302,9 @@ void HAL_RSA_LoadKeyE(U32 *ptr_E, U8 u8Elentgh)
 
     for( i = 0; i < u8Elentgh ; i++ )
     {
-        RIU[(RSA_BASE_ADDR+(0x23<<1))]= (U16)(((*(ptr_E+i))>>8)&0xFF00)|(((*(ptr_E+i))>>24)&0xFF);
-        RIU[(RSA_BASE_ADDR+(0x24<<1))]= (U16)(((*(ptr_E+i))>>8)&0xFF)|(((*(ptr_E+i))<<8)&0xFF00);
-    }
+		RIU[(RSA_BASE_ADDR+(0x23<<1))]= (U16)(((*(ptr_E + i))>>8)&0xFF00)|(((*(ptr_E  + i))>>24)&0xFF);
+        RIU[(RSA_BASE_ADDR+(0x24<<1))]= (U16)(((*(ptr_E + i))>>8)&0xFF)|(((*(ptr_E  + i))<<8)&0xFF00);
+	}
 
     RIU[(RSA_BASE_ADDR+(0x20<<1))]= ((RIU[(RSA_BASE_ADDR+(0x20<<1))])&(~RSA_IND32_START)); //RSA stop
 }
@@ -315,18 +330,38 @@ void HAL_RSA_LoadKeyN(U32 *ptr_N ,U8 u8Nlentgh)
 void HAL_RSA_LoadKeyNInverse(U32 *ptr_N,U8 u8Nlentgh)
 {
     U32 i;
+	U8 lentgh = u8Nlentgh;
 
     RIU[(RSA_BASE_ADDR+(0x22<<1))]= RSA_N_BASE_ADDR; //RSA N addr
     RIU[(RSA_BASE_ADDR+(0x20<<1))]= ((RIU[(RSA_BASE_ADDR+(0x20<<1))])|(RSA_IND32_START)); //RSA start
 
     //RIU[(POR_STATUS_BASE_ADDR+(0xB<<1))]=(U16)((0x0000ffff)&(U32)(ptr_N)); //write ptr_N addr to por_status(0x10050B)
 
-    for( i = 0; i < u8Nlentgh; i++ )
+    for( i = 0; i < lentgh; i++ )
     {
-        RIU[(RSA_BASE_ADDR+(0x23<<1))]= (U16)(((*(ptr_N + (u8Nlentgh-1) - i))>>8)&0xFF00)|(((*(ptr_N + (u8Nlentgh-1) - i))>>24)&0xFF);
-        RIU[(RSA_BASE_ADDR+(0x24<<1))]= (U16)(((*(ptr_N + (u8Nlentgh-1) - i))>>8)&0xFF)|(((*(ptr_N + (u8Nlentgh-1) - i))<<8)&0xFF00);
-    }
+        RIU[(RSA_BASE_ADDR+(0x23<<1))]= (U16)(((*(ptr_N + (lentgh-1) - i))>>8)&0xFF00)|(((*(ptr_N + (lentgh-1) - i))>>24)&0xFF);
+        RIU[(RSA_BASE_ADDR+(0x24<<1))]= (U16)(((*(ptr_N + (lentgh-1) - i))>>8)&0xFF)|(((*(ptr_N + (lentgh-1) - i))<<8)&0xFF00);
+	}
     RIU[(RSA_BASE_ADDR+(0x20<<1))]= ((RIU[(RSA_BASE_ADDR+(0x20<<1))])&(~RSA_IND32_START)); //RSA stop
+}
+
+void HAL_RSA_LoadKeyEInverse(U32 *ptr_E,U8 u8Elentgh)
+{
+    U32 i;
+	U8 lentgh = u8Elentgh;
+
+    RIU[(RSA_BASE_ADDR+(0x22<<1))]= RSA_E_BASE_ADDR;
+    RIU[(RSA_BASE_ADDR+(0x20<<1))]= ((RIU[(RSA_BASE_ADDR+(0x20<<1))])|(RSA_IND32_START)); //RSA start
+
+    //RIU[(POR_STATUS_BASE_ADDR+(0xB<<1))]=(U16)((0x0000ffff)&(U32)(ptr_N)); //write ptr_N addr to por_status(0x10050B)
+
+	for( i = 0; i < lentgh; i++ )
+	{
+		RIU[(RSA_BASE_ADDR+(0x23<<1))]= (U16)(((*(ptr_E + (lentgh-1) - i))>>8)&0xFF00)|(((*(ptr_E + (lentgh-1) - i))>>24)&0xFF);
+        RIU[(RSA_BASE_ADDR+(0x24<<1))]= (U16)(((*(ptr_E + (lentgh-1) - i))>>8)&0xFF)|(((*(ptr_E + (lentgh-1) - i))<<8)&0xFF00);
+	}
+	RIU[(RSA_BASE_ADDR+(0x20<<1))]= ((RIU[(RSA_BASE_ADDR+(0x20<<1))])&(~RSA_IND32_START)); //RSA stop
+
 }
 
 void HAL_RSA_SetKeyLength(U16 u16keylen)
@@ -390,7 +425,11 @@ void HAL_RSA_SetFileOutAddr(U32 u32offset)
 
 U32 HAL_RSA_FileOut(void)
 {
-    return (U32)(RIU[(RSA_BASE_ADDR+(0x25<<1))]|(RIU[(RSA_BASE_ADDR+(0x26<<1))]<<16));
+	U32 output;
+	output = (U16)(((RIU[(RSA_BASE_ADDR+(0x26<<1))] >>8 )& 0xff )|((RIU[(RSA_BASE_ADDR+(0x26<<1))] << 8 )& 0xff00 )) ;
+	output = output | ((((RIU[(RSA_BASE_ADDR+(0x25<<1))]>>8)& 0xff)|((RIU[(RSA_BASE_ADDR+(0x25<<1))]<<8)& 0xff00)) << 16);
+
+    return output;
 }
 
 void HAL_SHA_Reset(void)
@@ -470,10 +509,13 @@ void HAL_SHA_Out(U32 u32Buf)
 {
     U32 index;
 
+//	output = (U16)(((RIU[(RSA_BASE_ADDR+(0x26<<1))] >>8 )& 0xff )|((RIU[(RSA_BASE_ADDR+(0x26<<1))] << 8 )& 0xff00 )) ;
+//	output = output | ((((RIU[(RSA_BASE_ADDR+(0x25<<1))]>>8)& 0xff)|((RIU[(RSA_BASE_ADDR+(0x25<<1))]<<8)& 0xff00)) << 16);
+
     //SHA_Out
     for( index = 0; index < 16; index++ )
     {
-        *((U16 *)u32Buf + index) = (RIU[(SHARNG_BASE_ADDR+(0x10<<1)+index*2)]);
+        *((U16 *)u32Buf +(15-index)) = (U16)(RIU[(SHARNG_BASE_ADDR + (0x10<<1) + index*2)]>>8&0xff)|(U16)(RIU[(SHARNG_BASE_ADDR + (0x10<<1) + index*2)]<<8&0xff00);
     }
 }
 

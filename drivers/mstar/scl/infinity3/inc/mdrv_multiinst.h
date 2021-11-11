@@ -19,7 +19,7 @@
 #define _MDRV_MULTI_INST_H
 
 
-#define MDRV_MULTI_INST_PRIVATE_ID_NUM    4
+#define MDRV_MULTI_INST_PRIVATE_ID_NUM    6
 //-------------------------------------------------------------------------------------------------
 //  Defines & Macro
 //-------------------------------------------------------------------------------------------------
@@ -108,9 +108,10 @@ typedef struct
 INTERFACE unsigned char MDrv_MultiInst_Lock_Init(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_ID);
 INTERFACE unsigned char MDrv_MultiInst_Lock_Exit(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_ID);
 INTERFACE unsigned char MDrv_MultiInst_Lock_IsFree(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_ID, signed long s32PrivateId);
-INTERFACE unsigned char MDrv_MultiInst_Lock_Alloc(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_ID, ST_MDRV_MULTI_INST_LOCK_CONFIG stCfg);
+INTERFACE unsigned char MDrv_MultiInst_Lock_Alloc(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_ID, ST_MDRV_MULTI_INST_LOCK_CONFIG *stCfg);
 INTERFACE unsigned char MDrv_MultiInst_Lock_Free(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_ID, ST_MDRV_MULTI_INST_LOCK_CONFIG *pstCfg);
 
+INTERFACE unsigned char MDrv_MultiInst_GetHvspQuantifyPreInstId(void);
 
 INTERFACE unsigned char MDrv_MultiInst_Entry_Init_Variable(EN_MDRV_MULTI_INST_ENTRY_ID_TYPE enID);
 INTERFACE unsigned char MDrv_MultiInst_Entry_Alloc(EN_MDRV_MULTI_INST_ENTRY_ID_TYPE enID, void **pPrivate_Data);

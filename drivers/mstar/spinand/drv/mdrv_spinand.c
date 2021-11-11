@@ -127,7 +127,7 @@ const char procfs_name[] = "StorageBytes";
 //-------------------------------------------------------------------------------------------------
 static struct mstar_spinand_info *info;
 static U32 u32_curRow = 0;
-static U32 u32_curCol = 0;
+//static U32 u32_curCol = 0;
 /* These really don't belong here, as they are specific to the NAND Model */
 static uint8_t scan_ff_pattern[] = {0xff};
 
@@ -198,7 +198,11 @@ static struct nand_bbt_descr spi_nand_bbt_mirror_descr = {
 extern int add_mtd_partitions(struct mtd_info *, const struct mtd_partition *, int);
 #endif
 
+
 #if defined(CONFIG_MTD_CMDLINE_PARTS)
+//	#define CONFIG_MTD_PARTITIONS
+//	#define CONFIG_MTD_CMDLINE_PARTS
+//	#ifdef CONFIG_MTD_PARTITIONS
 #define MTD_PARTITION_MAX		64
 static const char *part_probes[] = { "cmdlinepart", NULL, };
 static struct mtd_partition partition_info[MTD_PARTITION_MAX];
@@ -332,7 +336,7 @@ int spi_nand_dev_ready(struct mtd_info *mtd)
 
 void spi_nand_cmdfunc(struct mtd_info *mtd, unsigned command, int column, int page_addr)
 {
-    U32 ret;
+    U32 ret = 0;
     SPI_NAND_DRIVER_t *pSpiNandDrv = (SPI_NAND_DRIVER_t*)drvSPINAND_get_DrvContext_address();
     pSpiNandDrv->u8_statusRequest = FALSE;
     switch (command) {
@@ -349,8 +353,14 @@ void spi_nand_cmdfunc(struct mtd_info *mtd, unsigned command, int column, int pa
 
     case NAND_CMD_READOOB:
         spi_nand_debug("NAND_CMD_READOOB");
-        MDrv_SPINAND_Read(page_addr, (U8 *)gtSpiNandDrv.pu8_pagebuf, (U8 *)gtSpiNandDrv.pu8_sparebuf);
-        gtSpiNandDrv.u32_column = column;
+        ret = MDrv_SPINAND_Read(page_addr, (U8 *)gtSpiNandDrv.pu8_pagebuf, (U8 *)gtSpiNandDrv.pu8_sparebuf);
+
+		if (ret != ERR_SPINAND_SUCCESS)
+        {
+            spi_nand_err("MDrv_SPINAND_Read = %ld \n", ret);
+        }
+
+		gtSpiNandDrv.u32_column = column;
         break;
 
     case NAND_CMD_ERASE2:
@@ -372,7 +382,7 @@ void spi_nand_cmdfunc(struct mtd_info *mtd, unsigned command, int column, int pa
     case NAND_CMD_READ0:
         spi_nand_debug("NAND_CMD_READ0");
         u32_curRow = page_addr;
-        u32_curCol = column;
+//        u32_curCol = column; //set not used
         break;
 
     default:
@@ -380,7 +390,6 @@ void spi_nand_cmdfunc(struct mtd_info *mtd, unsigned command, int column, int pa
         break;
     }
 
-    return;
 }
 
 int spi_nand_waitfunc(struct mtd_info *mtd, struct nand_chip *this)
@@ -671,8 +680,8 @@ static void _addMstarPartition(struct mtd_info* mtd, SPI_NAND_PARTITION_INFO_t *
 					partition_info[NumOfPart].name = "UNKNOWN";
                 break;
 			}
-        partition_info[NumOfPart].offset = pRecord->u16_StartBlk*u32_BlkSize;
-        partition_info[NumOfPart].size = (pRecord->u16_BlkCnt+pRecord->u16_BackupBlkCnt)*u32_BlkSize;
+        partition_info[NumOfPart].offset = (U32)(pRecord->u16_StartBlk * u32_BlkSize);
+        partition_info[NumOfPart].size = (U32)((pRecord->u16_BlkCnt+pRecord->u16_BackupBlkCnt)*u32_BlkSize);
         partition_info[NumOfPart].mask_flags = 0;
         printk("%s:%llX, %llX\n", partition_info[NumOfPart].name,
                                     partition_info[NumOfPart].offset,
@@ -681,8 +690,8 @@ static void _addMstarPartition(struct mtd_info* mtd, SPI_NAND_PARTITION_INFO_t *
         pRecord++;
     }// while
     partition_info[NumOfPart].name = "UBI";
-    partition_info[NumOfPart].offset = pRecord->u16_StartBlk * u32_BlkSize;
-    partition_info[NumOfPart].size = (gtSpiNandDrv.tSpinandInfo.u16_BlkCnt - pRecord->u16_StartBlk) * u32_BlkSize;
+    partition_info[NumOfPart].offset = (U32)(pRecord->u16_StartBlk * u32_BlkSize);
+    partition_info[NumOfPart].size = (U32)((gtSpiNandDrv.tSpinandInfo.u16_BlkCnt - pRecord->u16_StartBlk) * u32_BlkSize);
     partition_info[NumOfPart].mask_flags = 0;
     printk("%s:%llX, %llX\n", partition_info[NumOfPart].name,
                                 partition_info[NumOfPart].offset,
@@ -693,7 +702,7 @@ static void _addMstarPartition(struct mtd_info* mtd, SPI_NAND_PARTITION_INFO_t *
 
 }
 
-static int _enableClock(struct platform_device *pdev)
+void _enableClock(struct platform_device *pdev)
 {
     int num_parents, i;
     struct clk **spinand_clks;
@@ -701,7 +710,15 @@ static int _enableClock(struct platform_device *pdev)
     if(num_parents > 0)
     {
         spinand_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
-        //enable all clk
+
+		if(spinand_clks == NULL)
+        {
+            printk( "[SPINAND]kzalloc failed!\n" );
+            return;
+        }
+
+
+		//enable all clk
         for(i = 0; i < num_parents; i++)
         {
             spinand_clks[i] = of_clk_get(pdev->dev.of_node, i);
@@ -709,7 +726,7 @@ static int _enableClock(struct platform_device *pdev)
             {
                 spi_nand_err( "[SPINAND] Fail to get clk!\n" );
                 kfree(spinand_clks);
-                return -ENODEV;
+                return ;
             }
             else
             {
@@ -718,10 +735,9 @@ static int _enableClock(struct platform_device *pdev)
         }
         kfree(spinand_clks);
     }
-    return 0;
 }
 
-static void _disableClock(struct platform_device *pdev)
+void _disableClock(struct platform_device *pdev)
 {
     int num_parents, i;
     struct clk **spinand_clks;
@@ -730,6 +746,12 @@ static void _disableClock(struct platform_device *pdev)
     if(num_parents > 0)
     {
         spinand_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
+
+		if(spinand_clks == NULL)
+        {
+            printk( "[SPINAND]kzalloc failed!\n" );
+            return;
+        }
 
         //disable all clk
         for(i = 0; i < num_parents; i++)
@@ -854,11 +876,15 @@ static int mstar_spinand_probe(struct platform_device *pdev)
     info->pdev = pdev;
     nand = &info->nand;
     mtd = &info->mtd;
+	/* Get pointer to private data */
 
     /* Initialize structures */
     mtd->priv = nand;
+    mtd->name = dev_name(&pdev->dev);
+    mtd->owner = THIS_MODULE;
 
     MDrv_SPINAND_Device(&pdev->dev);
+
     if (MDrv_SPINAND_Init(&(gtSpiNandDrv.tSpinandInfo)) != TRUE)
     {
         spi_nand_err("MDrv_SPINAND_Init fail");
@@ -954,14 +980,17 @@ static int mstar_spinand_probe(struct platform_device *pdev)
     nand->ecc.write_oob = spi_nand_ecc_write_oob;
 //	    nand->options |= NAND_IS_SPI;
     nand->options |= NAND_CACHEPRG;
+    pr_info("%s: Before nand_scan()...\n",__FUNCTION__);
 
     if ((err = nand_scan(mtd, 1)) != 0)
     {
         spi_nand_err("can't register SPI NAND\n");
+        kfree(mtd);
         return -ENOMEM;
     }
 
 #ifdef CONFIG_MTD_CMDLINE_PARTS
+//	#ifdef CONFIG_MTD_PARTITIONS
     {
         int mtd_parts_nb = 0;
 

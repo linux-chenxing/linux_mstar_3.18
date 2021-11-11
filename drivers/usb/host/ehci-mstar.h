@@ -96,51 +96,27 @@
 //------ RIU base addr and bus-addr to phy-addr translation ----------
 #if defined(CONFIG_ARM)
 	//#include <mstar/mstar_chip.h>
-#if defined(CONFIG_ARCH_CEDRIC) || defined(CONFIG_ARCH_INFINITY)
+#if defined(CONFIG_ARCH_CEDRIC) || defined(CONFIG_ARCH_INFINITY) || defined(CONFIG_ARCH_INFINITY3)
 	#define _MSTAR_USB_BASEADR 0xfd200000
 #endif
 
 	#define MIU0_BUS_BASE_ADDR 	MSTAR_MIU0_BUS_BASE
 	#define MIU1_BUS_BASE_ADDR	MSTAR_MIU1_BUS_BASE
 
-	#if defined(CONFIG_MSTAR_EAGLE)
+	#if defined(CONFIG_MSTAR_INFINITY3)
 		#define MIU0_PHY_BASE_ADDR	((unsigned long)0x00000000)
 		/* MIU0 512M*/
 		#define MIU0_SIZE		((unsigned long)0x20000000)
 
 		#define MIU1_PHY_BASE_ADDR	((unsigned long)0x20000000)
-		/* MIU1 512M*/
-		#define MIU1_SIZE		((unsigned long)0x20000000)
-	#elif defined(CONFIG_MSTAR_CEDRIC)
-		#define MIU0_PHY_BASE_ADDR	((unsigned long)0x00000000)
-		/* MIU0 1G*/
-		#define MIU0_SIZE		((unsigned long)0x40000000)
-
-		#define MIU1_PHY_BASE_ADDR	((unsigned long)0x80000000)
-		/* MIU1 0G*/
-		#define MIU1_SIZE		((unsigned long)0x00000000)	
-	#elif defined(CONFIG_MSTAR_INFINITY)
-		#define MIU0_PHY_BASE_ADDR	((unsigned long)0x00000000)
-		/* MIU0 256M*/
-		#define MIU0_SIZE		((unsigned long)0x10000000)
-
-		#define MIU1_PHY_BASE_ADDR	((unsigned long)0x10000000)
 		/* MIU1 0G*/
 		#define MIU1_SIZE		((unsigned long)0x00000000)
 
 		#define ENABLE_USB_NEW_MIU_SLE	1
-		#define USB_MIU_SEL0	((u8) 0x00U)
-		#define USB_MIU_SEL1	((u8) 0xffU)
-		#define USB_MIU_SEL2	((u8) 0xffU)
-		#define USB_MIU_SEL3	((u8) 0xffU)
-	#else
-		#define MIU0_PHY_BASE_ADDR	((unsigned long)0x00000000)
-		/* MIU0 2G*/
-		#define MIU0_SIZE		((unsigned long)0x80000000)
-
-		#define MIU1_PHY_BASE_ADDR	((unsigned long)0x80000000)
-		/* MIU1 1G*/
-		#define MIU1_SIZE		((unsigned long)0x40000000)
+		#define USB_MIU_SEL0	((u8) 0x01U)
+		#define USB_MIU_SEL1	((u8) 0xefU)
+		#define USB_MIU_SEL2	((u8) 0xefU)
+		#define USB_MIU_SEL3	((u8) 0xefU)
 	#endif
 
 	#define BUS2PA(A)	\
@@ -169,7 +145,7 @@
 #define _MSTAR_UHC0_BASE	(_MSTAR_USB_BASEADR+(0x2400*2))
 #define _MSTAR_USBC0_BASE	(_MSTAR_USB_BASEADR+(0x0700*2))
 #endif
-#if defined(CONFIG_ARCH_INFINITY)
+#if defined(CONFIG_ARCH_INFINITY) || defined(CONFIG_ARCH_INFINITY3)
 #define _MSTAR_UTMI0_BASE	(_MSTAR_USB_BASEADR+(0x42100*2))
 #define _MSTAR_UHC0_BASE	(_MSTAR_USB_BASEADR+(0x42400*2))
 #define _MSTAR_USBC0_BASE	(_MSTAR_USB_BASEADR+(0x42300*2))
@@ -182,15 +158,15 @@
 	#define _MSTAR_BC0_BASE		(_MSTAR_USB_BASEADR+(0x22F00*2))
 #elif defined(CONFIG_MSTAR_KENYA)
 	#define _MSTAR_BC0_BASE		(_MSTAR_USB_BASEADR+(0x205E0*2))
-#elif defined(CONFIG_MSTAR_INFINITY)
+#elif defined(CONFIG_MSTAR_INFINITY) || defined(CONFIG_MSTAR_INFINITY3)
 	#define _MSTAR_BC0_BASE		(_MSTAR_USB_BASEADR+(0x42200*2))
 #else
 	#define _MSTAR_BC0_BASE		(_MSTAR_USB_BASEADR+(0x23600*2))
 #endif
 //---- Port1
-#define _MSTAR_UTMI1_BASE	(_MSTAR_USB_BASEADR+(0x3A00*2))
-#define _MSTAR_UHC1_BASE	(_MSTAR_USB_BASEADR+(0x0D00*2))
-#define _MSTAR_USBC1_BASE	(_MSTAR_USB_BASEADR+(0x0780*2))
+#define _MSTAR_UTMI1_BASE	(_MSTAR_USB_BASEADR+(0x42900*2))
+#define _MSTAR_UHC1_BASE	(_MSTAR_USB_BASEADR+(0x43200*2))
+#define _MSTAR_USBC1_BASE	(_MSTAR_USB_BASEADR+(0x43100*2))
 #if defined(CONFIG_MSTAR_KAISERIN)
 	/* ICs do not support BC */
 	#define _MSTAR_BC1_BASE		(0)
@@ -199,51 +175,10 @@
 	#define _MSTAR_BC1_BASE		(_MSTAR_USB_BASEADR+(0x22F40*2))
 #elif defined(CONFIG_MSTAR_KENYA)
 	#define _MSTAR_BC1_BASE		(_MSTAR_USB_BASEADR+(0x205C0*2))
+#elif defined(CONFIG_MSTAR_INFINITY3)
+	#define _MSTAR_BC1_BASE		(_MSTAR_USB_BASEADR+(0x43000*2))
 #else
 	#define _MSTAR_BC1_BASE		(_MSTAR_USB_BASEADR+(0x23620*2))
-#endif
-//---- Port2
-#ifdef ENABLE_THIRD_EHC
-	#if defined(CONFIG_MSTAR_KAISER) || \
-		defined(CONFIG_MSTAR_KAISERIN) || \
-		defined(CONFIG_MSTAR_KAISERS)
-		#define _MSTAR_UTMI2_BASE	(_MSTAR_USB_BASEADR+(0x2A00*2))
-		#define _MSTAR_UHC2_BASE	(_MSTAR_USB_BASEADR+(0x10300*2))
-		#define _MSTAR_USBC2_BASE	(_MSTAR_USB_BASEADR+(0x10200*2))
-	#else
-		#define _MSTAR_UTMI2_BASE	(_MSTAR_USB_BASEADR+(0x3900*2))
-		#define _MSTAR_UHC2_BASE	(_MSTAR_USB_BASEADR+(0x13900*2))
-		#define _MSTAR_USBC2_BASE	(_MSTAR_USB_BASEADR+(0x13800*2))
-	#endif
-
-	#if defined(CONFIG_MSTAR_KAISERIN)
-		/* ICs do not support BC */
-		#define _MSTAR_BC2_BASE		(0)
-	#elif defined(CONFIG_MSTAR_KAISER) || \
-		defined(CONFIG_MSTAR_KAISERS)
-		#define _MSTAR_BC2_BASE		(_MSTAR_USB_BASEADR+(0x22F80*2))
-	#else
-		#define _MSTAR_BC2_BASE		(_MSTAR_USB_BASEADR+(0x23640*2))
-	#endif
-#endif
-//---- Port3
-#ifdef ENABLE_FOURTH_EHC
-	#if defined(CONFIG_MSTAR_KAISERIN)
-		#define _MSTAR_UTMI3_BASE	(_MSTAR_USB_BASEADR+(0x20A00*2))
-		#define _MSTAR_UHC3_BASE	(_MSTAR_USB_BASEADR+(0x20900*2))
-		#define _MSTAR_USBC3_BASE	(_MSTAR_USB_BASEADR+(0x20800*2))
-	#else
-		#define _MSTAR_UTMI3_BASE	(_MSTAR_USB_BASEADR+(0x22080*2))
-		#define _MSTAR_UHC3_BASE	(_MSTAR_USB_BASEADR+(0x22600*2))
-		#define _MSTAR_USBC3_BASE	(_MSTAR_USB_BASEADR+(0x13880*2))
-	#endif
-
-	#if defined(CONFIG_MSTAR_KAISERIN)
-		/* ICs do not support BC */
-		#define _MSTAR_BC3_BASE		(0)
-	#else
-		#define _MSTAR_BC3_BASE		(_MSTAR_USB_BASEADR+(0x23660*2))
-	#endif
 #endif
 //---- Chiptop for Chip version
 #if defined(CONFIG_MSTAR_KAISERIN)
@@ -393,6 +328,32 @@
 //---- 18. Extra HS SOF after bus reset
 #define ENABLE_UHC_EXTRA_HS_SOF_ECO
 
+//---- 19. Not yet support MIU lower bound address subtraction ECO (for chips which use ENABLE_USB_NEW_MIU_SLE)
+//#define DISABLE_MIU_LOW_BOUND_ADDR_SUBTRACT_ECO
+
+//---- 20. UHC speed type report should be reset by device disconnection
+#define ENABLE_DISCONNECT_SPEED_REPORT_RESET_ECO
+
+//---- 21. Port Change Detect (PCD) is triggered by babble. Pulse trigger will not hang this condition.
+/* 1'b0: level trigger
+* 1'b1: one-pulse trigger
+*/
+#define ENABLE_BABBLE_PCD_ONE_PULSE_TRIGGER_ECO
+
+//---- 22. generation of hhc_reset_u
+/* 1'b0: hhc_reset is_u double sync of hhc_reset
+* 1'b1: hhc_reset_u is one-pulse of hhc_reset
+*/
+#define ENABLE_HC_RESET_FAIL_ECO
+
+//---- 23. EHCI keeps running when device is disconnected
+//#define ENABLE_DISCONNECT_HC_KEEP_RUNNING_ECO
+
+//---- 24. Chirp patch use software overwrite value
+/* reg_sw_chirp_override_bit set to 0 */
+#define DISABLE_NEW_HW_CHRIP_ECO
+
+
 //--------------------------------------------------------------------
 
 
@@ -502,14 +463,8 @@
 #define _USB_MINI_PV2MI_BURST_SIZE 1
 
 //--------------------------------------------------------------------
-#if defined(CONFIG_MSTAR_KAISER) || \
-	defined(CONFIG_MSTAR_KAISERS)      
-	#define _USB_UTMI_DPDM_SWAP_P0 1
-	#define _USB_UTMI_DPDM_SWAP_P1 1
-#else
 	#define _USB_UTMI_DPDM_SWAP_P0 0
 	#define _USB_UTMI_DPDM_SWAP_P1 0
-#endif
 
 //------ Titania3_series_start_ehc flag ------------------------------
 // Use low word as flag
@@ -523,7 +478,7 @@
 #define EHCFLAG_DDR_x18			0x20000000 //480MHz x1.8
 //--------------------------------------------------------------------
 // 0x00: 550mv, 0x20: 575, 0x40: 600, 0x60: 625
-#define UTMI_DISCON_LEVEL_2A	(0x60)
+#define UTMI_DISCON_LEVEL_2A	(0x62)
 
 //------ UTMI eye diagram parameters ---------------------------------
 #if defined(CONFIG_MSTAR_AMBER3) ||\

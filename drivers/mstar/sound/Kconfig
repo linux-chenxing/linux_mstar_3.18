@@ -6,68 +6,10 @@ menuconfig MS_SOUND
 	select SND_PCM
 	help
 	  Say Y or M if you want to add support for codecs attached to
-	  the Cedric3 Bach Aduio driver.
+	  the iNfinity3e Bach Aduio driver.
 
-config MS_SOUND_CEDRIC
-    tristate "Audio support for Cedric"
+
+config MS_SOUND_INFINITY3
+    tristate "Audio support for iNfinity3e"
     depends on MS_SOUND
-    depends on ARCH_CEDRIC    		
-
-config MS_SOUND_CHICAGO
-    tristate "Audio support for Chicago"
-    depends on MS_SOUND
-    depends on ARCH_CHICAGO
-
-config MS_SOUND_INFINITY
-    tristate "Audio support for iNfinity"
-    depends on MS_SOUND
-    depends on ARCH_INFINITY
-
-if 0
-
-config MS_SOUND_SND_DEFAULT_VOLUME
-	int "default audio playback volume"
-	default 64
-	range 0 76
-	depends on MS_SOUND
-	help
-	  default volume range from 0 ~ 76, each step is 1 db
-	  76 is max 12 db and 0 is min -64db
-
-config MS_SOUND_SND_DEFAULT_C_VOLUME
-	int "default audio capture volume"
-	default 76
-	range 0 76
-	depends on MS_SOUND
-	help
-	  default volume range from 0 ~ 76, each step is 1 db
-	  76 is max 12 db and 0 is min -64db
-
-config MS_SOUND_SND_DEFAULT_MIC_GAIN
-	int "default audio mic gain"
-	default 0
-	range 0 5
-	depends on MS_SOUND
-	help
-	  default volume range from 0 ~ 5,
-	  5 is max 23+15db and 0 is min 13+9db
-
-config MS_SOUND_SND_DEFAULT_LINEOUT_GAIN
-	int "default audio lineout gain"
-	default 1
-	range 0 2
-	depends on MS_SOUND
-	help
-	  default gain level from 0 ~ 2,
-	  2 is +3db, 1 is +0db ,and 0 is mute
-	  
-config MS_SOUND_SND_DEFAULT_ADC_GAIN
-	int "default audio ADC gain"
-	default 1
-	range 0 6
-	depends on MS_SOUND
-	help
-	  default gain level from 0 ~ 6,
-	  1 is +0db ,2~6 each step is +3db and 0 is mute	  
-
-endif
+    depends on ARCH_INFINITY3

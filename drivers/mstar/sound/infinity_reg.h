@@ -2,7 +2,7 @@
 //
 // infinity_reg.h
 //
-// definitions for the iNfinity BACH, Mstar's Audio Codec Spec
+// definitions for the iNfinity3 BACH, Mstar's Audio Codec Spec
 //
 
 #ifndef _INFINITY_REG_H_

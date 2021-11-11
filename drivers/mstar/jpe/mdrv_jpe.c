@@ -238,6 +238,25 @@ irqreturn_t  mdrv_jpe_drv_isr(int irq, void* dev_data)
         /* Update status */
         file_data->jpe_handle.ejpeDevStatus = JPE_DEV_BUSY;
         file_data->nOutBufAddr = addr;
+#else
+        JPE_MSG(JPE_MSG_WARNING, "JPE_DEV_OUTBUF_FULL!!\n");
+        file_data->enc_outbuf.addr = file_data->nOutBufAddr;
+        file_data->enc_outbuf.output_size = _dev_data->jpe_handle.nEncodeSize;
+        file_data->enc_outbuf.eState = JPE_OUTBUF_FULL_STATE;
+
+        /* Clear filled buffer address */
+        file_data->nOutBufAddr = 0;
+
+        /* Wake up waiting thread/process */
+        wake_up_interruptible(&file_data->wait_queue);
+
+        /* Enter critical section */
+        down(&_dev_data->jpe_sem);
+        _dev_data->cur_file = NULL;
+        /* Leave critical section */
+        up(&_dev_data->jpe_sem);
+        wake_up(&_dev_data->jpe_wqh);
+
 #endif
         break;
 

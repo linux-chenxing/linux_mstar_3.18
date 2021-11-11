@@ -67,11 +67,14 @@ typedef enum
 */
 typedef enum
 {
-    E_IOCTL_HVSP_DNR_R  = 1,    ///< IP only read
-    E_IOCTL_HVSP_DNR_W  = 2,    ///< IP only write
-    E_IOCTL_HVSP_DNR_RW = 3,    ///< IP R/W
-    E_IOCTL_HVSP_DNR_NUM= 4,    ///< IP none open
-}EN_IOCTL_HVSP_DNR_TYPE;
+    E_IOCTL_HVSP_MCNR_YCM_R  = 0x1,    ///< IP only read
+    E_IOCTL_HVSP_MCNR_YCM_W  = 0x2,    ///< IP only write
+    E_IOCTL_HVSP_MCNR_YCM_RW = 0x3,    ///< IP R/W
+    E_IOCTL_HVSP_MCNR_CIIR_R = 0x4,    ///< IP only read
+    E_IOCTL_HVSP_MCNR_CIIR_W = 0x8,    ///< IP only write
+    E_IOCTL_HVSP_MCNR_CIIR_RW = 0xC,    ///< IP R/W
+    E_IOCTL_HVSP_MCNR_NON = 0x10,    ///< IP none open
+}EN_IOCTL_HVSP_MCNR_TYPE;
 
 /**
 * Used to setup the OSD locate of hvsp device
@@ -99,6 +102,10 @@ typedef enum
     EN_IOCTL_HVSP_FBMG_SET_DNR_COMDE_ON    = 0x200,
     EN_IOCTL_HVSP_FBMG_SET_DNR_COMDE_OFF   = 0x400,
     EN_IOCTL_HVSP_FBMG_SET_DNR_COMDE_265OFF   = 0x800,
+    EN_IOCTL_HVSP_FBMG_SET_PRVCROP_ON      = 0x1000,
+    EN_IOCTL_HVSP_FBMG_SET_PRVCROP_OFF     = 0x2000,
+    EN_IOCTL_HVSP_FBMG_SET_CIIR_ON      = 0x4000,
+    EN_IOCTL_HVSP_FBMG_SET_CIIR_OFF     = 0x8000,
 }EN_IOCTL_HVSP_FBMG_SET_TYPE;
 //=============================================================================
 // struct
@@ -122,7 +129,7 @@ typedef struct
     unsigned short u16Y;        ///< crop frame start y point
     unsigned short u16Width;    ///< crop width size
     unsigned short u16Height;   ///< crop height size
-}ST_IOCTL_HVSP_WINDOW_CONFIG;
+}__attribute__ ((__packed__))ST_IOCTL_HVSP_WINDOW_CONFIG;
 
 /**
 * Used to setup the HVSP timing gen of hvsp device
@@ -217,7 +224,7 @@ typedef struct
     unsigned char   u8Cmd;      ///< register value
     unsigned long   u32Size;    ///< number
     unsigned long   u32Addr;    ///< bank&addr
-}ST_IOCTL_HVSP_MISC_CONFIG;
+}__attribute__ ((__packed__))ST_IOCTL_HVSP_MISC_CONFIG;
 
 //IOCTL HVSP_SET_POST_CROP_CONFIG
 /**
@@ -262,6 +269,28 @@ typedef struct
 {
     signed long s32Id;  ///< private ID
 }ST_IOCTL_HVSP_PRIVATE_ID_CONFIG;
+
+//IOCTL_HVSP_PRIMASK_CONFIG
+/**
+* Used to set MASK of hvsp device
+*/
+typedef struct
+{
+    unsigned int   VerChk_Version ; ///< VerChk version
+    unsigned char bMask; ///<Mask or not
+    unsigned char u8idx; ///< mask id
+    ST_IOCTL_HVSP_WINDOW_CONFIG stMaskWin;      ///< Mask info
+    unsigned int   VerChk_Size; ///< VerChk Size
+}__attribute__ ((__packed__)) ST_IOCTL_HVSP_PRIMASK_CONFIG;
+/**
+* Used to set MASK trigger of hvsp device
+*/
+typedef struct
+{
+    unsigned int   VerChk_Version ; ///< VerChk version
+    unsigned char bEn; ///<Mask enable
+    unsigned int   VerChk_Size; ///< VerChk Size
+}__attribute__ ((__packed__)) ST_IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG;
 
 //IOCTL_HVSP_SET_OSD_CONFIG
 /**

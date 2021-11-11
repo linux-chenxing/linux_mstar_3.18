@@ -55,7 +55,6 @@
 //=============================================================================
 // IOCTRL defines
 //=============================================================================
-#define IOCTL_VIP_SET_DNR_CONFIG_NR                            (0)  ///< The IOCTL NR definition,IOCTL_VIP_SET_DNR_CONFIG
 #define IOCTL_VIP_SET_PEAKING_CONFIG_NR                        (1)  ///< The IOCTL NR definition,IOCTL_VIP_SET_PEAKING_CONFIG
 #define IOCTL_VIP_SET_DLC_HISTOGRAM_CONFIG_NR                  (2)  ///< The IOCTL NR definition,IOCTL_VIP_SET_DLC_HISTOGRAM_CONFIG
 #define IOCTL_VIP_GET_DLC_HISTOGRAM_REPORT_NR                  (3)  ///< The IOCTL NR definition,IOCTL_VIP_GET_DLC_HISTOGRAM_REPORT
@@ -75,12 +74,14 @@
 #define IOCTL_VIP_SET_LDC_SRAM_CONFIG_NR                       (18) ///< The IOCTL NR definition,IOCTL_VIP_SET_LDC_SRAM_CONFIG
 #define IOCTL_VIP_SET_ACK_CONFIG_NR                            (19) ///< The IOCTL NR definition,IOCTL_VIP_SET_ACK_CONFIG
 #define IOCTL_VIP_SET_NLM_CONFIG_NR                            (20) ///< The IOCTL NR definition,IOCTL_VIP_SET_NLM_CONFIG
-#define IOCTL_VIP_SNR_CONFIG_NR                                (21) ///< The IOCTL NR definition,IOCTL_VIP_SNR_CONFIG
 #define IOCTL_VIP_SET_VTRACK_CONFIG_NR                         (22) ///< The IOCTL NR definition,IOCTL_VIP_SET_VTRACK_CONFIG
 #define IOCTL_VIP_SET_VTRACK_ONOFF_CONFIG_NR                   (23) ///< The IOCTL NR definition,IOCTL_VIP_SET_VTRACK_ONOFF_CONFIG
-#define IOCLT_VIP_GET_VERSION_CONFIG_NR                        (24)  ///< The IOCTL NR definition, IOCLT_VIP_GET_VERSION_CONFIG_NR
-#define IOCLT_VIP_SET_ALLVIP_CONFIG_NR                         (25) ///< The IOCTL NR for vip driver
-#define IOCTL_VIP_MAX_NR                                       (26) ///< The Max IOCTL NR for vip driver
+#define IOCTL_VIP_AIP_CONFIG_NR                                (24) ///< The IOCTL NR definition,IOCTL_VIP_AIP_CONFIG
+#define IOCTL_VIP_AIP_SRAM_CONFIG_NR                           (25) ///< The IOCTL NR definition,IOCTL_VIP_AIP_SRAM_CONFIG
+#define IOCTL_VIP_SET_MCNR_CONFIG_NR                           (26)  ///< The IOCTL NR definition,IOCTL_VIP_SET_MCNR_CONFIG
+#define IOCLT_VIP_GET_VERSION_CONFIG_NR                        (27)  ///< The IOCTL NR definition, IOCLT_VIP_GET_VERSION_CONFIG_NR
+#define IOCLT_VIP_SET_ALLVIP_CONFIG_NR                         (IOCLT_VIP_GET_VERSION_CONFIG_NR+1) ///< The IOCTL NR for vip driver
+#define IOCTL_VIP_MAX_NR                                       (IOCLT_VIP_SET_ALLVIP_CONFIG_NR+1) ///< The Max IOCTL NR for vip driver
 
 
 // use 'm' as magic number
@@ -89,10 +90,6 @@
 * Used to set CMDQ cmd, use ST_IOCTL_VIP_CMDQ_CONFIG.
 */
 #define IOCTL_VIP_CMDQ_WRITE_CONFIG                            _IO(IOCTL_VIP_MAGIC,  IOCTL_VIP_CMDQ_WRITE_CONFIG_NR)
-/**
-* Used to set DNR, use ST_IOCTL_VIP_DNR_CONFIG.
-*/
-#define IOCTL_VIP_SET_DNR_CONFIG                               _IO(IOCTL_VIP_MAGIC,  IOCTL_VIP_SET_DNR_CONFIG_NR)
 /**
 * Used to set LDC, use ST_IOCTL_VIP_LDC_CONFIG.
 */
@@ -162,10 +159,6 @@
 */
 #define IOCTL_VIP_SET_NLM_CONFIG                               _IO(IOCTL_VIP_MAGIC,  IOCTL_VIP_SET_NLM_CONFIG_NR)
 /**
-* Used to set SNR, use ST_IOCTL_VIP_SNR_CONFIG.
-*/
-#define IOCTL_VIP_SET_SNR_CONFIG                               _IO(IOCTL_VIP_MAGIC,  IOCTL_VIP_SNR_CONFIG_NR)
-/**
 * Used to set VIPLB, use ST_IOCTL_VIP_CONFIG.
 */
 #define IOCTL_VIP_SET_VIP_CONFIG                               _IO(IOCTL_VIP_MAGIC,  IOCTL_VIP_SET_VIP_CONFIG_NR)
@@ -177,6 +170,19 @@
 * Used to set VTACK ON, use ST_IOCTL_VIP_VTRACK_ONOFF_CONFIG.
 */
 #define IOCTL_VIP_SET_VTRACK_ONOFF_CONFIG                      _IO(IOCTL_VIP_MAGIC,  IOCTL_VIP_SET_VTRACK_ONOFF_CONFIG_NR)
+/**
+* Used to set AIP, use ST_IOCTL_VIP_AIP_CONFIG.
+*/
+#define IOCTL_VIP_SET_AIP_CONFIG                               _IO(IOCTL_VIP_MAGIC,  IOCTL_VIP_AIP_CONFIG_NR)
+/**
+* Used to set AIP, use ST_IOCTL_VIP_AIP_SRAM_CONFIG.
+*/
+#define IOCTL_VIP_SET_AIP_SRAM_CONFIG                          _IO(IOCTL_VIP_MAGIC,  IOCTL_VIP_AIP_SRAM_CONFIG_NR)
+/**
+* Used to set MCNR , use ST_IOCTL_VIP_MCNR_CONFIG.
+*/
+#define IOCTL_VIP_SET_MCNR_CONFIG                               _IO(IOCTL_VIP_MAGIC,  IOCTL_VIP_SET_MCNR_CONFIG_NR)
+
 /**
 * Used to get version, use ST_IOCTL_VIP_GET_VERSION_CONFIG.
 */

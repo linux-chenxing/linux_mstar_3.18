@@ -498,8 +498,8 @@ MS_BOOL MDrv_FLASH_CheckWriteDone(void);
 
 //Flash Self-Programming (FSP)
 
-MS_BOOL MDrv_FSP_Read(MS_U32 u32FlashAddr, MS_U32 u32FlashSize, MS_U8 *user_buffer);
-MS_BOOL MDrv_FSP_Write(MS_U32 u32FlashAddr, MS_U32 u32FlashSize, MS_U8 *user_buffer);
+//MS_BOOL MDrv_FSP_Read(MS_U32 u32FlashAddr, MS_U32 u32FlashSize, MS_U8 *user_buffer);
+//MS_BOOL MDrv_FSP_Write(MS_U32 u32FlashAddr, MS_U32 u32FlashSize, MS_U8 *user_buffer);
 MS_BOOL MDrv_FSP_ReadStatusRegister(MS_U8 *pu8StatusReg);
 MS_BOOL MDrv_FSP_AddressErase(MS_U32 u32StartAddr, MS_U32 u32EraseSize, E_FSP_ERASE eERASE);
 

@@ -44,6 +44,7 @@
 #include <linux/clk-provider.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
+#include <ms_platform.h> //for reading strapping
 
 #define CONFIG_DISABLE_WRITE_PROTECT
 #define CONFIG_MTD_PARTITIONS
@@ -91,12 +92,13 @@ static int serflash_erase(struct mtd_info *mtd, struct erase_info *instr)
 {
 
     struct serflash *flash = mtd_to_serflash(mtd);
-    //ulong addr,len,start_sec,end_sec;
-    ulong addr,len;
-    uint64_t addr_bak;
+    uint64_t addr_temp, len_temp;
 
     //printk(KERN_WARNING"%s: addr 0x%08x, len %ld\n", __func__, (u32)instr->addr, (long int)instr->len);
 
+    /* sanity checks */
+    if (!instr->len)
+        return 0;
 
     /* range and alignment check */
     if (instr->addr + instr->len > mtd->size)
@@ -105,19 +107,16 @@ static int serflash_erase(struct mtd_info *mtd, struct erase_info *instr)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,39)
     /*  mod = do_div(x,y);
         result = x; */
-    addr_bak = instr->addr;
-    if ((do_div(instr->addr , mtd->erasesize)) != 0 ||(do_div(instr->len, mtd->erasesize) != 0))
+    addr_temp = instr->addr;
+    len_temp = instr->len;
+    if ((do_div(addr_temp , mtd->erasesize) != 0) ||(do_div(len_temp, mtd->erasesize) != 0))
     {
         return -EINVAL;
     }
-    instr->addr = addr_bak;
 #else
     if ((instr->addr % mtd->erasesize) != 0 || (instr->len % mtd->erasesize) != 0)
         return -EINVAL;
 #endif
-
-    addr = instr->addr;
-    len = instr->len;
 
     mutex_lock(&flash->lock);
 
@@ -130,7 +129,7 @@ static int serflash_erase(struct mtd_info *mtd, struct erase_info *instr)
     }
 #endif
     /* erase the whole chip */
-    if (len == mtd->size && !MDrv_SERFLASH_EraseChip())
+    if (instr->len == mtd->size && !MDrv_SERFLASH_EraseChip())
     {
         instr->state = MTD_ERASE_FAILED;
 #ifndef CONFIG_DISABLE_WRITE_PROTECT
@@ -139,21 +138,16 @@ static int serflash_erase(struct mtd_info *mtd, struct erase_info *instr)
         mutex_unlock(&flash->lock);
         return -EIO;
     }
-    else
+    else if (!MDrv_SERFLASH_AddressErase(instr->addr, instr->len, 1))
     {
-        if (len)
-        {
-            if (!MDrv_SERFLASH_AddressErase(addr, len, 1))
-            {
-                instr->state = MTD_ERASE_FAILED;
+        instr->state = MTD_ERASE_FAILED;
 #ifndef CONFIG_DISABLE_WRITE_PROTECT
-                MDrv_SERFLASH_WriteProtect(1);
+        MDrv_SERFLASH_WriteProtect(1);
 #endif
-                mutex_unlock(&flash->lock);
-                return -EIO;
-            }
-        }
+        mutex_unlock(&flash->lock);
+        return -EIO;
     }
+
 #ifndef CONFIG_DISABLE_WRITE_PROTECT
     MDrv_SERFLASH_WriteProtect(1);
 #endif
@@ -221,7 +215,6 @@ static int serflash_write(struct mtd_info *mtd, loff_t to, size_t len,
                           size_t *retlen, const u_char *buf)
 {
     struct serflash *flash = mtd_to_serflash(mtd);
-    u32 erase_start, erase_end;
 
     //printk(KERN_WARNING "%s %s 0x%08x, len %zd\n",__func__, "to", (u32)to, len);
 
@@ -234,10 +227,6 @@ static int serflash_write(struct mtd_info *mtd, loff_t to, size_t len,
 
     if (to + len > flash->mtd.size)
         return -EINVAL;
-
-    // calculate erase sectors
-    erase_start = (u32)to / mtd->erasesize;
-    erase_end = (u32)(to+len) / mtd->erasesize - 1;
 
     mutex_lock(&flash->lock);
 
@@ -387,12 +376,21 @@ static int serflash_probe(struct platform_device *pdev)
     struct serflash			*flash;
     int num_parents, i;
     struct clk **spi_clks;
+    MS_U32 u32Val;
+    u32 u32Ret;
+
+    if(Chip_Get_Storage_Type()!= MS_STORAGE_NOR)
+        return 0;
 
     num_parents = of_clk_get_parent_count(pdev->dev.of_node);
     if(num_parents > 0)
     {
         spi_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
-
+        if(spi_clks==NULL)
+        {
+            printk( "[serflash_probe] kzalloc Fail!\n" );
+            return -1;
+        }
         //enable all clk
         for(i = 0; i < num_parents; i++)
         {
@@ -411,9 +409,9 @@ static int serflash_probe(struct platform_device *pdev)
         kfree(spi_clks);
     }
 
-    if(!of_property_read_u32(pdev->dev.of_node, "quadread", &num_parents))
+    if(!of_property_read_u32(pdev->dev.of_node, "quadread", (u32 *)&u32Val))
     {
-        gQuadSupport = num_parents;
+        gQuadSupport = u32Val;
     }else{
         gQuadSupport = 0;
         //printk( "[serflash_probe] not search quadread on DTS\n" );
@@ -451,7 +449,8 @@ static int serflash_probe(struct platform_device *pdev)
     flash->mtd.writesize = 1;
     flash->mtd.writebufsize = flash->mtd.writesize;
     flash->mtd.flags = MTD_CAP_NORFLASH;
-    MDrv_SERFLASH_DetectSize((MS_U32*)&flash->mtd.size);
+    MDrv_SERFLASH_DetectSize(&u32Val);
+    flash->mtd.size = u32Val;
     flash->mtd._erase = serflash_erase;
     flash->mtd._read = serflash_read;
     flash->mtd._write = serflash_write;
@@ -531,13 +530,18 @@ static int serflash_probe(struct platform_device *pdev)
             {
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,39)
-                return mtd_device_register(&flash->mtd, parts, j);
+                u32Ret = mtd_device_register(&flash->mtd, parts, j);
 #else
-                return add_mtd_partitions(&flash->mtd, parts, j);
+                u32Ret = add_mtd_partitions(&flash->mtd, parts, j);
 #endif
+                if(!u32Ret)//success
+                {
+                    kfree(parts);
+                    return u32Ret;
+                }
             }
-            //        	parts[i].name=
-
+            kfree(parts);
+            parts = NULL;
         }
         printk(KERN_WARNING"MXP NOT FOUND!!\n");
 #endif //end CONFIG_MS_FLASH_ISP_MXP_PARTS
@@ -561,19 +565,24 @@ static int serflash_probe(struct platform_device *pdev)
             }
             flash->partitioned = 1;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,39)
-            return mtd_device_register(&flash->mtd, parts, nr_parts);
+            u32Ret = mtd_device_register(&flash->mtd, parts, nr_parts);
 #else
-            return add_mtd_partitions(&flash->mtd, parts, nr_parts);
+            u32Ret = add_mtd_partitions(&flash->mtd, parts, nr_parts);
 #endif
         }
         else
         {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,39)
-            return mtd_device_register(&flash->mtd, serflash_partition_info, SERFLASH_NUM_PARTITIONS);
+            u32Ret = mtd_device_register(&flash->mtd, serflash_partition_info, SERFLASH_NUM_PARTITIONS);
 #else
-            return add_mtd_partitions(&flash->mtd, serflash_partition_info, SERFLASH_NUM_PARTITIONS);
+            u32Ret = add_mtd_partitions(&flash->mtd, serflash_partition_info, SERFLASH_NUM_PARTITIONS);
 #endif
         }
+        if(!u32Ret) //success
+        {
+            return u32Ret;
+        }
+
     }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,39)
@@ -606,7 +615,11 @@ static int serflash_cleanup(struct platform_device *pdev)
     if(num_parents > 0)
     {
         spi_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
-
+        if(spi_clks==NULL)
+        {
+            printk( "[serflash_probe] kzalloc Fail!\n" );
+            return -1;
+        }
         //disable all clk
         for(i = 0; i < num_parents; i++)
         {
@@ -643,24 +656,32 @@ static int serflash_suspend(struct platform_device *pdev, pm_message_t state)
     struct clk **spi_clks;
 
     num_parents = of_clk_get_parent_count(pdev->dev.of_node);
-    spi_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
-
-    //disable all clk
-    for(i = 0; i < num_parents; i++)
+    if(num_parents)
     {
-        spi_clks[i] = of_clk_get(pdev->dev.of_node, i);
-        if (IS_ERR(spi_clks[i]))
+        spi_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
+        if(spi_clks==NULL)
         {
-            printk( "[serflash_suspend] Fail to get clk!\n" );
-            kfree(spi_clks);
+            printk( "[serflash_probe] kzalloc Fail!\n" );
             return -1;
         }
-        else
+
+        //disable all clk
+        for(i = 0; i < num_parents; i++)
         {
-            clk_disable_unprepare(spi_clks[i]);
+            spi_clks[i] = of_clk_get(pdev->dev.of_node, i);
+            if (IS_ERR(spi_clks[i]))
+            {
+                printk( "[serflash_suspend] Fail to get clk!\n" );
+                kfree(spi_clks);
+                return -1;
+            }
+            else
+            {
+                clk_disable_unprepare(spi_clks[i]);
+            }
         }
+        kfree(spi_clks);
     }
-    kfree(spi_clks);
 #endif
     return 0;
 }
@@ -672,21 +693,29 @@ static int serflash_resume(struct platform_device *pdev)
     struct clk **spi_clks;
 
     num_parents = of_clk_get_parent_count(pdev->dev.of_node);
-    spi_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
-
-    //enable all clk
-    for(i = 0; i < num_parents; i++)
+    if(num_parents)
     {
-        spi_clks[i] = of_clk_get(pdev->dev.of_node, i);
-        if (IS_ERR(spi_clks[i]))
+        spi_clks = kzalloc((sizeof(struct clk *) * num_parents), GFP_KERNEL);
+        if(spi_clks==NULL)
         {
-            printk( "[serflash_cleanup] Fail to get clk!\n" );
-            kfree(spi_clks);
+            printk( "[serflash_probe] kzalloc Fail!\n" );
             return -1;
         }
-        else
+
+        //enable all clk
+        for(i = 0; i < num_parents; i++)
         {
-            clk_prepare_enable(spi_clks[i]);
+            spi_clks[i] = of_clk_get(pdev->dev.of_node, i);
+            if (IS_ERR(spi_clks[i]))
+            {
+                printk( "[serflash_cleanup] Fail to get clk!\n" );
+                kfree(spi_clks);
+                return -1;
+            }
+            else
+            {
+                clk_prepare_enable(spi_clks[i]);
+            }
         }
         kfree(spi_clks);
     }

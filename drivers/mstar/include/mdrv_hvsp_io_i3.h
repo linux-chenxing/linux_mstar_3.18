@@ -68,8 +68,10 @@
 #define IOCTL_HVSP_RELEASE_MEM_CONFIG_NR      (8)   ///< The IOCTL NR definition,IOCTL_HVSP_RELEASE_MEM_CONFIG
 #define IOCTL_HVSP_SET_OSD_CONFIG_NR          (9)   ///< The IOCTL NR definition,IOCTL_HVSP_SET_OSD_CONFIG
 #define IOCTL_HVSP_SET_FB_MANAGE_CONFIG_NR    (10)  ///< The IOCTL NR definition,IOCTL_HVSP_SET_FB_MANAGE_CONFIG
-#define IOCLT_HVSP_GET_VERSION_CONFIG_NR      (11)  ///< The IOCTL NR definition, IOCLT_HVSP_GET_VERSION_CONFIG_NR
-#define IOCTL_HVSP_MAX_NR                     (12)  ///< The Max IOCTL NR for hvsp driver
+#define IOCTL_HVSP_SET_PRIMASK_CONFIG_NR      (11)  ///< The IOCTL NR definition, IOCLT_HVSP_GET_VERSION_CONFIG_NR
+#define IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG_NR  (12)  ///< The IOCTL NR definition, IOCLT_HVSP_GET_VERSION_CONFIG_NR
+#define IOCLT_HVSP_GET_VERSION_CONFIG_NR      (13)  ///< The IOCTL NR definition, IOCLT_HVSP_GET_VERSION_CONFIG_NR
+#define IOCTL_HVSP_MAX_NR                     (IOCLT_HVSP_GET_VERSION_CONFIG_NR+1)  ///< The Max IOCTL NR for hvsp driver
 
 
 // use 'm' as magic number
@@ -122,6 +124,14 @@
 * Used to get version, use ST_IOCTL_HVSP_GET_VERSION_CONFIG.
 */
 #define IOCTL_HVSP_GET_VERSION_CONFIG            _IO(IOCTL_HVSP_MAGIC,  IOCLT_HVSP_GET_VERSION_CONFIG_NR)
+/**
+* Used to Set MASK Configuration, use ST_IOCTL_HVSP_PRIMASK_CONFIG.
+*/
+#define IOCTL_HVSP_SET_PRIMASK_CONFIG               _IO(IOCTL_HVSP_MAGIC,  IOCTL_HVSP_SET_PRIMASK_CONFIG_NR)
+/**
+* Used to Set MASK Trigger, use ST_IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG.
+*/
+#define IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG               _IO(IOCTL_HVSP_MAGIC,  IOCTL_HVSP_PRIMASK_TRIGGER_CONFIG_NR)
 
 #endif //
 /** @} */ // end of hvsp_group

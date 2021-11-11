@@ -94,6 +94,10 @@ void MIU_select_setting_ehc(uintptr_t USBC_base)
 	writeb(USB_MIU_SEL2, (void*)(USBC_base+0x17*2-1));	//Setting MIU2 segment
 	writeb(USB_MIU_SEL3, (void*)(USBC_base+0x18*2));	//Setting MIU3 segment
 	writeb(readb((void*)(USBC_base+0x19*2-1)) | BIT0, (void*)(USBC_base+0x19*2-1));	//Enable miu partition mechanism
+#if  !defined(DISABLE_MIU_LOW_BOUND_ADDR_SUBTRACT_ECO)
+	printk("[USB] enable miu lower bound address subtraction\n");
+	writeb(readb((void*)(USBC_base+0x0F*2-1)) | BIT0, (void*)(USBC_base+0x0F*2-1));
+#endif
 }
 #endif
 
@@ -106,13 +110,15 @@ void Titania3_series_start_ehc(unsigned int UTMI_base, unsigned int USBC_base, u
 {
 	printk("Titania3_series_start_ehc start\n");
 
-#ifdef CONFIG_USB_MS_OTG
-	if(force_host)
-#endif
-	{
+	printk("enable USB function\n");
+	writew(0x0001, (void*) (UTMI_base+0x0*2)); 
 
-		Chip_Function_Set(CHIP_FUNC_USB_VBUS_CONTROL, 1);
-	}
+#ifdef CONFIG_USB_MS_OTG
+	//if(force_host)
+	//{
+	//	Chip_Function_Set(CHIP_FUNC_USB_VBUS_CONTROL, 1);
+	//}
+#endif
 
 #if defined(ENABLE_USB_NEW_MIU_SLE)
 	MIU_select_setting_ehc(USBC_base);
@@ -375,6 +381,36 @@ void Titania3_series_start_ehc(unsigned int UTMI_base, unsigned int USBC_base, u
 		writeb(readb((void*)(USBC_base+0x13*2-1)) | BIT0, (void*)(USBC_base+0x13*2-1));
 #endif
 
+#if defined(ENABLE_DISCONNECT_SPEED_REPORT_RESET_ECO)
+	/* UHC speed type report should be reset by device disconnection */
+	writeb(readb((void*)(USBC_base+0x20*2)) | BIT0, (void*)(USBC_base+0x20*2));
+#endif
+
+#if defined(ENABLE_BABBLE_PCD_ONE_PULSE_TRIGGER_ECO)
+	/* Port Change Detect (PCD) is triggered by babble.
+	 * Pulse trigger will not hang this condition.
+	 */
+	writeb(readb((void*)(USBC_base+0x20*2)) | BIT1, (void*)(USBC_base+0x20*2));
+#endif
+
+#if defined(ENABLE_HC_RESET_FAIL_ECO)
+	/* generation of hhc_reset_u */
+	writeb(readb((void*)(USBC_base+0x20*2)) | BIT2, (void*)(USBC_base+0x20*2));
+#endif
+
+#if defined(ENABLE_DISCONNECT_HC_KEEP_RUNNING_ECO)
+	/* EHCI keeps running when device is disconnected */
+	writeb(readb((void*)(USBC_base+0x19*2-1)) | BIT3, (void*)(USBC_base+0x19*2-1));
+#endif
+
+#if defined(DISABLE_NEW_HW_CHRIP_ECO)
+	/* voltage level controlled by hardware
+	 * reg_sw_chirp_override_bit = 0
+	 */
+	writeb(readb((void*)(UTMI_base+0x40*2)) & (u8)(~BIT4), (void*)(UTMI_base+0x40*2));
+#endif
+
+
 #if defined(MSTAR_EFUSE_RTERM)
 	{
 		u16 val;
@@ -409,6 +445,7 @@ extern unsigned int irq_of_parse_and_map(struct device_node *node, int index);
  * through the hotplug entry's driver_data.
  *
  */
+extern int Chip_Function_Set(int function_id, int param);
 
 int usb_ehci_mstar_probe(const struct hc_driver *driver,
 		struct usb_hcd **hcd_out, struct platform_device *dev)
@@ -418,9 +455,15 @@ int usb_ehci_mstar_probe(const struct hc_driver *driver,
 	struct usb_hcd *hcd;
 	struct ehci_hcd *ehci;
 	unsigned int flag = 0;
-    int num_parents, i;
-    struct clk **ehci_clks;
+    //int num_parents, i;
+    //struct clk **ehci_clks;
+#if defined(CONFIG_OF)
+	u32 val;
+	int ret;
+	struct device_node *node = dev->dev.of_node;
+#endif
 
+#if 0
     num_parents = of_clk_get_parent_count(dev->dev.of_node);
     if(num_parents > 0)
     {
@@ -443,7 +486,7 @@ int usb_ehci_mstar_probe(const struct hc_driver *driver,
         }
         kfree(ehci_clks);
     }
-
+#endif
 
 #ifdef ENABLE_CHIPTOP_PERFORMANCE_SETTING
 	int chipVER = readw((void *)(MSTAR_CHIP_TOP_BASE+0xCE*2));
@@ -458,13 +501,24 @@ int usb_ehci_mstar_probe(const struct hc_driver *driver,
 #if _USB_UTMI_DPDM_SWAP_P0
 		flag |= EHCFLAG_DPDM_SWAP;
 #endif
+#if defined(CONFIG_OF)
+		ret = of_property_read_u32(node, "dpdm_swap", &val);
+			if(ret == 0)
+				flag |= val;//EHCFLAG_DPDM_SWAP
+#endif
+        Chip_Function_Set(CHIP_FUNC_USB_VBUS_CONTROL,1); //enable port0 5v for temporarily
 		Titania3_series_start_ehc(_MSTAR_UTMI0_BASE, _MSTAR_USBC0_BASE, _MSTAR_UHC0_BASE, flag);
 	}
-	else if( 0==strcmp(dev->name, "Mstar-ehci-2") )
+	else if( 0==strcmp(dev->name, "soc:Mstar-ehci-2") )
 	{
 		printk("Mstar-ehci-2 H.W init\n");
 #if _USB_UTMI_DPDM_SWAP_P1
 		flag |= EHCFLAG_DPDM_SWAP;
+#endif
+#if defined(CONFIG_OF)
+		ret = of_property_read_u32(node, "dpdm_swap", &val);
+		if(ret == 0)
+		flag |= val;//EHCFLAG_DPDM_SWAP
 #endif
 		Titania3_series_start_ehc(_MSTAR_UTMI1_BASE, _MSTAR_USBC1_BASE, _MSTAR_UHC1_BASE, flag);
 	}
@@ -532,6 +586,19 @@ int usb_ehci_mstar_probe(const struct hc_driver *driver,
 	#endif
 	}
 
+	else if( 0==strcmp(dev->name, "soc:Mstar-ehci-2") )
+	{
+		hcd->port_index = 2;
+		hcd->utmi_base = _MSTAR_UTMI1_BASE;
+		hcd->ehc_base = _MSTAR_UHC1_BASE;
+		hcd->usbc_base = _MSTAR_USBC1_BASE;
+		hcd->bc_base = _MSTAR_BC1_BASE;
+	#ifdef _MSTAR_EHC1_COMP_PORT
+		hcd->companion = ehc1_comp;
+	#endif
+	}
+
+
 	hcd->rsrc_start = hcd->ehc_base;//dev->resource[1].start;
 	hcd->rsrc_len = (0xfe<<1);//dev->resource[1].end - dev->resource[1].start + 0;
 	hcd->has_tt = 1;
@@ -562,43 +629,6 @@ int usb_ehci_mstar_probe(const struct hc_driver *driver,
 	/* cache this readonly data; minimize chip reads */
 	ehci->hcs_params = ehci_readl(ehci, &ehci->caps->hcs_params);
 
-	/* ehci_hcd_init(hcd_to_ehci(hcd)); */
-	if( 0==strcmp(dev->name, "soc:Mstar-ehci-1") )
-	{
-		hcd->port_index = 1;
-		hcd->utmi_base = _MSTAR_UTMI0_BASE;
-		hcd->ehc_base = _MSTAR_UHC0_BASE;
-		hcd->usbc_base = _MSTAR_USBC0_BASE;
-		hcd->bc_base = _MSTAR_BC0_BASE;
-	}
-	else if( 0==strcmp(dev->name, "Mstar-ehci-2") )
-	{
-		hcd->port_index = 2;
-		hcd->utmi_base = _MSTAR_UTMI1_BASE;
-		hcd->ehc_base = _MSTAR_UHC1_BASE;
-		hcd->usbc_base = _MSTAR_USBC1_BASE;
-		hcd->bc_base = _MSTAR_BC1_BASE;
-	}
-#ifdef ENABLE_THIRD_EHC
-	else if( 0==strcmp(dev->name, "Mstar-ehci-3") )
-	{
-		hcd->port_index = 3;
-		hcd->utmi_base = _MSTAR_UTMI2_BASE;
-		hcd->ehc_base = _MSTAR_UHC2_BASE;
-		hcd->usbc_base = _MSTAR_USBC2_BASE;
-		hcd->bc_base = _MSTAR_BC2_BASE;
-	}
-#endif
-#ifdef ENABLE_FOURTH_EHC
-	else if( 0==strcmp(dev->name, "Mstar-ehci-4") )
-	{
-		hcd->port_index = 4;
-		hcd->utmi_base = _MSTAR_UTMI3_BASE;
-		hcd->ehc_base = _MSTAR_UHC3_BASE;
-		hcd->usbc_base = _MSTAR_USBC3_BASE;
-		hcd->bc_base = _MSTAR_BC3_BASE;
-	}
-#endif
 
 #ifdef ENABLE_BATTERY_CHARGE
 	usb_bc_enable(hcd, true);
@@ -655,6 +685,15 @@ void usb_ehci_mstar_remove(struct usb_hcd *hcd, struct platform_device *dev)
 	iounmap(hcd->regs);
 	release_mem_region((resource_size_t)hcd->rsrc_start, (resource_size_t)hcd->rsrc_len);
 	usb_put_hcd(hcd);
+    if( 0==strcmp(dev->name, "soc:Mstar-ehci-1") )
+    {
+        writew(0x7F03, (void*) (_MSTAR_UTMI0_BASE+0x0*2));
+        Chip_Function_Set(CHIP_FUNC_USB_VBUS_CONTROL, 0);
+    }
+    else if( 0==strcmp(dev->name, "soc:Mstar-ehci-2") )
+    {
+        writew(0x7F03, (void*) (_MSTAR_UTMI1_BASE+0x0*2));
+    }
 }
 
 static int ehci_hcd_mstar_drv_probe(struct platform_device *pdev)
@@ -781,6 +820,11 @@ static struct of_device_id mstar_ehci_1_of_device_ids[] = {
 	{},
 };
 
+static struct of_device_id mstar_ehci_2_of_device_ids[] = {
+	{.compatible = "soc:Mstar-ehci-2"},
+	{},
+};
+
 
 static struct platform_driver ehci_hcd_mstar_driver = {
 	.probe 		= ehci_hcd_mstar_drv_probe,
@@ -799,31 +843,8 @@ static struct platform_driver second_ehci_hcd_mstar_driver = {
 	.suspend	= ehci_hcd_mstar_drv_suspend,
 	.resume		= ehci_hcd_mstar_drv_resume,
 	.driver = {
-		.name 	= "Mstar-ehci-2",
+		.name 	= "soc:Mstar-ehci-2",
+		.of_match_table = mstar_ehci_2_of_device_ids,
 //		.bus	= &platform_bus_type,
 	}
 };
-#ifdef ENABLE_THIRD_EHC
-static struct platform_driver third_ehci_hcd_mstar_driver = {
-	.probe 		= ehci_hcd_mstar_drv_probe,
-	.remove 	= ehci_hcd_mstar_drv_remove,
-	.suspend	= ehci_hcd_mstar_drv_suspend,
-	.resume		= ehci_hcd_mstar_drv_resume,
-	.driver = {
-		.name 	= "Mstar-ehci-3",
-//		.bus	= &platform_bus_type,
-	}
-};
-#endif
-#ifdef ENABLE_FOURTH_EHC
-static struct platform_driver fourth_ehci_hcd_mstar_driver = {
-	.probe 		= ehci_hcd_mstar_drv_probe,
-	.remove 	= ehci_hcd_mstar_drv_remove,
-	.suspend	= ehci_hcd_mstar_drv_suspend,
-	.resume		= ehci_hcd_mstar_drv_resume,
-	.driver = {
-		.name 	= "Mstar-ehci-4",
-//		.bus	= &platform_bus_type,
-	}
-};
-#endif

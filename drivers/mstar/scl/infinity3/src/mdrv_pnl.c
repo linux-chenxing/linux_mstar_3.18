@@ -38,21 +38,26 @@
 /// use in suspend/resume to save information
 ////////////////
 ST_MDRV_PNL_TIMING_CONFIG gstCfg;
+ST_MDRV_PNL_TIMING_CONFIG gstLPLLCfg;
 /////////////////
 /// gbResume
 /// use to determine whether need to set timing config as resume.
 ////////////////
 unsigned char gbResume=0;
-
+unsigned char gbResumeLPLL=0;
 //-------------------------------------------------------------------------------------------------
 //  Function
 //-------------------------------------------------------------------------------------------------
 void MDrv_PNL_Release(void)
 {
-    if(gbResume)
+    if(gbResume|| gbResumeLPLL)
     {
         Drv_PNL_Release();
     }
+}
+void MDrv_PNL_Exit(unsigned char bCloseISR)
+{
+    Drv_PNL_Exit(bCloseISR);
 }
 unsigned char MDrv_PNL_Init(ST_MDRV_PNL_INIT_CONFIG *pCfg)
 {
@@ -76,7 +81,33 @@ void MDrv_PNL_Resume(void)
     {
         MDrv_PNL_Set_Timing_Config(&gstCfg);
     }
+    if(gbResumeLPLL)
+    {
+        MDrv_PNL_Set_LPLL_Config(&gstLPLLCfg);
+    }
 }
+
+unsigned char MDrv_PNL_Set_LPLL_Config(ST_MDRV_PNL_TIMING_CONFIG *pCfg)
+{
+    ST_PNL_TIMING_CONFIG stTimingCfg;
+
+    stTimingCfg.u16Vtt       = pCfg->u16Vtt;
+    stTimingCfg.u16Htt       = pCfg->u16Htt;
+    stTimingCfg.u16VFreqx10  = pCfg->u16VFreqx10;
+    MsOS_Memcpy(&gstLPLLCfg, pCfg,sizeof(ST_MDRV_PNL_TIMING_CONFIG));
+    gbResumeLPLL=1;
+    if(Drv_PNL_Set_LPLL_Config(&stTimingCfg) == 0)
+    {
+        SCL_ERR("[PNL]%s, Set Timing Fail\n", __FUNCTION__);
+        return 0;
+    }
+    else
+    {
+        return 1;
+    }
+
+}
+
 unsigned char MDrv_PNL_Set_Timing_Config(ST_MDRV_PNL_TIMING_CONFIG *pCfg)
 {
     ST_PNL_TIMING_CONFIG stTimingCfg;

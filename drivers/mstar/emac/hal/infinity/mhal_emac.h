@@ -50,6 +50,7 @@
 //#define TX_SW_QUEUE
 #define MSTAR_EMAC_NAPI
 #define RX_ZERO_COPY
+//#define LAN_ESD_CARRIER_INTERRUPT
 
 #ifdef TX_SW_QUEUE
 #define TX_SW_QUEUE_SIZE						(1024)  //effected size = TX_RING_SIZE - 1
@@ -100,6 +101,7 @@
 #define CHECKSUM_ENABLE                     0x0FE
 #define RX_CHECKSUM_ENABLE                  0x000E
 #define CONFIG_EMAC_MOA                     1   // System Type
+#define EMAC_SPEED_10                       10
 #define EMAC_SPEED_100                      100
 
 #define EMAC_ALLFF                          0xFFFFFFFF

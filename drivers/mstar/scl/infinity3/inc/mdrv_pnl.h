@@ -60,7 +60,9 @@ typedef struct
 
 INTERFACE void MDrv_PNL_Release(void);
 INTERFACE unsigned char MDrv_PNL_Init(ST_MDRV_PNL_INIT_CONFIG *pCfg);
+INTERFACE void MDrv_PNL_Exit(unsigned char bCloseISR);
 INTERFACE unsigned char MDrv_PNL_Set_Timing_Config(ST_MDRV_PNL_TIMING_CONFIG *pCfg);
+INTERFACE unsigned char MDrv_PNL_Set_LPLL_Config(ST_MDRV_PNL_TIMING_CONFIG *pCfg);
 INTERFACE void MDrv_PNL_Resume(void);
 #undef INTERFACE
 

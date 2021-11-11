@@ -17,6 +17,7 @@
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/interrupt.h>
+#include <linux/delay.h>
 
 #if defined(MVHE_MCM_FORCE_OFF)
 #include <mcm_id.h>
@@ -101,10 +102,18 @@ mvhe_ioctl(
     switch (cmd)
     {
     case IOCTL_RQCT_VERSION:
-        v = RQCTIF_VERSION_ID;
+        if (access_ok(ACCESS_WRITE,uptr,sizeof(unsigned int)))
+        {
+            v = RQCTIF_VERSION_ID;
+            err = __put_user(v,(unsigned int*)uptr);
+        }
+        break;
     case IOCTL_MVHE_VERSION:
         if (access_ok(ACCESS_WRITE,uptr,sizeof(unsigned int)))
+        {
+            v = MVHEIF_VERSION_ID;
             err = __put_user(v,(unsigned int*)uptr);
+        }
         break;
     default:
         if ((_IOC_DIR(cmd) & _IOC_WRITE) && copy_from_user(buf, uptr, n))
@@ -226,7 +235,7 @@ static ssize_t mvhe_tmr_store(struct device* dev, struct device_attribute* attr,
         return -EINVAL;
     mdev->i_thresh = thresh;
     for (i = 0; i < MVHE_STREAM_NR; i++)
-        mdev->i_counts[i][0] = mdev->i_counts[i][1] = mdev->i_counts[i][2] = mdev->i_counts[i][3] = 0;
+        mdev->i_counts[i][0] = mdev->i_counts[i][1] = mdev->i_counts[i][2] = mdev->i_counts[i][3] = mdev->i_counts[i][4] = 0;
     return n;
 }
 
@@ -237,7 +246,7 @@ static ssize_t mvhe_tmr_print(struct device* dev, struct device_attribute* attr,
     mvhe_dev* mdev = container_of(dev,mvhe_dev,m_dev);
     int i;
     for (i = 0; i < MVHE_STREAM_NR; i++)
-        str += scnprintf(str,end-str,"inst-%d:%8d/%5d/%5d/%8d\n",i,mdev->i_counts[i][0],mdev->i_counts[i][1],mdev->i_counts[i][2],mdev->i_counts[i][3]);
+        str += scnprintf(str,end-str,"inst-%d:%8d/%5d/%5d/ %8d / %8d\n", i, mdev->i_counts[i][0], mdev->i_counts[i][1], mdev->i_counts[i][2], mdev->i_counts[i][3], mdev->i_counts[i][4]);
     str += scnprintf(str,end-str,"thresh:%8d\n",mdev->i_thresh);
     return (str - buff);
 }
@@ -319,7 +328,7 @@ mvhe_probe(
     struct resource* res;
     struct clk* clock;
     int major, minor = 0;
-    
+
     if (0> (err = alloc_chrdev_region(&dev, minor, 1, "mstar_mvhe")))
         return err;
     major = MAJOR(dev);
@@ -389,7 +398,7 @@ mvhe_probe(
                 break;
             mdev->p_clocks[i] = clock;
         }
-        mdev->i_rctidx = 4;
+        mdev->i_rctidx = 2;
         dev_set_drvdata(&pdev->dev, mdev);
 
         device_create_file(&mdev->m_dev, &dev_attr_tmr);
@@ -469,8 +478,7 @@ static irqreturn_t mvhe_isr(int irq, void* priv)
 {
     mvhe_dev* mdev = (mvhe_dev*)priv;
 
-    if (!mvhedev_isr_fnx(mdev))
-        return IRQ_HANDLED;
+    mvhedev_isr_fnx(mdev);
     return IRQ_HANDLED;
 }
 

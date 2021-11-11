@@ -131,9 +131,6 @@ static int infinity_soc_dai_resume(struct snd_soc_dai *dai)
 
 struct snd_soc_dai_driver infinity_soc_cpu_dai_drv =
 {
-  //.name				= "msb2501-i2s",
-  //.id					= 0,
-  //.type = SND_SOC_DAI_I2S,  Kernel 2.6.29.1 has no this field.
   .probe				= infinity_soc_dai_probe,
   .remove               = infinity_soc_dai_remove,
   .suspend			    = infinity_soc_dai_suspend,
@@ -216,7 +213,7 @@ static int __init infinity_cpu_dai_init(void)
     return -ENOMEM;
   }
 
-  np = of_find_compatible_node(NULL, NULL, "mstar,infinity-audio");
+  np = of_find_compatible_node(NULL, NULL, "mstar,infinity3-audio");
   if (np)
   {
 	  infinity_cpu_dai_device->dev.of_node = of_node_get(np);
@@ -252,6 +249,8 @@ module_exit(infinity_cpu_dai_exit);
 
 #endif
 
+
 /* Module information */
+MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Trevor Wu, trevor.wu@mstarsemi.com");
-MODULE_DESCRIPTION("Infinity Bach Audio ALSA SoC Dai");
+MODULE_DESCRIPTION("Infinity3 Bach Audio ALSA SoC Dai");

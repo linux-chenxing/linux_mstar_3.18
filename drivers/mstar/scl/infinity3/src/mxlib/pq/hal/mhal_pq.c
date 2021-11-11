@@ -38,7 +38,7 @@
 #include "hwreg.h"
 #include "drvPQ_Define.h"
 
-#include "Infinity_Main.h"             // table config parameter
+#include "Infinity3e_Main.h"             // table config parameter
 
 
 #include "drvPQ_Datatypes.h"
@@ -286,8 +286,8 @@ void Hal_PQ_set_yc_sram(MS_U8 enID, MS_U8 u8sramtype, void *pData)
             u8Ramcode[x] = *((MS_U8 *)(u32Addr + (j+x)));
         }
 
-        MApi_XC_W2BYTEMSK(u32reg_43+0x00, (((MS_U16)u8Ramcode[1])<<8|(MS_U16)u8Ramcode[0]), 0xFFFF);
-        MApi_XC_W2BYTEMSK(u32reg_43+0x02, (((MS_U16)u8Ramcode[3])<<8|(MS_U16)u8Ramcode[2]), 0xFFFF);
+        MApi_XC_W2BYTE(u32reg_43+0x00, (((MS_U16)u8Ramcode[1])<<8|(MS_U16)u8Ramcode[0]));
+        MApi_XC_W2BYTE(u32reg_43+0x02, (((MS_U16)u8Ramcode[3])<<8|(MS_U16)u8Ramcode[2]));
         MApi_XC_W2BYTEMSK(u32reg_43+0x04, ((MS_U16)u8Ramcode[4]), 0x00FF);
 
 

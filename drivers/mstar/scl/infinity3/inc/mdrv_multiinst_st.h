@@ -19,8 +19,8 @@
 #define _MDRV_MULTI_INST_ST_H
 
 
-#define MDRV_MULTI_INST_HVSP_NUM    4
-#define MDRV_MULTI_INST_SCLDMA_NUM  4
+#define MDRV_MULTI_INST_HVSP_NUM    MDRV_MULTI_INST_PRIVATE_ID_NUM
+#define MDRV_MULTI_INST_SCLDMA_NUM  MDRV_MULTI_INST_PRIVATE_ID_NUM
 //-------------------------------------------------------------------------------------------------
 //  Defines & Macro
 //-------------------------------------------------------------------------------------------------

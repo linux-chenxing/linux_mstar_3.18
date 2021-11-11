@@ -52,6 +52,9 @@
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
+#include "MsCommon.h"
+#include "MsTypes.h"
+#include "MsOS.h"
 #include "ms_msys.h"
 #include "mdrv_hvsp_io_i3_st.h"
 #include "mdrv_hvsp_io_i3.h"
@@ -162,6 +165,32 @@ static struct platform_device st_ms_hvsp3_device =
 //-------------------------------------------------------------------------------------------------
 // Instance function
 //-------------------------------------------------------------------------------------------------
+static ssize_t check_osd_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
+{
+	if(NULL!=buf)
+	{
+        MDrv_HVSP_OsdStore(buf,E_MDRV_HVSP_ID_3);
+        return n;
+	}
+
+	return 0;
+}
+static ssize_t check_osd_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return MDrv_HVSP_OsdShow(buf);
+}
+static DEVICE_ATTR(osd,0644, check_osd_show, check_osd_store);
+static ssize_t check_SCIQ_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
+{
+    MDrv_HVSP_SCIQStore(buf,E_MDRV_HVSP_ID_3);
+    return n;
+}
+static ssize_t check_SCIQ_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    return MDrv_HVSP_SCIQShow(buf,E_MDRV_HVSP_ID_3);
+}
+
+static DEVICE_ATTR(SCIQ,0644, check_SCIQ_show, check_SCIQ_store);
 EN_MDRV_MULTI_INST_CMD_TYPE _mdrv_ms_hvsp3_translate_multiinst_cmd(unsigned int u32Cmd)
 {
     EN_MDRV_MULTI_INST_CMD_TYPE enCmd;
@@ -185,35 +214,33 @@ EN_MDRV_MULTI_INST_CMD_TYPE _mdrv_ms_hvsp3_translate_multiinst_cmd(unsigned int 
 //-------------------------------------------------------------------------------------------------
 // IOCtrl Driver interface functions
 //-------------------------------------------------------------------------------------------------
-ST_MDRV_HVSP_VERSIONCHK_CONFIG _mdrv_ms_hvsp3_io_fill_versionchkstruct
-(unsigned int u32StructSize,unsigned int u32VersionSize,unsigned int *pVersion)
+void _mdrv_ms_hvsp3_io_fill_versionchkstruct
+(unsigned int u32StructSize,unsigned int u32VersionSize,unsigned int *pVersion,ST_MDRV_HVSP_VERSIONCHK_CONFIG *stVersion)
 {
-    ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
-    stVersion.u32StructSize  = (unsigned int)u32StructSize;
-    stVersion.u32VersionSize = (unsigned int)u32VersionSize;
-    stVersion.pVersion      = (unsigned int *)pVersion;
-    return stVersion;
+    stVersion->u32StructSize  = (unsigned int)u32StructSize;
+    stVersion->u32VersionSize = (unsigned int)u32VersionSize;
+    stVersion->pVersion      = (unsigned int *)pVersion;
 }
-int _mdrv_ms_hvsp3_io_version_check(ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion)
+int _mdrv_ms_hvsp3_io_version_check(ST_MDRV_HVSP_VERSIONCHK_CONFIG *stVersion)
 {
-    if ( CHK_VERCHK_HEADER(stVersion.pVersion) )
+    if ( CHK_VERCHK_HEADER(stVersion->pVersion) )
     {
-        if( CHK_VERCHK_MAJORVERSION_LESS( stVersion.pVersion, IOCTL_HVSP_VERSION) )
+        if( CHK_VERCHK_MAJORVERSION_LESS( stVersion->pVersion, IOCTL_HVSP_VERSION) )
         {
 
             VERCHK_ERR("[HVSP3] Version(%04x) < %04x!!! \n",
-                *(stVersion.pVersion) & VERCHK_VERSION_MASK,
+                *(stVersion->pVersion) & VERCHK_VERSION_MASK,
                 IOCTL_HVSP_VERSION);
 
             return -EINVAL;
         }
         else
         {
-            if( CHK_VERCHK_SIZE( &stVersion.u32VersionSize, stVersion.u32StructSize) == 0 )
+            if( CHK_VERCHK_SIZE( &stVersion->u32VersionSize, stVersion->u32StructSize) == 0 )
             {
                 VERCHK_ERR("[HVSP3] Size(%04x) != %04x!!! \n",
-                    stVersion.u32StructSize,
-                    stVersion.u32VersionSize);
+                    stVersion->u32StructSize,
+                    stVersion->u32VersionSize);
 
                 return -EINVAL;
             }
@@ -259,24 +286,24 @@ int _mdrv_ms_hvsp3_io_set_input_config(struct file *filp, unsigned long arg)
     int ret = 0;
     ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
 
-    stVersion = _mdrv_ms_hvsp3_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_INPUT_CONFIG),
+     _mdrv_ms_hvsp3_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_INPUT_CONFIG),
         (((ST_IOCTL_HVSP_INPUT_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_HVSP_INPUT_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_hvsp3_io_version_check(stVersion))
+        &(((ST_IOCTL_HVSP_INPUT_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp3_io_version_check(&stVersion))
     {
         SCL_ERR( "[HVSP3]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
     else
     {
-        if(copy_from_user(&stIOInCfg, (ST_IOCTL_HVSP_INPUT_CONFIG __user *)arg, sizeof(ST_IOCTL_HVSP_INPUT_CONFIG)))
+        if(copy_from_user(&stIOInCfg, (__user ST_IOCTL_HVSP_INPUT_CONFIG  *)arg, sizeof(ST_IOCTL_HVSP_INPUT_CONFIG)))
         {
             return -EFAULT;
         }
         else
         {
-            stInCfg.enColor       = stIOInCfg.enColor;
-            stInCfg.enSrcType     = stIOInCfg.enSrcType;
+            stInCfg.enColor       = (EN_MDRV_HVSP_COLOR_TYPE)stIOInCfg.enColor;
+            stInCfg.enSrcType     = (EN_MDRV_HVSP_SRC_TYPE)stIOInCfg.enSrcType;
             memcpy(&stInCfg.stCaptureWin , &stIOInCfg.stCaptureWin,sizeof(ST_MDRV_HVSP_WINDOW_CONFIG));
             memcpy(&stInCfg.stTimingCfg , &stIOInCfg.stTimingCfg,sizeof(ST_MDRV_HVSPTIMING_CONFIG));
         }
@@ -308,17 +335,17 @@ int _mdrv_ms_hvsp3_io_set_output_config(struct file *filp, unsigned long arg)
     int ret = 0;
     ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
 
-    stVersion = _mdrv_ms_hvsp3_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_OUTPUT_CONFIG),
+     _mdrv_ms_hvsp3_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_OUTPUT_CONFIG),
         (((ST_IOCTL_HVSP_OUTPUT_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_HVSP_OUTPUT_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_hvsp3_io_version_check(stVersion))
+        &(((ST_IOCTL_HVSP_OUTPUT_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp3_io_version_check(&stVersion))
     {
         SCL_ERR( "[HVSP3]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
     else
     {
-        if(copy_from_user(&stOutCfg, (ST_IOCTL_HVSP_OUTPUT_CONFIG __user *)arg, sizeof(ST_IOCTL_HVSP_OUTPUT_CONFIG)))
+        if(copy_from_user(&stOutCfg, (__user ST_IOCTL_HVSP_OUTPUT_CONFIG  *)arg, sizeof(ST_IOCTL_HVSP_OUTPUT_CONFIG)))
         {
             return -EFAULT;
         }
@@ -337,17 +364,17 @@ int _mdrv_ms_hvsp3_io_set_scaling_config(struct file *filp, unsigned long arg)
 
     ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
 
-    stVersion = _mdrv_ms_hvsp3_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_SCALING_CONFIG),
+     _mdrv_ms_hvsp3_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_SCALING_CONFIG),
         (((ST_IOCTL_HVSP_SCALING_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_HVSP_SCALING_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_hvsp3_io_version_check(stVersion))
+        &(((ST_IOCTL_HVSP_SCALING_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp3_io_version_check(&stVersion))
     {
         SCL_ERR( "[HVSP3]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
     else
     {
-        if(copy_from_user(&stIOSclCfg, (ST_IOCTL_HVSP_SCALING_CONFIG __user *)arg, sizeof(ST_IOCTL_HVSP_SCALING_CONFIG)))
+        if(copy_from_user(&stIOSclCfg, (__user ST_IOCTL_HVSP_SCALING_CONFIG  *)arg, sizeof(ST_IOCTL_HVSP_SCALING_CONFIG)))
         {
             return -EFAULT;
         }
@@ -478,6 +505,50 @@ int _mdrv_ms_hvsp3_io_get_version(struct file *filp, unsigned long arg)
 
     return ret;
 }
+int _mdrv_ms_hvsp3_io_set_osd_config(struct file *filp, unsigned long arg)
+{
+    ST_MDRV_HVSP_OSD_CONFIG stOSDCfg;
+    ST_IOCTL_HVSP_OSD_CONFIG stIOOSDCfg;
+    int ret = 0;
+    ST_MDRV_HVSP_VERSIONCHK_CONFIG stVersion;
+
+     _mdrv_ms_hvsp3_io_fill_versionchkstruct(sizeof(ST_IOCTL_HVSP_OSD_CONFIG),
+        (((ST_IOCTL_HVSP_OSD_CONFIG __user *)arg)->VerChk_Size),
+        &(((ST_IOCTL_HVSP_OSD_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_hvsp3_io_version_check(&stVersion))
+    {
+        SCL_ERR( "[HVSP3]   %s  \n", __FUNCTION__);
+        return -EINVAL;
+    }
+    else
+    {
+        if(copy_from_user(&stIOOSDCfg, (__user ST_IOCTL_HVSP_OSD_CONFIG  *)arg, sizeof(ST_IOCTL_HVSP_OSD_CONFIG)))
+        {
+            return -EFAULT;
+        }
+        else
+        {
+            stOSDCfg.enOSD_loc = (EN_MDRV_HVSP_OSD_LOC_TYPE)stIOOSDCfg.enOSD_loc;
+            stOSDCfg.stOsdOnOff.bOSDEn = stIOOSDCfg.bEn;
+        }
+    }
+    if(_ms_hvsp3_multiinstSet(E_MDRV_MULTI_INST_CMD_HVSP_SET_OSD_CONFIG, (void *)&stOSDCfg, filp->private_data))
+    {
+        ret = -EFAULT;
+    }
+    else
+    {
+        if(!MDrv_HVSP_SetOSDConfig(E_MDRV_HVSP_ID_3,  &stOSDCfg))
+        {
+            ret = -EFAULT;
+        }
+        else
+        {
+            ret = 0;
+        }
+    }
+    return ret;
+}
 
 //----------------------------------------------------------------------------------------------
 
@@ -545,6 +616,8 @@ long mdrv_ms_hvsp3_ioctl(struct file *filp, unsigned int u32Cmd, unsigned long u
         break;
 
     case IOCTL_HVSP_SET_OSD_CONFIG:
+        retval = _mdrv_ms_hvsp3_io_set_osd_config(filp, u32Arg);
+        break;
     case IOCTL_HVSP_SET_FB_MANAGE_CONFIG:
     case IOCTL_HVSP_REQ_MEM_CONFIG:
     case IOCTL_HVSP_SET_MISC_CONFIG:
@@ -579,9 +652,9 @@ static unsigned int mdrv_ms_hvsp3_poll(struct file *filp, struct poll_table_stru
     SCL_DBG(SCL_DBG_LV_IOCTL()&EN_DBGMG_IOCTLEVEL_SC3, "[SCLDMA1]start %s ret=%x\n",__FUNCTION__,ret);
     if(enMultiInstRet == E_MDRV_MULTI_INST_STATUS_SUCCESS)
     {
-        pWaitQueueHead = MDrv_HVSP_GetWaitQueueHead();
+        pWaitQueueHead = (wait_queue_head_t *)MDrv_HVSP_GetWaitQueueHead();
         MDrv_HVSP_SetPollWait(filp, pWaitQueueHead, wait);
-        if(MDrv_HVSP_GetCMDQDoneStatus())
+        if(MDrv_HVSP_GetCMDQDoneStatus(E_MDRV_HVSP_ID_3))
         {
             ret = POLLIN;
         }
@@ -647,6 +720,11 @@ static int mdrv_ms_hvsp3_probe(struct platform_device *pdev)
 
 //probe
     SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP3] %s\n",__FUNCTION__);
+    MsOS_SetSclIrqIDFormSys(pdev,0,E_SCLIRQ_SC0);
+    MsOS_SetCmdqIrqIDFormSys(pdev,1,E_CMDQIRQ_CMDQ0);
+    stHVSPInitCfg.u32Riubase    = 0x1F000000; //ToDo
+    stHVSPInitCfg.u32IRQNUM     = MsOS_GetIrqIDSCL(E_SCLIRQ_SC0);
+    stHVSPInitCfg.u32CMDQIRQNUM = MsOS_GetIrqIDCMDQ(E_CMDQIRQ_CMDQ0);
     if( MDrv_HVSP_Init(E_MDRV_HVSP_ID_3, &stHVSPInitCfg) == 0)
     {
         return -EFAULT;
@@ -664,6 +742,8 @@ static int mdrv_ms_hvsp3_probe(struct platform_device *pdev)
         return 0 ;
     }
     //sysfs_create_link(&pdev->dev.parent->kobj, &pdev->dev.kobj, "mhvsp3");
+    device_create_file(_dev_ms_hvsp3.devicenode, &dev_attr_osd);
+    device_create_file(_dev_ms_hvsp3.devicenode, &dev_attr_SCIQ);
      gbProbeAlready |= EN_DBG_HVSP3_CONFIG;
     MDrv_MultiInst_Entry_Init_Variable(E_MDRV_MULTI_INST_ENTRY_ID_HVSP3);
     return 0;
@@ -671,6 +751,15 @@ static int mdrv_ms_hvsp3_probe(struct platform_device *pdev)
 static int mdrv_ms_hvsp3_remove(struct platform_device *pdev)
 {
     SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[HVSP3] %s\n",__FUNCTION__);
+    gbProbeAlready = (gbProbeAlready&(~EN_DBG_HVSP3_CONFIG));
+    if(gbProbeAlready == 0)
+    {
+        MDrv_HVSP_Exit(1);
+    }
+    else
+    {
+        MDrv_HVSP_Exit(0);
+    }
     cdev_del(&_dev_ms_hvsp3.cdev);
     device_destroy(m_hvsp3_class, MKDEV(_dev_ms_hvsp3.s32Major, _dev_ms_hvsp3.s32Minor));
     class_destroy(m_hvsp3_class);
@@ -729,7 +818,7 @@ static int mdrv_ms_hvsp3_suspend(struct platform_device *dev, pm_message_t state
 
 static int mdrv_ms_hvsp3_resume(struct platform_device *dev)
 {
-    EN_MDRV_MULTI_INST_STATUS_TYPE enMultiInstRet = E_MDRV_MULTI_INST_STATUS_SUCCESS;
+    EN_MDRV_MULTI_INST_STATUS_TYPE enMultiInstRet ;
     ST_MDRV_HVSP_SUSPEND_RESUME_CONFIG stHvspSuspendResumeCfg;
     int ret = 0;
 
@@ -780,7 +869,10 @@ int mdrv_ms_hvsp3_open(struct inode *inode, struct file *filp)
         }
 
     }
-    _dev_ms_hvsp3.refCnt++;
+    if(!ret)
+    {
+        _dev_ms_hvsp3.refCnt++;
+    }
 
     return ret;
 }

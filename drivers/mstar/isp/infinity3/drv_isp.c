@@ -126,93 +126,36 @@
 #define C_IN(lock)       local_irq_save(flags)
 #define C_OUT(lock)      local_irq_restore(flags)
 
-#define AE_RING_BUFF_NUM            3
-#define AWB_RING_BUFF_NUM           3
-#define AE_AWB_WIN_SIZE             (128*90)
+//--------- ISP 3A statistics buffer ---------//
+#define AE_WIN_SIZE                 (128*90)
+#define AWB_WIN_SIZE                (128*90)
 #define AE_HIST_R_SIZE              80
 #define AE_HIST_G_SIZE              80
 #define AE_HIST_B_SIZE              80
 #define AE_HIST_WIN0_SIZE           256
 #define AE_HIST_WIN1_SIZE           256
 //R,G,B,Y 4bytes statistics
-#define AE_STATIS_SIZE  (AE_AWB_WIN_SIZE*4)
-#define AE_TOTAL_STATIS_SIZE    (AE_HIST_R_SIZE+AE_HIST_G_SIZE+AE_HIST_B_SIZE+AE_HIST_WIN0_SIZE+AE_HIST_WIN1_SIZE+AE_STATIS_SIZE)
+#define AE_STATIS_SIZE  (AE_WIN_SIZE*4)
+#define HISTO_STATIS_SIZE (AE_HIST_R_SIZE+AE_HIST_G_SIZE+AE_HIST_B_SIZE+AE_HIST_WIN0_SIZE+AE_HIST_WIN1_SIZE)
+#define AF_STATIS_SIZE  (60*4)
+#define AWB_STATIS_SIZE  (AWB_WIN_SIZE*3)
+#define MOT_STATIS_SIZE (168*168) //for 2688x2688 image
+#define RGBIR_STATIS_SIZE (256*4) //for 2688x2688 image
 
-//Each row block's start address(Red) MUST be 16-byte align
-#define AWB_STATIS_SIZE (AE_AWB_WIN_SIZE*3)
-#define MOT_STATIS_SIZE (16*16*8)
+typedef struct
+{
+    char ae[AE_STATIS_SIZE] __attribute__((aligned(16)));
+    char awb[AWB_STATIS_SIZE] __attribute__((aligned(16)));
+    char af[AF_STATIS_SIZE] __attribute__((aligned(16)));
+    char histo[HISTO_STATIS_SIZE] __attribute__((aligned(16)));  //histogram
+    char mot[MOT_STATIS_SIZE] __attribute__((aligned(16)));  //motion detection
+    char rgbir[RGBIR_STATIS_SIZE] __attribute__((aligned(16)));
+}__attribute__((packed, aligned(16))) ISP_STATIS_MEM;
+
 //#define DNR_FB_SIZE        (((1920+191)/192) * ((1080+15)>>4) * 256 * 16)
 /*--------------------------------------------------------------------------*/
 /* DATA TYPE DEFINITION                                                     */
 /*--------------------------------------------------------------------------*/
-
-typedef struct {
-    unsigned int u4PhyAddr;
-    unsigned int u4VirAddr;
-    unsigned long u4Stat[9*2];
-} EIS_STS_t;
-
-typedef struct EIS_VDOS_t {
-    int width;
-    int height;
-    int pitch;
-    int size;
-    //int phyAddr;
-    //unsigned char data[5*1024*1024];
-} eEIS_VDOS_t;
-
-typedef enum
-{
-    WDMA_SRC_BAYER_RAW = 0,
-    WDMA_SRC_ISP_OUTPUT_0 = 1,
-    WDMA_SRC_ISP_OUTPUT_1 = 2,
-    WDMA_SRC_ISP_VIDEO_STABILIZATION=3,
-}WDMA_SRC;
-
-typedef enum
-{
-    WDMA_REQ_WAIT = 0,
-    WDMA_REQ_PROC = 1,
-    WDMA_REQ_DONE = 2,
-}WDMA_REQ_STATUS;
-
-typedef struct
-{
-    u32 uSourceSel;
-    u32 uBufferPhysAddr;
-    u32 uReqStatus; //WDMA_SRC
-}__attribute__((packed, aligned(1))) WDMA_CFG;
-
-#define ISP_STATUS_FRAME_DROP_ENABLE 0x01
-typedef struct
-{
-  u32 bActive;    //Active data state
-  u32 u4FrameCnt; //frame count
-  u32 bIspInputEnable;
-  u32 u4OBCInValid;
-  u32 u4OBC_a;
-  u32 u4OBC_b;
-  u32 uIspStatusSet;           // isp status set from user space
-  u32 uIspStatusReport;     //isp satus get from kernel space
-  WDMA_CFG wdma_cfg;
-}__attribute__((packed, aligned(1))) FRAME_STATE;
-
-#define I2C_RW_DONE 0
-#define I2C_RW_WAIT 1
-#define I2C_RW_ERROR 2
-typedef struct
-{
-  app_i2c_cfg cfg;
-  u32 status;
-  u32 num_i2c_data; //number of available i2c data in array
-  I2C_ARRAY i2c_data[16];
-}__attribute__((packed, aligned(1))) ISP_K_I2C_RW;
-
-typedef struct
-{
-  FRAME_STATE frame_state;
-  ISP_K_I2C_RW i2c_rw;
-}__attribute__((packed, aligned(1))) ISP_SHARE_DATA;
 
 typedef struct
 {
@@ -220,6 +163,25 @@ typedef struct
   u32 fps;
   u32 prev_tick_count;
 }__attribute__((packed, aligned(1))) FPS_INFO;
+
+typedef struct _isp_ccm_coff
+{
+  s16 dirty;
+  s16 ccm[9];
+}isp_ccm_coff;
+
+typedef struct _isp_ae_dgain
+{
+  s16 dirty;
+  s16 enable;
+  u32 gain;
+}isp_ae_dgain;
+
+typedef struct _isp_fifo_mask
+{
+  s16 dirty;
+  s16 enable;
+}isp_fifo_mask;
 
 typedef struct {
     u32             frame_cnt;
@@ -230,6 +192,7 @@ typedef struct {
     u8              ae_win0;
     u8		 ae_row_int;
     u8              awb;
+    u8              epoll_event;
     u8              af;
     u8              isp_busy;
     u8              isp_idle;
@@ -238,17 +201,16 @@ typedef struct {
     u8              rdma_done;
     u8              wdma_done;
     u8              eis;
+    u8              scl_fe;
 
     unsigned long   AE_Lum[64];   // 8x8 windows
     unsigned long   AE_Hist[64];  // 8x8 windows
     unsigned long   AF_Stat[5*3];  // 5 windows *( R+G+B)
     unsigned long   AWB_Stat[80]; // 5 windows
 
-
     //FRAME_STATE   *FrameState;
     ISP_SHARE_DATA *share_data;
 
-    //eEIS_VDOS_t  EIS_VDOS;
     u32  isp_int_count[ISP_INT_MAX];
     u32  isp_int2_count[ISP_INT2_MAX];
     u32  isp_int3_count[ISP_INT3_MAX];
@@ -258,56 +220,23 @@ typedef struct {
     struct timespec isp_int3_time[ISP_INT3_MAX];
 
     u8 hw_frame_cnt;
+    u32 int_cnt;
 
     FPS_INFO fps;
+    isp_ccm_coff rgb_ccm; //RGB2YUV matrix
+    isp_ccm_coff yuv_ccm; //CCM
+    isp_ae_dgain dgain;   //AE dgain
+    isp_isr_ae_img_info ae_img_info; //ae statistic block setting
+    isp_fifo_mask fifo_mask;
 } ISP_INT_DATA;
 
-
 typedef struct {
-    char data[AE_AWB_WIN_SIZE];
-    struct list_head list;
-    int status;
-}__attribute__((packed, aligned(1))) AWB_STATIS_DATA;
-
-typedef struct
-{
-  u32 data_offset; //offset to AE statistic data
-  u32 fcount; //frame count
-}__attribute__((packed, aligned(1))) ae_isr_data;
-
-typedef struct
-{
-  u32 data_offset; //offset to AWB statistic data
-  u32 fcount; //frame count
-}__attribute__((packed, aligned(1))) awb_isr_data;
-
-
-typedef struct {
-    void          *pISPRegs[8];
+    void          *pISPRegs[10];
     void          *pCSIRegs;
     MSYS_DMEM_INFO Base_Meminfo;
     MSYS_DMEM_INFO DNR_FB_Meminfo[2];
     MSYS_DMEM_INFO ShareData_Meminfo;
-    //unsigned int AE_BuffNum;
-    //unsigned int AWB_BuffNum;
-    unsigned int AE_Size;
-    unsigned int AWB_Size;
-    unsigned int MOT_Size;
-    //volatile int AE_WriteIdx;
-    //volatile int AE_ReadIdx;
-    //volatile int AWB_WriteIdx;
-    //volatile int AWB_ReadIdx;
-    volatile u8 IsWriteIQtbl;
-
-    //unsigned long AE_Offset[AE_RING_BUFF_NUM];
-   // unsigned long AWB_Offset[AWB_RING_BUFF_NUM];
-    unsigned long AE_Offset;
-    unsigned long AWB_Offset;
-    unsigned long IQ_tblOffset[IQ_MEM_NUM];
-    unsigned int IQ_tblSize[IQ_MEM_NUM];
-    unsigned int MOT_Offset;
 } ISP_MEM_BUFF;
-
 
 typedef enum
 {
@@ -316,6 +245,7 @@ typedef enum
    ISP_INFO_ID_IQ,
    ISP_INFO_ID_MAX,
 }ISP_INFO_ID;
+
 typedef struct _isp_dev_data
 {
     struct miscdevice isp_dev;
@@ -344,7 +274,9 @@ void reset_isp_int(ISP_INT_DATA *p_isp_int) //reset isp_int struct
     p_isp_int->vsync_end = 0;
     p_isp_int->ae = 0;
     p_isp_int->ae_win0 = 0;
+    p_isp_int->ae_row_int = 0;
     p_isp_int->awb = 0;
+    p_isp_int->epoll_event = 0;
     p_isp_int->af = 0;
     p_isp_int->isp_busy = 0;
     p_isp_int->isp_idle = 0;
@@ -354,28 +286,14 @@ void reset_isp_int(ISP_INT_DATA *p_isp_int) //reset isp_int struct
     p_isp_int->wdma_done = 0;
     p_isp_int->eis = 0;
 
-    memset(p_isp_int->AE_Lum,0,sizeof(unsigned long)*64);
-    memset(p_isp_int->AE_Hist,0,sizeof(unsigned long)*64);
-    memset(p_isp_int->AF_Stat,0,sizeof(unsigned long)*60);
-    memset(p_isp_int->AWB_Stat,0,sizeof(unsigned long)*80);
-    //memset(&p_isp_int->EIS_VDOS,0,sizeof(eEIS_VDOS_t));
+    memset(p_isp_int->AE_Lum,0,sizeof(p_isp_int->AE_Lum));
+    memset(p_isp_int->AE_Hist,0,sizeof(p_isp_int->AE_Hist));
+    memset(p_isp_int->AF_Stat,0,sizeof(p_isp_int->AF_Stat));
+    memset(p_isp_int->AWB_Stat,0,sizeof(p_isp_int->AF_Stat));
 
     p_isp_int->share_data->frame_state.bIspInputEnable = true;
 }
 
-void isp_enable_input(u32 enable)
-{
-    if(enable)
-    {
-        isp_int.share_data->frame_state.bIspInputEnable = true;
-        IspInputEnable(enable);
-    }
-    else
-    {//do not disable input immediately , to disable isp input when frame blanking (vsync end interrupt)
-        isp_int.share_data->frame_state.bIspInputEnable = false;
-    }
-}
-#if 1
 void isp_async(u32 enable)
 {
     IspAsyncEnable(enable);
@@ -383,7 +301,7 @@ void isp_async(u32 enable)
 
 void fps_init(FPS_INFO *info)
 {
-  memset(info,sizeof(FPS_INFO),0);
+  memset(info,0,sizeof(FPS_INFO));
 }
 
 u32 fps_update(FPS_INFO *info)
@@ -410,7 +328,18 @@ u32 fps_update(FPS_INFO *info)
     info->fps = 1000000000/dt;
     return info->fps;
 }
+//#define TIMING_DBG_MSG
+#ifdef TIMING_DBG_MSG
+void print_timestamp(char* msg)
+{
+    struct timespec ts;
+    getnstimeofday(&ts);
+    printk("%d:%lu:%s\r\n", isp_int.frame_cnt, (ts.tv_sec * 1000000)+(ts.tv_nsec/1000), msg);
+}
+#else
+#define print_timestamp(a)
 #endif
+
 typedef struct
 {
   u64 count;
@@ -507,6 +436,15 @@ static DECLARE_WAIT_QUEUE_HEAD(isp_wq_af);
 static DECLARE_WAIT_QUEUE_HEAD(isp_wq_eis);
 static DECLARE_WAIT_QUEUE_HEAD(isp_wq_sw_int_in);
 static DECLARE_WAIT_QUEUE_HEAD(isp_wq_sw_int_out);
+static DECLARE_WAIT_QUEUE_HEAD(isp_wq_hit_line_count1);
+static DECLARE_WAIT_QUEUE_HEAD(isp_wq_hit_line_count2);
+static DECLARE_WAIT_QUEUE_HEAD(isp_wq_hit_line_count3);
+static DECLARE_WAIT_QUEUE_HEAD(isp_wq_hdr_histo_done);
+static DECLARE_WAIT_QUEUE_HEAD(isp_wq_rgbir_histo_done);
+static DECLARE_WAIT_QUEUE_HEAD(isp_wq_awb_row_done);
+static DECLARE_WAIT_QUEUE_HEAD(isp_wq_histo_row_done);
+static DECLARE_WAIT_QUEUE_HEAD(isp_wq_scl_fe);
+static DECLARE_WAIT_QUEUE_HEAD(isp_wq_epoll_event);
 
 //CSI//
 static DECLARE_WAIT_QUEUE_HEAD(csi_wq_fe);
@@ -520,358 +458,32 @@ static struct kobject *kobj_isp = NULL;
 /*--------------------------------------------------------------------------*/
 
 extern int msys_request_dmem(MSYS_DMEM_INFO *mem_info);
-#if 0
-unsigned short pPGscript[][3]={ {1, 0x0018, 0x03e4 },
-                                {0, 0x0118, 0x3ba6 },
-                                {0, 0x011C, 0x0e36 },
-                                {1, 0x0000, 0x003b },
-                                {1, 0x0014, 0x0438 },
-                                {1, 0x0020, 0x04b1 },
-                                {1, 0x0024, 0x00e5 },
-                                {1, 0x0028, 0x08fc },
-                                {1, 0x002C, 0x0078 },
-                                {1, 0x0030, 0x0671 },
-                                {1, 0x0034, 0xffe7 },
-                                {1, 0x0038, 0x08ef },
-                                {1, 0x003C, 0xffb2 },
-                                {1, 0x0004, 0x03f2 },
-                                {1, 0x0008, 0x02bf },
-                                {1, 0x000C, 0x0001 },
-                                {1, 0x0010, 0x0000 },
-                                {1, 0x0040, 0x4f7c },
-                                {1, 0x0044, 0x8b60 },
-                                {1, 0x0048, 0x5b85 },
-                                {1, 0x004C, 0xc117 },
-                                {1, 0x0050, 0x8c5c },
-                                {1, 0x0054, 0x2967 },
-                                {1, 0x0058, 0xfbbf },
-                                {1, 0x005C, 0x6bbe },
-                                {1, 0x0060, 0xbd18 },
-                                {1, 0x0064, 0xbe21 },
-                                {1, 0x0068, 0x491f },
-                                {1, 0x006C, 0x6905 },
-                                {1, 0x0070, 0x4cc9 },
-                                {1, 0x0074, 0xa03d },
-                                {1, 0x0078, 0x4f24 },
-                                {1, 0x007C, 0x17ff },
-                                {1, 0x0080, 0x859c },
-                                {1, 0x0084, 0xb985 },
-                                {1, 0x0088, 0x4fd5 },
-                                {1, 0x008C, 0x5130 },
-                                {1, 0x0090, 0x49f7 },
-                                {1, 0x0094, 0x4f94 },
-                                {1, 0x0098, 0x3f23 },
-                                {1, 0x009C, 0xf8de },
-                                {1, 0x00A0, 0xa66a },
-                                {1, 0x00A4, 0xb0cc },
-                                {1, 0x00A8, 0x3245 },
-                                {1, 0x00AC, 0xf117 },
-                                {1, 0x00B0, 0x144b },
-                                {1, 0x00B4, 0x3e8b },
-                                {1, 0x00B8, 0xb33b },
-                                {1, 0x00BC, 0xd409 },
-                                {1, 0x00C0, 0x0154 },
-                                {1, 0x00C4, 0x7df2 },
-                                {1, 0x00C8, 0x418f },
-                                {1, 0x00CC, 0x0f85 },
-                                {1, 0x00D0, 0x5070 },
-                                {1, 0x00D4, 0x6b92 },
-                                {1, 0x00D8, 0x46c7 },
-                                {1, 0x00DC, 0xae71 },
-                                {1, 0x00E0, 0xe421 },
-                                {1, 0x00E4, 0x8a81 },
-                                {1, 0x00E8, 0xc88e },
-                                {1, 0x00EC, 0xcc36 },
-                                {1, 0x00F0, 0x9e25 },
-                                {1, 0x00F4, 0xd7b0 },
-                                {1, 0x00F8, 0x7f37 },
-                                {1, 0x00FC, 0x2263 },
-                                {1, 0x01A0, 0x0080 },
-                                {1, 0x01E4, 0x0800 },
-                                {1, 0x01E8, 0x0901 },
-                                {1, 0x01EC, 0x68f5 },
-                                {1, 0x01F0, 0x0036 },
-                                {1, 0x0120, 0x0000 },
-                                {1, 0x0124, 0x0004 },
-                                {1, 0x0128, 0x0017 },
-                                {1, 0x012C, 0x001d },
-                                {1, 0x0130, 0x0735 },
-                                {1, 0x0134, 0x042e },
-                                {1, 0x0100, 0x0102 },
-                                {1, 0x0104, 0x0064 },
-                                {1, 0x01C0, 0xac00 },
-                                {1, 0x01C4, 0x0001 },
-                                {1, 0x01C8, 0x00fa },
-                                {1, 0x01CC, 0xe428 },
-                                {1, 0x01D0, 0x5a30 },
-                                {1, 0x01D4, 0x67ca },
-                                {1, 0x01D8, 0x0000 },
-                                {1, 0x01DC, 0x002d },
-                                {1, 0x01E0, 0x0093 },
-                                {3, 0x0000, 0x200d },//0x200d },//Statistics disable
-                                {3, 0x0004, 0x0b0e },
-                                {3, 0x0008, 0x4154 },
-                                {3, 0x000C, 0x0555 },
-                                {3, 0x0010, 0x0618 },
-                                {3, 0x0014, 0x02d8 },
-                                {3, 0x0018, 0x8070 },
-                                {3, 0x001C, 0x000c },
-                                {3, 0x0020, 0x7800 },
-                                {3, 0x0024, 0x000c },
-                                {3, 0x0028, 0x0f06 },
-                                {3, 0x002C, 0x2302 },
-                                {3, 0x0030, 0x3c0d },
-                                {3, 0x0034, 0x0f04 },
-                                {3, 0x0080, 0x1002 },
-                                {3, 0x0084, 0x0000 },
-                                {3, 0x0088, 0x0000 },
-                                {3, 0x008C, 0x443c },
-                                {3, 0x0090, 0x003d },
-                                {3, 0x00C0, 0x3152 },
-                                {3, 0x00C4, 0x3337 },
-                                {3, 0x00C8, 0xba78 },
-                                {3, 0x00CC, 0x040f },
-                                {3, 0x00D0, 0x6bbc },
-                                {3, 0x00D4, 0x59cf },
-                                {3, 0x00D8, 0x72a5 },
-                                {3, 0x00DC, 0x713a },
-                                {3, 0x00E0, 0xfc00 },
-                                {3, 0x00E4, 0x0003 },
-                                {3, 0x00E8, 0x1c00 },
-                                {3, 0x00EC, 0x0006 },
-                                {3, 0x00F0, 0x1887 },
-                                {3, 0x00F4, 0x7b00 },
-                                {3, 0x00F8, 0x8bdf },
-                                {3, 0x00FC, 0x000c },
-                                {3, 0x0108, 0x0004 },
-                                {3, 0x010C, 0x001e },
-                                {5, 0x0000, 0x0001 },
-                                {5, 0x0008, 0x002f },
-                                {5, 0x000C, 0x0024 },
-                                {5, 0x0010, 0x001e },
-                                {5, 0x0014, 0x0004 },
-                                {5, 0x0018, 0x0043 },
-                                {5, 0x001C, 0x0068 },
-                                {5, 0x0020, 0x002b },
-                                {5, 0x0024, 0x002f },
-                                {5, 0x0028, 0x01d4 },
-                                {5, 0x002C, 0x002b },
-                                {5, 0x0030, 0x0007 },
-                                {5, 0x0034, 0x0007 },
-                                {5, 0x0038, 0x0074 },
-                                {5, 0x003C, 0x00a9 },
-                                {5, 0x0040, 0x001e },
-                                {5, 0x0044, 0x0064 },
-                                {5, 0x0048, 0x0200 },
-                                {5, 0x004C, 0x0200 },
-                                {5, 0x0050, 0x00d5 },
-                                {5, 0x0054, 0x011e },
-                                {0, 0x00C8, 0x0000 },
-                                {0, 0x00CC, 0x0400 },
-                                {0, 0x00D0, 0x0000 },
-                                {0, 0x00D4, 0x0000 },
-                                {0, 0x00D8, 0x0000 },
-                                {0, 0x00DC, 0x0400 },
-                                {0, 0x00E0, 0x0000 },
-                                {0, 0x00E4, 0x0000 },
-                                {0, 0x00E8, 0x0000 },
-                                {0, 0x00EC, 0x0400 },
-                                {0, 0x00F0, 0x0191 },
-                                {0, 0x00F4, 0x01c2 },
-                                {0, 0x00F8, 0x1e87 },
-                                {0, 0x00FC, 0x1fb7 },
-                                {0, 0x0100, 0x0107 },
-                                {0, 0x0104, 0x0204 },
-                                {0, 0x0108, 0x0064 },
-                                {0, 0x010C, 0x1f68 },
-                                {0, 0x0110, 0x1ed6 },
-                                {0, 0x0114, 0x01c2 },
-                                {0, 0x00C0, 0x0004 },
-                                {0, 0x0180, 0x0001 },
-                                {0, 0x01C4, 0x0d07 },
-                                {0, 0x01C8, 0x2701 },
-                                {0, 0x01CC, 0x040d },
-                                {0, 0x01C0, 0x5601 },
-                                {0, 0x01A8, 0x0010 },
-                                {0, 0x01AC, 0x0003 },
-                                {0, 0x01B0, 0x0003 },
-                                {0, 0x01B4, 0x0002 },
-                                {0, 0x01B8, 0x000c },
-                                {0, 0x01BC, 0x0007 },
-                                {7, 0x0004, 0x04ff },
-                                {7, 0x0008, 0x031f },
-                                {7, 0x000C, 0x0106 },
-                                {7, 0x0010, 0x2864 },
-                                {7, 0x0014, 0x001f },
-                                {7, 0x0018, 0x000f },
-                                {7, 0x001C, 0x0000 },
-                                {7, 0x0020, 0x0000 },
-                                {7, 0x0000, 0x0003 },
-                                {0, 0x0010, 0x0210 },
-                                {0, 0x0040, 0x1700 },
-                                {0, 0x0044, 0x0000 },
-                                {0, 0x0048, 0x0000 },
-                                {0, 0x004C, 0x0000 },
-                                {0, 0x0050, 0x04ff },
-                                {0, 0x0054, 0x031f },
-                                {0, 0x0068, 0x0001 },
-                                {0, 0x0198, 0x0088 },
-                                {0, 0x0004, 0x8103 },
-                                {0, 0x0008, 0xc000 },
-                                {0, 0x0000, 0x0001 },
-                                {0, 0x0058, 0x0000 },
-                                {0, 0x005C, 0x0000 },
-                                {0, 0x0060, 0x04ff },
-                                {0, 0x0064, 0x031f },
-                                {6, 0x0080, 0x0291 },//0x0291 },//WDMA disable
-                                {6, 0x0084, 0x00a0 },
-                                {6, 0x00A0, 0x7c00 },
-                                {6, 0x00A4, 0x0008 },
-                                {6, 0x00B0, 0x08f0 },
-                                {6, 0x00C0, 0x0100 },
-                                {6, 0x0000, 0x0300 },
-                                {6, 0x0004, 0x0078 },
-                                {6, 0x0020, 0x0000 },
-                                {6, 0x0024, 0x0000 },
-                                {6, 0x0030, 0x01f4 },
-                                {6, 0x0034, 0x003f },
-                                {6, 0x0040, 0x0000 }};
+extern void Drv_SCLIRQ_SetDropFrameFromISP(unsigned char u8Count);
 
-
-static int isp_testscript(void)
+#define member_size(type, member) sizeof(((type *)0)->member)
+static void isp_ae_cache_invalidate(void)
 {
-    unsigned int script_len, i, value;
-    unsigned int *address;
-    //MSYS_DMEM_INFO raw_meminfo;
-    //unsigned long ae_phyaddr, awb_phyaddr, u4PhyAddr;
-    //unsigned long long ae_viraddr, awb_viraddr;
-
-    printk(KERN_INFO "[ISP]: test script\n");
-
-    //raw_meminfo.length = 1280*800*2;
-    //msys_request_dmem(&raw_meminfo);
-
-    //ae_phyaddr = (unsigned long)isp_mem.Base_Meminfo.phys + isp_mem.AE_Offset[0];
-    //awb_phyaddr = (unsigned long)isp_mem.Base_Meminfo.phys + isp_mem.AWB_Offset[0];
-    //ae_viraddr = isp_mem.Base_Meminfo.kvirt+ isp_mem.AE_Offset[0];
-    //awb_viraddr = isp_mem.Base_Meminfo.kvirt + isp_mem.AWB_Offset[0];
-
-    //u4PhyAddr = raw_meminfo.phys;
-    //u4VirAddr = raw_meminfo.kvirt;
-
-    //printk(KERN_INFO "[ISP]: raw address phyiscal = 0x%08x, virtual = 0x%08x\n", u4PhyAddr, u4VirAddr);
-    //printk(KERN_INFO "[ISP]: ae address phyiscal  = 0x%08x, virtual64 = 0x%llx\n", ae_phyaddr, ae_viraddr);
-    //printk(KERN_INFO "[ISP]: awb address phyiscal  = 0x%08x, virtual64 = 0x%llx\n", awb_phyaddr, awb_viraddr);
-
-    script_len = sizeof(pPGscript)/(sizeof(unsigned short)*3);
-
-    printk(KERN_INFO "[ISP]: script length = %d\n", script_len);
-    for (i = 0; i < script_len; i++) {
-
-        address = (unsigned int*)(isp_mem.pISPRegs[pPGscript[i][0]] + pPGscript[i][1]);
-
-        if(pPGscript[i][0] == 3 && pPGscript[i][1] == 0x0018) {
-
-            //u4PhyAddr = ae_phyaddr;
-            value = (0x281F4000>>4) & 0xFFFF;//(0x281F4000>>4) & 0xFFFF;//(u4PhyAddr>>4) & 0xFFFF;
-
-            printk(KERN_INFO "[ISP]: wdma base_L = 0x%08x\n", value);
-
-        }
-        else if(pPGscript[i][0] == 3 && pPGscript[i][1] == 0x001C) {
-            //u4PhyAddr = ae_phyaddr;
-            value = (0x281F4000>>20) & 0xFFFF;//(0x281F4000>>20) & 0xFFFF;//(u4PhyAddr>>20) & 0xFFFF;
-            printk(KERN_INFO "[ISP]: wdma base_H = 0x%08x\n", value);
-
-        }
-        else if(pPGscript[i][0] == 3 && pPGscript[i][1] == 0x0020) {
-
-            //u4PhyAddr = awb_phyaddr;
-            value = (0x281FF6F0>>4) & 0xFFFF;//(0x281FF6F0>>4) & 0xFFFF;//(u4PhyAddr>>4) & 0xFFFF;
-
-            printk(KERN_INFO "[ISP]: wdma base_L = 0x%08x\n", value);
-
-        }
-        else if(pPGscript[i][0] == 3 && pPGscript[i][1] == 0x0024) {
-            //u4PhyAddr = awb_phyaddr;
-            value = (0x281FF6F0>>20) & 0xFFFF;//(0x281FF6F0>>20) & 0xFFFF;//(u4PhyAddr>>20) & 0xFFFF;
-            printk(KERN_INFO "[ISP]: wdma base_H = 0x%08x\n", value);
-
-        }
-        else if(pPGscript[i][0] == 6 && pPGscript[i][1] == 0x00A0) {
-            //u4PhyAddr = raw_meminfo.phys;
-            value = (0x28000000>>4) & 0xFFFF;//(0x28000000>>4) & 0xFFFF;//(u4PhyAddr>>4) & 0xFFFF;
-
-            printk(KERN_INFO "[ISP]: wdma base_L = 0x%08x\n", value);
-
-        }
-        else if(pPGscript[i][0] == 6 && pPGscript[i][1] == 0x00A4) {
-            //u4PhyAddr = raw_meminfo.phys;
-            value = (0x28000000>>20) & 0xFFFF;//(0x28000000>>20) & 0xFFFF;//(u4PhyAddr>>20) & 0xFFFF;
-            printk(KERN_INFO "[ISP]: wdma base_H = 0x%08x\n", value);
-
-        }
-        else {
-            value = pPGscript[i][2];
-        }
-
-        //printk(KERN_INFO "[ISP]: script %d addr:0x%08x value:0x%04x\n", i, (unsigned int)address, value);
-
-        *address = value;
-
-    }
-
-
-   return 0;
-}
-#endif
-
-#if 0
-static void isp_write_iq_tbl(void)
-{
-    if(isp_mem.IsWriteIQtbl == 1){
-        HalISPMLoadWriteAllTable((unsigned long)isp_mem.Base_Meminfo.phys, isp_mem.IQ_tblOffset);
-        //HalISPMLoadWriteData(IQ_MEM_ALSC_RGAIN, isp_mem.Base_Meminfo.phys+isp_mem.IQ_tblOffset[IQ_MEM_ALSC_RGAIN]);
-        isp_mem.IsWriteIQtbl = 0;
-    }
-
-}
-#endif
-
-static int isp_set_ae_base(void)
-{
-    u32 phy_addr;
-    u32 virt_addr;
-
-    phy_addr = (unsigned long)isp_mem.Base_Meminfo.phys + isp_mem.AE_Offset;
-    virt_addr = (unsigned long)isp_mem.Base_Meminfo.kvirt + isp_mem.AE_Offset;
-
-    DBG_INFO("ISP_BASE = 0x%X, AE offset = 0x%X\n",(unsigned int)isp_mem.Base_Meminfo.phys,(unsigned int)isp_mem.AE_Offset);
-    HalISPSetAeBaseAddr(phy_addr);
-
-    return 0;
+    Chip_Inv_Cache_Range((unsigned long)isp_mem.Base_Meminfo.kvirt + offsetof(ISP_STATIS_MEM,ae),member_size(ISP_STATIS_MEM,ae));
 }
 
-static int isp_set_awb_base(void)
+static void isp_awb_cache_invalidate(void)
 {
-    u32 phy_addr;
-    u32 virt_addr;
-
-    phy_addr = (unsigned long)isp_mem.Base_Meminfo.phys + isp_mem.AWB_Offset;
-    virt_addr = (unsigned long)isp_mem.Base_Meminfo.kvirt + isp_mem.AWB_Offset;
-
-    DBG_INFO("set awb_base[%d]:0x%08x , virt = 0x%.8X", isp_mem.AWB_WriteIdx, phy_addr, virt_addr);
-    HalISPSetAwbBaseAddr(phy_addr);
-
-    return 0;
+    Chip_Inv_Cache_Range((unsigned long)isp_mem.Base_Meminfo.kvirt + offsetof(ISP_STATIS_MEM,awb),member_size(ISP_STATIS_MEM,awb));
 }
 
-static int isp_set_mot_base(void)
+static void isp_af_cache_invalidate(void)
 {
-    u32 phys_addr;
-    phys_addr =  (unsigned long)isp_mem.Base_Meminfo.phys + isp_mem.MOT_Offset;
-    HalISPSetMotBaseAddr(phys_addr);
-    return 0;
+    Chip_Inv_Cache_Range((unsigned long)isp_mem.Base_Meminfo.kvirt + offsetof(ISP_STATIS_MEM,af),member_size(ISP_STATIS_MEM,af));
+}
+
+static void isp_mot_cache_invalidate(void)
+{
+    Chip_Inv_Cache_Range((unsigned long)isp_mem.Base_Meminfo.kvirt + offsetof(ISP_STATIS_MEM,mot),member_size(ISP_STATIS_MEM,mot));
+}
+
+static void isp_histo_cache_invalidate(void)
+{
+    Chip_Inv_Cache_Range((unsigned long)isp_mem.Base_Meminfo.kvirt + offsetof(ISP_STATIS_MEM,histo),member_size(ISP_STATIS_MEM,histo));
 }
 
 #if 1
@@ -886,150 +498,203 @@ static int isp_set_dnr_fb_base(MSYS_DMEM_INFO *mem_info,int id)
 }
 #endif
 
-static u32 isp_get16bytes_size(u32 size)
-{
-    u32 result_size;
-    result_size = ((size%16)==0)?size:(size/16 + 1)*16;
-    return result_size;
-}
-
-extern MS_PACKAGE_TYPE Chip_Get_Package_Type(void);
+u32 g_isp_flag = ISP_FB_ROT | ISP_FB_DNR;
+u32 g_isp_max_res = 3; //max resolutioin, 0:1280x720 1:1920x1080, 2:2048x1536, 3:2688x1520
 static unsigned int get_dnr_buffer_size(void)
 {
-    MS_PACKAGE_TYPE pkg_type = 0;//Chip_Get_Package_Type();
-    unsigned int img_w;
-    unsigned int img_h;
-
-#if 0  // 1 to use /Chip_Get_Package_Type()
-    pkg_type = Chip_Get_Package_Type();
-#else
-    extern unsigned long totalram_pages;
-    pr_debug("\n\n SYSTEM Total Pages = 0x%X \n\n",(unsigned int)totalram_pages);
-    if(totalram_pages > 0x4000) //if DRAM size > 64MB
-        pkg_type = MS_PACKAGE_BGA;
-    else
-        pkg_type = MS_PACKAGE_QFP;
-#endif
-
-    switch(pkg_type)
+    u32 width = 2688;
+    u32 height = 1520;
+    switch(g_isp_max_res)
     {
-    case MS_PACKAGE_QFP:
-        img_w = 1280;
-        img_h = 720;
-        return img_w*img_h*2;
+    case 0: //1270x720
+        width = 1280;
+        height = 720;
     break;
-    default:
-    case MS_PACKAGE_BGA:
-        img_w = 1920;
-        img_h = 1088;
-        return (((img_w+191)/192) * ((img_h+15)>>4) * 256 * 16);
+    case 1://1920x1080
+        width = 1920;
+        height = 1080;
     break;
+    case 2://2048x1536 , 3M
+        width = 2048;
+        height = 1536;
+    break;
+    case 3://2688x1520 , 4M
+        width = 2688;
+        height = 1520;
+    break;
+    case 4://2688x1520 , 4M
+        width = 2688;
+        height = 1520;
+    break;
+    case 5://2592x1944 , 5M
+        width = 2592;
+        height = 1944;
     }
-    //return (((img_w+191)/192) * ((img_h+15)>>4) * 256 * 16);
+    pr_info("[ISP] max_res= %dx%d\n",width,height);
+    return (((width+191)/192) * ((height+15)>>4) * 256 * 16);
+}
+static unsigned int get_dnr_buffer_num(void)
+{
+    if(g_isp_flag&ISP_FB_DNR)
+    {
+        return (g_isp_flag&ISP_FB_ROT)?2:1;
+    }
+    else
+        return 0;
+}
+
+static int IspInitDnrFB(u32 nImgW,u32 nImgH,u32 nNum)
+{
+    int i;
+    int ret=0;
+    int nBufSize = (((nImgW+191)/192) * ((nImgH+15)>>4) * 256 * 16);
+
+    if(nNum>get_dnr_buffer_num())
+    {
+        pr_info("[ISP]DNR buffer number exceed max number. num=%d buffers\n",nNum);
+        return -1;
+    }
+
+    if(nBufSize>get_dnr_buffer_size())
+    {
+        pr_info("[ISP]DNR buffer size exceed max size. size=%d bytes\n",nBufSize);
+        return -1;
+    }
+
+    for(i=0;i<2;++i)
+    {
+        if(isp_mem.DNR_FB_Meminfo[i].phys)
+        {
+            msys_release_dmem(&isp_mem.DNR_FB_Meminfo[i]);
+            memset(&isp_mem.DNR_FB_Meminfo[i],0,sizeof(isp_mem.DNR_FB_Meminfo[i]));
+        }
+    }
+
+    if(nNum==1)//only DNR buffer
+    {
+        int err = 0;
+        MSYS_DMEM_INFO *info = &isp_mem.DNR_FB_Meminfo[0];
+        sprintf(info->name,"ISP_DNR_%d",0);
+        info->length = nBufSize;
+        pr_info("ISP DNR buffer#%d size = 0x%X\n",0,info->length);
+        if(msys_request_dmem(info))
+        {
+            pr_err("ISP failed to request DNR frame buffer. err=0x%X\n",err);
+            ret = -1;
+        }
+        else
+        {
+            isp_set_dnr_fb_base(info,0);
+            isp_set_dnr_fb_base(info,1);
+            HalISPSetDnrUbound((unsigned long)(info->phys+info->length));
+        }
+    }
+    else if(nNum==2)//DNR + ROT buffer
+    {
+        unsigned long max_addr = 0;
+        for(i=0;i<2;++i)
+        {
+            int err = 0;
+            MSYS_DMEM_INFO *info = &isp_mem.DNR_FB_Meminfo[i];
+            sprintf(info->name,"ISP_DNR_%d",i);
+            info->length = nBufSize;
+            pr_info("ISP DNR buffer#%d size = 0x%X\n",i,info->length);
+            if(msys_request_dmem(info))
+            {
+                pr_err("ISP failed to request DNR frame buffer. err=0x%X\n",err);
+                ret = -1;
+                break;
+            }
+            isp_set_dnr_fb_base(info,i);
+            max_addr = max_addr > info->phys ? max_addr:info->phys;
+            HalISPSetDnrUbound((unsigned long)(max_addr+info->length));
+        }
+    }
+    return ret;
 }
 
 static int isp_init_buff(void) {
-    int i, base;
+    //int i;
     pr_debug("[ISP] isp_init_buff\n");
+    isp_mem.Base_Meminfo.length = sizeof(ISP_STATIS_MEM);
 
-    //isp_mem.AE_BuffNum = AE_RING_BUFF_NUM;
-    isp_mem.AE_Size = AE_TOTAL_STATIS_SIZE;
-    //isp_mem.AWB_BuffNum = AWB_RING_BUFF_NUM;
-    isp_mem.AWB_Size = AWB_STATIS_SIZE;
-    isp_mem.MOT_Size = MOT_STATIS_SIZE;
-
-    isp_mem.IQ_tblSize[IQ_MEM_ALSC_RGAIN] = isp_get16bytes_size(IQ_LEN_ALSC_GAIN)* 2;//IQ_LEN_ALSC_GAIN*2;
-    isp_mem.IQ_tblSize[IQ_MEM_ALSC_GGAIN] = isp_get16bytes_size(IQ_LEN_ALSC_GAIN)* 2;//IQ_LEN_ALSC_GAIN*2;
-    isp_mem.IQ_tblSize[IQ_MEM_ALSC_BGAIN] = isp_get16bytes_size(IQ_LEN_ALSC_GAIN)* 2;//IQ_LEN_ALSC_GAIN*2;
-
-    isp_mem.IQ_tblSize[IQ_MEM_GAMMA12TO10_RTBL] = IQ_LEN_GAMMA_12TO10*2;
-    isp_mem.IQ_tblSize[IQ_MEM_GAMMA12TO10_GTBL] = IQ_LEN_GAMMA_12TO10*2;
-    isp_mem.IQ_tblSize[IQ_MEM_GAMMA12TO10_BTBL] = IQ_LEN_GAMMA_12TO10*2;
-
-    isp_mem.IQ_tblSize[IQ_MEM_DEFECT_PIXEL_POS] = IQ_LEN_DEFECT_PIXEL*2;
-
-    isp_mem.IQ_tblSize[IQ_MEM_GAMMA10TO12_RTBL] = IQ_LEN_GAMMA_10TO12*2;
-    isp_mem.IQ_tblSize[IQ_MEM_GAMMA10TO12_GTBL] = IQ_LEN_GAMMA_10TO12*2;
-    isp_mem.IQ_tblSize[IQ_MEM_GAMMA10TO12_BTBL] = IQ_LEN_GAMMA_10TO12*2;
-
-    isp_mem.IQ_tblSize[IQ_MEM_GAMMA_CORR_RTBL] = IQ_LEN_GAMMA_CORRECT*2;
-    isp_mem.IQ_tblSize[IQ_MEM_GAMMA_CORR_GTBL] = IQ_LEN_GAMMA_CORRECT*2;
-    isp_mem.IQ_tblSize[IQ_MEM_GAMMA_CORR_BTBL] = IQ_LEN_GAMMA_CORRECT*2;
-
-
-    isp_mem.Base_Meminfo.length = isp_mem.AE_Size;
-    isp_mem.Base_Meminfo.length +=isp_mem.AWB_Size;
-    isp_mem.Base_Meminfo.length += isp_mem.MOT_Size;
-
-    DBG_INFO("isp ae_size: %d, awb_size: %d", isp_mem.AE_Size, isp_mem.AWB_Size);
-
-    for (i = 0; i < IQ_MEM_NUM; i++)  {
-        isp_mem.Base_Meminfo.length += isp_mem.IQ_tblSize[i];
-    }
     sprintf(isp_mem.Base_Meminfo.name,"ISP_base");
-    msys_request_dmem(&isp_mem.Base_Meminfo);
+    if(0 > msys_request_dmem(&isp_mem.Base_Meminfo))
+    {
+        pr_err("ISP failed to request Base_Meminfo buffer.\n");
+        return -1;
+    }
 
     DBG_INFO("mem base phyaddr:0x%08x, viraddr:0x%08x, len:%d", (unsigned int)isp_mem.Base_Meminfo.phys,
         (unsigned int)isp_mem.Base_Meminfo.kvirt,isp_mem.Base_Meminfo.length);
 
     ////////// isp share data ////////////////
     sprintf(isp_mem.ShareData_Meminfo.name, "ISP_SHARE_DATA");
-    isp_mem.ShareData_Meminfo.length = sizeof(ISP_SHARE_DATA);
-    msys_request_dmem(&isp_mem.ShareData_Meminfo);
-    isp_int.share_data = (ISP_SHARE_DATA *)((u32)isp_mem.ShareData_Meminfo.kvirt);
-    DBG_INFO(KERN_NOTICE "FrameState phyaddr:0x%08llx, viraddr:0x%08llx, len:%d\n",
+	isp_int.share_data = kmalloc(sizeof(ISP_SHARE_DATA),GFP_KERNEL);
+	memset(isp_int.share_data, 0, sizeof(ISP_SHARE_DATA));
+	isp_mem.ShareData_Meminfo.kvirt = (unsigned long)isp_int.share_data;
+	isp_mem.ShareData_Meminfo.phys = virt_to_phys(isp_int.share_data);
+	isp_mem.ShareData_Meminfo.length = sizeof(ISP_SHARE_DATA);
+
+    pr_info("ShareData_Meminfo phyaddr:0x%08llx, viraddr:0x%08llx, len:%#x\n",
         isp_mem.ShareData_Meminfo.phys,
         isp_mem.ShareData_Meminfo.kvirt, isp_mem.ShareData_Meminfo.length);
 
-    base = 0;
-    isp_mem.AE_Offset = 0;
-    base +=  isp_mem.AE_Size;
-    isp_mem.AWB_Offset = base;
-    base += isp_mem.AWB_Size;
+    HalISPSetAeBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,ae), offsetof(ISP_STATIS_MEM,awb));
+    HalISPSetAwbBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,awb), offsetof(ISP_STATIS_MEM,af)-offsetof(ISP_STATIS_MEM,awb));
+    HalISPSetAfBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,af), offsetof(ISP_STATIS_MEM,histo)-offsetof(ISP_STATIS_MEM,af));
+    HalISPSetHistoBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,histo), offsetof(ISP_STATIS_MEM,mot)-offsetof(ISP_STATIS_MEM,histo));
+    HalISPSetMotBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,mot), offsetof(ISP_STATIS_MEM,rgbir)-offsetof(ISP_STATIS_MEM,mot));
+    HalISPSetRgbIRBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,rgbir), sizeof(ISP_STATIS_MEM)-offsetof(ISP_STATIS_MEM,rgbir));
 
-    //DBG_INFO("IQ vOffset[%d]:0x%08x", 0, (u32)isp_mem.IQ_tblOffset[0]);
-    for (i = 0; i < IQ_MEM_NUM; i++)  {
-      isp_mem.IQ_tblOffset[i] = base;
-      base += isp_mem.IQ_tblSize[i];
-      //DBG_INFO("IQ vOffset[%d]:0x%08x", i, (u32)isp_mem.IQ_tblOffset[i]);
-    }
+    pr_info("AE Base: virt=0x%X size=0x%X\n",(unsigned int)isp_mem.Base_Meminfo.kvirt + offsetof(ISP_STATIS_MEM,ae), offsetof(ISP_STATIS_MEM,awb));
+    pr_info("AWB Base: virt=0x%X size=0x%X\n",(unsigned int)isp_mem.Base_Meminfo.kvirt + offsetof(ISP_STATIS_MEM,awb), offsetof(ISP_STATIS_MEM,af)-offsetof(ISP_STATIS_MEM,awb));
+    pr_info("AF Base: virt=0x%X size=0x%X\n",(unsigned int)isp_mem.Base_Meminfo.kvirt + offsetof(ISP_STATIS_MEM,af), offsetof(ISP_STATIS_MEM,histo)-offsetof(ISP_STATIS_MEM,af));
+    pr_info("HISTO Base: virt=0x%X size=0x%X\n",(unsigned int)isp_mem.Base_Meminfo.kvirt + offsetof(ISP_STATIS_MEM,histo), offsetof(ISP_STATIS_MEM,mot)-offsetof(ISP_STATIS_MEM,histo));
+    pr_info("MOT Base: virt=0x%X size=0x%X\n",(unsigned int)isp_mem.Base_Meminfo.kvirt + offsetof(ISP_STATIS_MEM,mot), offsetof(ISP_STATIS_MEM,rgbir)-offsetof(ISP_STATIS_MEM,mot));
+    pr_info("RGBIR Base: virt=0x%X size=0x%X\n",(unsigned int)isp_mem.Base_Meminfo.kvirt + offsetof(ISP_STATIS_MEM,rgbir), sizeof(ISP_STATIS_MEM)-offsetof(ISP_STATIS_MEM,rgbir));
 
-    isp_mem.MOT_Offset = base;
-    base += isp_mem.MOT_Size;
-
-    //isp_mem.AE_WriteIdx = 0;//AE_RING_BUFF_NUM;
-    //isp_mem.AE_ReadIdx = 0;
-    //isp_mem.AWB_WriteIdx = 0;//AWB_RING_BUFF_NUM;
-    //isp_mem.AWB_ReadIdx = 0;
-    isp_mem.IsWriteIQtbl = 0;
-
-    isp_set_ae_base();
-
-    isp_set_awb_base();
-
-    isp_set_mot_base();
-
-#if 1
+#if 0
     {
-    //////////////////////////
-    // request DNR frame buffer //
-    //////////////////////////
-    extern unsigned long totalram_pages;
-    //pr_debug("\n\n Total Pages = 0x%X \n\n",(unsigned int)totalram_pages);
-    for(i=0;i<2;++i)
-    {
-      int err = 0;
-      MSYS_DMEM_INFO *info = &isp_mem.DNR_FB_Meminfo[i];
-      sprintf(isp_mem.DNR_FB_Meminfo[i].name,"ISP_DNR_%d",i);
-      info->length = get_dnr_buffer_size();
-      pr_info("ISP DNR buffer#%d size = 0x%X\n",i,info->length);
-      if(msys_request_dmem(info))
-      {
-        pr_err("ISP failed to request DNR frame buffer. err=0x%X\n",err);
-        break;
-      }
-      isp_set_dnr_fb_base(info,i);
-    }
+        //////////////////////////
+        // request DNR frame buffer //
+        //////////////////////////
+        int i;
+        int num_dnr_buf = get_dnr_buffer_num();
+        if(num_dnr_buf==1)
+        {
+            int err = 0;
+            MSYS_DMEM_INFO *info = &isp_mem.DNR_FB_Meminfo[0];
+            sprintf(info->name,"ISP_DNR_%d",0);
+            info->length = get_dnr_buffer_size();
+            //pr_info("ISP DNR buffer#%d size = 0x%X\n",0,info->length);
+            if(msys_request_dmem(info))
+            {
+                pr_err("ISP failed to request DNR frame buffer. err=0x%X\n",err);
+            }
+            else
+            {
+                isp_set_dnr_fb_base(info,0);
+                isp_set_dnr_fb_base(info,1);
+            }
+        }
+        else if(num_dnr_buf==2)
+        {
+            for(i=0;i<2;++i)
+            {
+                int err = 0;
+                MSYS_DMEM_INFO *info = &isp_mem.DNR_FB_Meminfo[i];
+                sprintf(info->name,"ISP_DNR_%d",i);
+                info->length = get_dnr_buffer_size();
+                //pr_info("ISP DNR buffer#%d size = 0x%X\n",i,info->length);
+                if(msys_request_dmem(info))
+                {
+                    pr_err("ISP failed to request DNR frame buffer. err=0x%X\n",err);
+                    break;
+                }
+                isp_set_dnr_fb_base(info,i);
+            }
+        }
     }
 #endif
     return 0;
@@ -1039,9 +704,12 @@ static int isp_restore_buff(void)
 {
     int i;
 
-    isp_set_ae_base();
-    isp_set_awb_base();
-    isp_set_mot_base();
+    HalISPSetAeBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,ae), offsetof(ISP_STATIS_MEM,awb));
+    HalISPSetAwbBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,awb), offsetof(ISP_STATIS_MEM,af)-offsetof(ISP_STATIS_MEM,awb));
+    HalISPSetAfBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,af), offsetof(ISP_STATIS_MEM,histo)-offsetof(ISP_STATIS_MEM,af));
+    HalISPSetHistoBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,histo), offsetof(ISP_STATIS_MEM,mot)-offsetof(ISP_STATIS_MEM,histo));
+    HalISPSetMotBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,mot), offsetof(ISP_STATIS_MEM,rgbir)-offsetof(ISP_STATIS_MEM,mot));
+    HalISPSetRgbIRBaseAddr((unsigned long)isp_mem.Base_Meminfo.phys + offsetof(ISP_STATIS_MEM,rgbir), sizeof(ISP_STATIS_MEM)-offsetof(ISP_STATIS_MEM,rgbir));
 
     for(i=0;i<2;++i)
     {
@@ -1074,11 +742,10 @@ static ssize_t isp_fwrite(struct file *fp,const char __user *buf, size_t size, l
 
 static long isp_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 {
-    //int err= 0;
     isp_dev_data *data =  (isp_dev_data*) fp->private_data;
     struct clk *_clk=0;
 
-    pr_info("ISP IOCTL +\n");
+    pr_debug("ISP IOCTL +\n");
     if (_IOC_TYPE(cmd) != ISP_IOCTL_MAGIC) return -ENOTTY;
     switch(cmd)
     {
@@ -1109,6 +776,9 @@ static long isp_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
             break;
             }
 
+            if(!_clk)
+                return -1;
+
             if(ctl.rate>0)
                 clk_set_rate(_clk,ctl.rate);
 
@@ -1118,9 +788,396 @@ static long isp_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
                 clk_disable_unprepare(_clk);
         }
         break;
+        case IOCTL_ISP_IQ_RGBCCM:
+        {
+            if(copy_from_user((void*)&isp_int.rgb_ccm.ccm, (void __user *)arg, sizeof(isp_int.rgb_ccm.ccm)))
+            {
+                BUG();
+            }
+            isp_int.rgb_ccm.dirty = 1;
+        }break;
+        case IOCTL_ISP_IQ_YUVCCM:
+        {
+            if(copy_from_user((void*)&isp_int.yuv_ccm.ccm, (void __user *)arg, sizeof(isp_int.yuv_ccm.ccm)))
+            {
+                BUG();
+            }
+            isp_int.yuv_ccm.dirty = 1;
+        }break;
+        case IOCTL_ISP_GET_ISP_FLAG:
+        {
+            isp_ioctl_isp_flag isp_flag;
+            isp_flag.flag = g_isp_flag;
+            if(copy_to_user((void __user *)arg,(void*)&isp_flag,sizeof(isp_flag)))
+            {
+                BUG();
+            }
+        }break;
+        case IOCTL_ISP_GET_MEM_INFO:
+        {
+            isp_ioctl_mem_info info;
+            if(copy_from_user((void*)&info, (void __user *)arg, sizeof(info)))
+            {
+                BUG();
+            }
+            info.phy_addr = data->isp_mem->Base_Meminfo.phys;
+            switch(info.mem_id)
+            {
+            case ISP_GET_MEM_INFO_BASE:
+                info.blk_offset = 0;
+                info.blk_size = sizeof(ISP_STATIS_MEM);
+            break;
+            case ISP_GET_MEM_INFO_AE:
+                info.blk_offset = offsetof(ISP_STATIS_MEM,ae);
+                info.blk_size = member_size(ISP_STATIS_MEM,ae);
+            break;
+            case ISP_GET_MEM_INFO_AWB:
+                info.blk_offset = offsetof(ISP_STATIS_MEM,awb);
+                info.blk_size = member_size(ISP_STATIS_MEM,awb);
+            break;
+            case ISP_GET_MEM_INFO_AF:
+                info.blk_offset = offsetof(ISP_STATIS_MEM,af);
+                info.blk_size = member_size(ISP_STATIS_MEM,af);
+            break;
+            case ISP_GET_MEM_INFO_MOT:
+                info.blk_offset = offsetof(ISP_STATIS_MEM,mot);
+                info.blk_size = member_size(ISP_STATIS_MEM,mot);
+            break;
+            case ISP_GET_MEM_INFO_HISTO:
+                info.blk_offset = offsetof(ISP_STATIS_MEM,histo);
+                info.blk_size = member_size(ISP_STATIS_MEM,histo);
+            break;
+            case ISP_GET_MEM_INFO_RGBIR:
+                info.blk_offset = offsetof(ISP_STATIS_MEM,rgbir);
+                info.blk_size = member_size(ISP_STATIS_MEM,rgbir);
+            break;
+            }
+            if(copy_to_user((void __user *)arg,(void*)&info,sizeof(info)))
+            {
+                BUG();
+            }
+        }break;
+        case IOCTL_ISP_GET_AE_IMG_INFO:
+        {
+            isp_isr_ae_img_info info;
+
+             info.img_w= isp_int.ae_img_info.img_w;
+             info.img_h= isp_int.ae_img_info.img_h;
+             info.blk_h= isp_int.ae_img_info.blk_h;
+             info.blk_w= isp_int.ae_img_info.blk_w;
+             info.rot= isp_int.ae_img_info.rot;
+
+            if(copy_to_user((void __user *)arg,(void*)&info,sizeof(info)))
+            {
+                BUG();
+            }
+        }break;
+        case IOCTL_ISP_UPDATE_AE_IMG_INFO:
+        {
+            isp_isr_ae_img_info info;
+            if(copy_from_user((void*)&info, (void __user *)arg, sizeof(info)))
+            {
+                BUG();
+            }
+            isp_int.ae_img_info.img_w = info.img_w;
+            isp_int.ae_img_info.img_h = info.img_h;
+            isp_int.ae_img_info.blk_h = info.blk_h;
+            isp_int.ae_img_info.blk_w = info.blk_w;
+            isp_int.ae_img_info.rot = info.rot;
+
+#if 0
+            //printk("##########isp_int.ae_img_info.img_w= %d\n",isp_int.ae_img_info.img_w);
+            //printk("##########isp_int.ae_img_info.img_h= %d\n",isp_int.ae_img_info.img_h);
+            //printk("##########isp_int.ae_img_info.blk_h= %d\n",isp_int.ae_img_info.blk_h);
+            //printk("##########isp_int.ae_img_info.blk_w= %d\n",isp_int.ae_img_info.blk_w);
+            //printk("##########isp_int.ae_img_info.rot= %d\n",isp_int.ae_img_info.rot);
+#endif
+        }break;
+        case IOCTL_ISP_SET_AE_DGAIN:
+        {
+            isp_ioctl_ae_dgian gain;
+            if(copy_from_user((void*)&gain, (void __user *)arg, sizeof(gain)))
+            {
+                BUG();
+            }
+            isp_int.dgain.enable = gain.enable;
+            isp_int.dgain.gain = gain.dgain;
+            isp_int.dgain.dirty = 1;
+        }break;
+        case IOCTL_ISP_SET_FIFO_MASK:
+        {
+            isp_ioctl_fifo_mask mask;
+            unsigned long flags;
+            spinlock_t lock;
+            spin_lock_init(&lock);
+
+            if(copy_from_user((void*)&mask, (void __user *)arg, sizeof(mask)))
+            {
+                BUG();
+            }
+
+            spin_lock_irqsave(&lock,flags);
+            if(!isp_int.fifo_mask.enable) //if enable mask
+            {
+                //IspInputEnable(0); //enable fifo mask immediately
+                isp_int.fifo_mask.dirty = 1;
+            }
+            else
+            {
+                IspInputEnable(1); //enable isp input immediately
+                isp_int.fifo_mask.dirty = 1;
+            }
+            C_OUT(isp_lock);
+            spin_unlock_irqrestore(&lock,flags);
+        }break;
+        case IOCTL_ISP_TRIGGER_WDMA:
+        {
+            isp_ioctl_trigger_wdma_attr attr;
+
+            memset((void *)&attr,0,sizeof(attr));
+
+            if(copy_from_user((void*)&attr, (void __user *)arg, sizeof(attr)))
+            {
+                BUG();
+            }
+
+#if 0
+            //printk("attr.width=%d\n",attr.width);
+            //printk("attr.height=%d\n",attr.height);
+            //printk("attr.x=%d\n",attr.x);
+            //printk("attr.y=%d\n",attr.y);
+            //printk("attr.wdma_path=%d\n",attr.wdma_path);
+            //printk("attr.buf_addr_phy=0x%x\n",attr.buf_addr_phy);
+            //printk("attr.buf_addr_vir=0x%x\n",attr.buf_addr_kvir);
+#endif
+            HalISPWdmaTrigger(attr);
+
+            if(wait_event_interruptible_timeout(isp_wq_WDMA_DONE, isp_int.wdma_done == true,100)){
+                Chip_Inv_Cache_Range(attr.buf_addr_kvir,attr.width*attr.height*2);
+                pr_debug("!!!!!!! WDMA DONE!!!!!!!!\n");
+            }else{
+
+                pr_debug("!!!!!!! WDMA TIMEOUT !!!!!\n");
+                return -1;
+            }
+        }break;
+        case IOCTL_ISP_SKIP_FRAME:
+        {
+            isp_ioctl_trigger_skip_attr attr;
+
+            memset((void *)&attr,0,sizeof(attr));
+
+            if(copy_from_user((void*)&attr, (void __user *)arg, sizeof(attr)))
+            {
+                BUG();
+            }
+
+            Drv_SCLIRQ_SetDropFrameFromISP(attr.skip_cnt);
+            pr_debug("!!!!!skip frame:%d\n",attr.skip_cnt);
+
+        }break;
+        case IOCTL_ISP_INIT:
+        {
+            isp_ioctl_isp_init param;
+            if(copy_from_user((void*)&param, (void __user *)arg, sizeof(param)))
+            {
+                BUG();
+            }
+
+            if(param.nDnrFlag&ISP_FB_DNR)//only DNR -> 1 buffer, DNR+ROT -> 2 buffer
+                return IspInitDnrFB(param.nRawW,param.nRawH,(param.nDnrFlag&ISP_FB_ROT)?2:1);
+        }break;
     }
-    pr_info("ISP IOCTL -\n");
+    pr_debug("ISP IOCTL -\n");
     return 0;
+}
+u32 isp_get_ae_img_info(isp_isr_ae_img_info *info)
+{
+    info->img_w= isp_int.ae_img_info.img_w;
+    info->img_h= isp_int.ae_img_info.img_h;
+    info->blk_h= isp_int.ae_img_info.blk_h;
+    info->blk_w= isp_int.ae_img_info.blk_w;
+    info->rot= isp_int.ae_img_info.rot;
+
+    return 0;
+}
+
+//------------ Frame start signal device ----------------------
+DEFINE_SPINLOCK(g_IspFsLock);
+static struct list_head gIspFsWqList = LIST_HEAD_INIT(gIspFsWqList);
+typedef struct
+{
+    struct list_head list;
+    wait_queue_head_t waitq;
+    //int id;
+    unsigned int fcount;
+    int ready;
+}IspIrqLink_t;
+
+static int isp_fs_open(struct inode *inode, struct file *fp)
+{
+    unsigned long flags;
+    //static int open_cnt=0;
+    IspIrqLink_t *data = kmalloc(sizeof(IspIrqLink_t),GFP_KERNEL);
+    if(!data)
+        return -ENOENT;
+    memset((void*)data,0,sizeof(IspIrqLink_t));
+    init_waitqueue_head(&data->waitq);
+    spin_lock_irqsave(&g_IspFsLock,flags);
+    list_add(&data->list,&gIspFsWqList);
+    spin_unlock_irqrestore(&g_IspFsLock,flags);
+
+    fp->private_data = (void*) data;
+    pr_info("isp_fs open \n");
+    return 0;
+}
+
+static int isp_fs_release(struct inode *inode, struct file *fp)
+{
+    unsigned long flags;
+    IspIrqLink_t *data = (IspIrqLink_t*)fp->private_data;
+
+    spin_lock_irqsave(&g_IspFsLock,flags);
+    list_del(&data->list);
+    spin_unlock_irqrestore(&g_IspFsLock,flags);
+
+    pr_info("isp_fs close \n");
+
+    kfree(data);
+    return 0;
+}
+
+static ssize_t isp_fs_fread(struct file *fp, char __user *buf, size_t size, loff_t *ppos)
+{
+    IspIrqLink_t *data = (IspIrqLink_t*)fp->private_data;
+    memcpy(buf, (void*)&data->fcount, size>sizeof(data->fcount)?sizeof(data->fcount):size);
+    return 0;
+}
+
+unsigned int isp_fs_poll(struct file *fp, poll_table *wait)
+{
+    unsigned int mask = 0;
+    IspIrqLink_t *data = (IspIrqLink_t*)fp->private_data;
+    poll_wait(fp, &data->waitq, wait);
+    if(data->ready)
+    {
+        data->ready = 0;
+        mask |= POLLIN|POLLRDNORM;
+    }
+    return mask;
+}
+
+struct file_operations isp_fs_fops =
+{
+    .owner = THIS_MODULE,
+    .open = isp_fs_open,
+    .release = isp_fs_release,
+    .read = isp_fs_fread,
+    .write = 0,
+    .unlocked_ioctl = 0,
+    .poll = isp_fs_poll,
+};
+
+struct miscdevice g_isp_fs_dev;
+static void AddFsNode(void)
+{
+    g_isp_fs_dev.minor = MISC_DYNAMIC_MINOR;
+    g_isp_fs_dev.name = "isp_fs";
+    g_isp_fs_dev.fops = &isp_fs_fops;
+    g_isp_fs_dev.parent = 0;
+    misc_register(&g_isp_fs_dev);
+}
+
+//------------ AE signal device ----------------------
+DEFINE_SPINLOCK(g_IspAeLock);
+static struct list_head gIspAeWqList = LIST_HEAD_INIT(gIspAeWqList);
+static int isp_ae_open(struct inode *inode, struct file *fp)
+{
+    unsigned long flags;
+    IspIrqLink_t *data = kmalloc(sizeof(IspIrqLink_t),GFP_KERNEL);
+    if(!data)
+        return -ENOENT;
+    memset((void*)data,0,sizeof(IspIrqLink_t));
+	//add wait queue to fs list
+    init_waitqueue_head(&data->waitq);
+    spin_lock_irqsave(&g_IspAeLock,flags);
+    list_add(&data->list,&gIspAeWqList);
+    spin_unlock_irqrestore(&g_IspAeLock,flags);
+
+    fp->private_data = (void*) data;
+    pr_debug("isp_ae open\n");
+    return 0;
+}
+
+static int isp_ae_release(struct inode *inode, struct file *fp)
+{
+    unsigned long flags;
+    IspIrqLink_t *data = (IspIrqLink_t*)fp->private_data;
+
+    spin_lock_irqsave(&g_IspAeLock,flags);
+    list_del(&data->list);
+    spin_unlock_irqrestore(&g_IspAeLock,flags);
+
+    pr_debug("isp_ae close\n");
+    kfree(data);
+    return 0;
+}
+
+static ssize_t isp_ae_fread(struct file *fp, char __user *buf, size_t size, loff_t *ppos)
+{
+    IspIrqLink_t *data = (IspIrqLink_t*)fp->private_data;
+    memcpy(buf, (void*)&data->fcount, size>sizeof(data->fcount)?sizeof(data->fcount):size);
+    return 0;
+}
+
+unsigned int isp_ae_poll(struct file *fp, poll_table *wait)
+{
+    unsigned int mask = 0;
+    IspIrqLink_t *data = (IspIrqLink_t*)fp->private_data;
+    poll_wait(fp, &data->waitq, wait);
+    if(data->ready)
+    {
+        data->ready = 0;
+        mask |= POLLIN|POLLRDNORM;
+    }
+    return mask;
+}
+
+struct file_operations isp_ae_fops =
+{
+    .owner = THIS_MODULE,
+    .open = isp_ae_open,
+    .release = isp_ae_release,
+    .read = isp_ae_fread,
+    .write = 0,
+    .unlocked_ioctl = 0,
+    .poll = isp_ae_poll,
+};
+
+struct miscdevice g_isp_ae_dev;
+static void AddAeNode(void)
+{
+    g_isp_ae_dev.minor = MISC_DYNAMIC_MINOR;
+    g_isp_ae_dev.name = "isp_ae";
+    g_isp_ae_dev.fops = &isp_ae_fops;
+    g_isp_ae_dev.parent = 0;
+    misc_register(&g_isp_ae_dev);
+}
+
+//-------------------------------------------
+
+unsigned int isp_poll(struct file *filp, poll_table *wait)
+{
+  unsigned int mask = 0;
+
+  poll_wait(filp, &isp_wq_epoll_event, wait);
+
+  if(isp_int.epoll_event == true)
+  {
+      isp_int.epoll_event = false;
+      mask |= POLLIN;
+  }
+  return mask;
 }
 
 struct file_operations isp_fops =
@@ -1130,8 +1187,8 @@ struct file_operations isp_fops =
     .release = isp_release,
     .read = isp_fread,
     .write = isp_fwrite,
-    //.compat_ioctl = isp_ioctl,
     .unlocked_ioctl = isp_ioctl,
+    .poll = isp_poll,
 };
 
 #define MAJOR_ISP_NUM               234
@@ -1139,20 +1196,35 @@ struct file_operations isp_fops =
 #define MINOR_CSI_NUM               127
 static int isp_probe(struct platform_device* pdev)
 {
-    int err;
+    int err, ret;
     int irq;
     unsigned int i, u4IO_PHY_BASE;
-    unsigned int u4Banks[8];
+    unsigned int u4Banks[10];
     isp_dev_data *data;
 
-    pr_err("[ISP] = isp_probe\n");
+    pr_debug("[ISP] = isp_probe\n");
+
+    memset(&isp_int,0,sizeof(isp_int));
+    isp_int.int_cnt = 0;
 
     data = kzalloc(sizeof(isp_dev_data),GFP_KERNEL);
-    of_property_read_u32(pdev->dev.of_node, "io_phy_addr", &u4IO_PHY_BASE);
-    of_property_read_u32_array(pdev->dev.of_node, "banks", (unsigned int*)u4Banks, 8);
-    for (i = 0; i < 8; i++) {
+    if(NULL == data)
+        return -ENOENT;
+    ret = of_property_read_u32(pdev->dev.of_node, "io_phy_addr", &u4IO_PHY_BASE);
+    if(ret != 0)
+        pr_err("[ISP] read node error!\n");
+    ret = of_property_read_u32_array(pdev->dev.of_node, "banks", (unsigned int*)u4Banks, 10);
+    if(ret != 0)
+        pr_err("[ISP] read node error!\n");
+    for (i = 0; i < 10; i++) {
         isp_mem.pISPRegs[i] = (void*)ioremap(BANK_TO_ADDR32(u4Banks[i])+u4IO_PHY_BASE, BANK_SIZE);
     }
+    ret = of_property_read_u32(pdev->dev.of_node, "isp-flag", &g_isp_flag);
+    if(ret != 0)
+        pr_err("[ISP] read node error!\n");
+    ret = of_property_read_u32(pdev->dev.of_node, "isp-res", &g_isp_max_res);
+    if(ret != 0)
+        pr_err("[ISP] read node error!\n");
 
     //enable clocks
     //ISP
@@ -1190,7 +1262,6 @@ static int isp_probe(struct platform_device* pdev)
     CLRREG16((u4IO_PHY_BASE+(0x102B00*2)+(0x12*4)),(0x0001<<9));  //GPIO28 OEN
     SETREG16((u4IO_PHY_BASE+(0x102B00*2)+(0x12*4)),(0x0001<<8));  //GPIO28 pull ligh
     isp_device = pdev;
-    //isp_create_bin_file(&isp_device->dev);
 
     //allocate statistics data and menload table memory
     isp_init_buff();
@@ -1198,18 +1269,24 @@ static int isp_probe(struct platform_device* pdev)
     // enable interrupt
     HalISPEnableInt();
     isp_int.sysfs_int = true; // turn on IRQ handler
+    isp_int.yuv_ccm.dirty = 0;
+
+    isp_int.dgain.dirty = 0;
+    isp_int.dgain.enable = 0;
+    isp_int.dgain.gain = 1024;
 
     // setup kernel i2c
-    //isp_i2c_init(isp_mem.pISPRegs[i]);
     data->isp_dev.minor = MISC_DYNAMIC_MINOR;
     data->isp_dev.name = "isp";
     data->isp_dev.fops = &isp_fops;
     data->isp_dev.parent = &pdev->dev;
     misc_register(&data->isp_dev);
 
+    AddFsNode();
+    AddAeNode();
+
     data->sysfs_dev = device_create(msys_get_sysfs_class(), NULL, MKDEV(MAJOR_ISP_NUM, MINOR_ISP_NUM), NULL, "isp0");
     isp_create_bin_file(data->sysfs_dev);
-    //err = sysfs_create_link(&data->sysfs_dev->kobj,&isp_device->dev.kobj, "files"); //create symlink for older firmware version
     err = sysfs_create_link(&pdev->dev.parent->kobj,&data->sysfs_dev->kobj, "isp0"); //create symlink for older firmware version
 
     data->sysfs_dev->platform_data = pdev->dev.platform_data = (void*)data;
@@ -1235,27 +1312,35 @@ static int isp_remove(struct platform_device* pdev)
 
 static int isp_suspend(struct platform_device *pdev, pm_message_t state)
 {
-    isp_dev_data *data = dev_get_platdata(&pdev->dev);
-
-    pr_info("[ISP] = isp_suspend\n");
     if (!pdev)
     {
-        pr_info("isp_suspend with NULL pdev %d", isp_int.frame_cnt);
-        return 0;
+        return -EINVAL;
+        //pr_info("isp_suspend with NULL pdev %d", isp_int.frame_cnt);
     }
-    isp_int.sysfs_int = false;
-    //HalISPClkEnable(false);
+    else
+    {
+        isp_dev_data *data = dev_get_platdata(&pdev->dev);
+        pr_info("[ISP] = isp_suspend\n");
+        isp_int.sysfs_int = false;
 
-    if(data->clk_isp) clk_disable_unprepare(data->clk_isp);
-    if(data->clk_sr) clk_disable_unprepare(data->clk_sr);
-    if(data->clk_sr_mclk) clk_disable_unprepare(data->clk_sr_mclk);
-
+        if(data->clk_isp)
+            clk_disable_unprepare(data->clk_isp);
+        if(data->clk_sr)
+            clk_disable_unprepare(data->clk_sr);
+        if(data->clk_sr_mclk)
+            clk_disable_unprepare(data->clk_sr_mclk);
+    }
     return 0;
 }
 
 static int isp_resume(struct platform_device *pdev)
 {
-    isp_dev_data *data = dev_get_platdata(&pdev->dev);
+    isp_dev_data *data;
+
+    if(!pdev)
+        return -EINVAL;
+
+    data = dev_get_platdata(&pdev->dev);
     HalISPDisableInt();
 
     isp_int.sysfs_int = false;
@@ -1269,26 +1354,42 @@ static int isp_resume(struct platform_device *pdev)
     if(data->clk_sr_mclk) clk_prepare_enable(data->clk_sr_mclk);
 
     HalISPEnableInt();     // enable interrupt
-
     return 0;
+}
+
+void isp_apply_iq_at_vend(void)
+{
+    if(isp_int.yuv_ccm.dirty)
+    {
+        HalISPSetYUVCCM(isp_int.yuv_ccm.ccm);
+        isp_int.yuv_ccm.dirty = 0;
+        print_timestamp("K_CCM2");
+    }
+
+    if(isp_int.dgain.dirty)
+    {
+        HalIspSetAEDgain(isp_int.dgain.enable,isp_int.dgain.gain);
+    }
+
+#if 0
+    if (isp_int.share_data->frame_state.u4OBCInValid == true){
+      HalISPSetOBC(isp_int.share_data->frame_state.u4OBC_a, isp_int.share_data->frame_state.u4OBC_b);
+      isp_int.share_data->frame_state.u4OBCInValid = false;
+      print_timestamp("K_OBC");
+    }
+#endif
 }
 
 #define INC_TIME_REC(name) getnstimeofday(&isp_int.isp_int_time[name])
 #define INC_TIME_REC2(name) getnstimeofday(&isp_int.isp_int_time2[name])
 #define INC_TIME_REC3(name) getnstimeofday(&isp_int.isp_int_time3[name]))
 
-#if 0
-#define INC_COUNT(name) (isp_int.isp_int_count[name]++)
-#define INC_COUNT2(name) (isp_int.isp_int2_count[name]++)
-#define INC_COUNT3(name) (isp_int.isp_int3_count[name]++)
-#else
 #define INC_COUNT(name) {isp_int.isp_int_count[name]++;\
                                             getnstimeofday(&isp_int.isp_int_time[name]);}
 #define INC_COUNT2(name) {isp_int.isp_int2_count[name]++;\
                                             getnstimeofday(&isp_int.isp_int2_time[name]);}
 #define INC_COUNT3(name) {isp_int.isp_int3_count[name]++;\
                                             getnstimeofday(&isp_int.isp_int3_time[name]);}
-#endif
 
 irqreturn_t isp_ISR(int num, void *priv)
 {
@@ -1300,22 +1401,21 @@ irqreturn_t isp_ISR(int num, void *priv)
     volatile u32 u4Status2;
     volatile u32 u4Status3;
 
-    volatile u32 u4VsyncPol;
-    volatile u32 u4MIPI;
+    //volatile u32 u4VsyncPol;
+    //volatile u32 u4MIPI;
+
+    isp_int.int_cnt++;
 
     u4Status = HalISPGetIntStatus1();
-    HalISPMaskInt1(u4Status);
+    //HalISPMaskInt1(u4Status);
     u4Status2 = HalISPGetIntStatus2();
-    HalISPMaskInt2(u4Status2);
+    //HalISPMaskInt2(u4Status2);
     u4Status3 = HalISPGetIntStatus3();
-    HalISPMaskInt3(u4Status3);
+    //HalISPMaskInt3(u4Status3);
 
-    u4VsyncPol = HalISPGetVsyncPol();
+    //u4VsyncPol = HalISPGetVsyncPol();
 
-    u4MIPI = HalISPGetMIPI();
-    //DBG_INFO(KERN_NOTICE "[ISP] -s- sta=0x%X\n",u4Status);
-     //pr_err( "[ISP] -s- sta=0x%X\n",u4Status);
-	//return IRQ_HANDLED;
+    //u4MIPI = HalISPGetMIPI();
 
     if (u4Status == 0 && u4Status2 == 0 && u4Status3 == 0) {
         pr_err("[ISP] False interrupt? mask1 0x%04x, mask2 0x%04x, mask3 0x%04x\n", u4Status, u4Status2, u4Status3);
@@ -1323,15 +1423,30 @@ irqreturn_t isp_ISR(int num, void *priv)
     }
 
 #if 0
-    if (isp_int.sysfs_int == false) {
-        DBG_INFO_1("isp_int.sysfs_int == false");
-        HalISPDisableInt();
-        return IRQ_HANDLED;
-    }
+    pr_info("c=%d sta=0x%x\n", isp_int.frame_cnt, u4Status);
 #endif
 
-    //DBG_INFO("c=%d sta=0x%x\n", isp_int.frame_cnt, u4Status);
-    //pr_err("c=%d sta=0x%x\n", isp_int.frame_cnt, u4Status);
+    if (ISP_CHECKBITS(u4Status3, INT3_SW_INT_INPUT_DONE)) {
+        DBG_INFO_1("INT3_SW_INT_INPUT_DONE %d", isp_int.frame_cnt);
+        HalISPClearInt(&u4Clear3, INT3_SW_INT_INPUT_DONE);
+        INC_COUNT3(INT3_SW_INT_INPUT_DONE);
+        //if(isp_int.fifo_mask.dirty)
+        //{
+        //    IspInputEnable(~isp_int.fifo_mask.enable);
+        //    isp_int.fifo_mask.dirty = 0;
+        //    if(!isp_int.fifo_mask.enable) pr_debug("ISP OFF\n");
+        //}
+        isp_int.vsync_end = true;
+        isp_int.share_data->frame_state.bActive = false;
+        //isp_apply_iq_at_vend();
+        isp_mot_cache_invalidate();
+        wake_up_interruptible_all(&isp_wq_VEND);
+        wake_up_interruptible_all(&isp_wq_sw_int_in);
+        isp_int.share_data->isp_ints_state.u32IspInt1 |= FRAME_END_EVENT;
+        isp_int.epoll_event = true;
+        wake_up_interruptible_all(&isp_wq_epoll_event);
+      }
+
     ////////////////////////////////////////////
     //             Vsync Start                //
     ////////////////////////////////////////////
@@ -1346,14 +1461,38 @@ irqreturn_t isp_ISR(int num, void *priv)
         isp_int.hw_frame_cnt = (HalISPGetFrameDoneCount()+ 1) & 0x7F; //get frame done count in VSync and return it at frame end interrupt
         fps_update(&isp_int.fps);
         wake_up_interruptible_all(&isp_wq_VSTART);
+        isp_int.share_data->isp_ints_state.u32IspInt1 |= FRAME_START_EVENT;
+        isp_int.epoll_event = true;
+        wake_up_interruptible_all(&isp_wq_epoll_event);
         DBG_INFO_1("MIPI VSYNC ACTIVE %d", isp_int.frame_cnt);
         pr_debug("VS\n");
+
+        //TEST CODE
+        print_timestamp("K_VS");//TEST CODE
+
+        //isp_fs poll support
+        {
+            unsigned long flag;
+            struct list_head *pos;
+            IspIrqLink_t *elm;
+            spin_lock_irqsave(&g_IspFsLock,flag);
+            list_for_each(pos,&gIspFsWqList)
+            {
+                elm = list_entry(pos,IspIrqLink_t,list);
+                elm->ready = 1;
+                elm->fcount = isp_int.frame_cnt;
+                wake_up_interruptible_all(&elm->waitq);
+            }
+            spin_unlock_irqrestore(&g_IspFsLock,flag);
+        }
     }
 
       //////////////////////////////////////////////
       //           statistics                     //
       //////////////////////////////////////////////
-    if (ISP_CHECKBITS(u4Status, INT_AE_DONE)) {
+    if (ISP_CHECKBITS(u4Status, INT_AE_DONE)){
+        pr_debug("AE\n");
+        isp_ae_cache_invalidate();
         DBG_INFO_1("INT_AE_DONE %d", isp_int.frame_cnt);
         HalISPClearInt(&u4Clear, INT_AE_DONE);
         INC_COUNT(INT_AE_DONE);
@@ -1363,48 +1502,134 @@ irqreturn_t isp_ISR(int num, void *priv)
 
     // AE WIN0/1 Int Row
     if (ISP_CHECKBITS(u4Status3, INT3_AE_WIN0_DONE)) {
+        pr_debug("AE_WIN0\n");
         DBG_INFO_1("INT3_AE_WIN0_DONE %d\n", isp_int.frame_cnt);
         isp_int.ae_win0 = true;
         HalISPClearInt(&u4Clear3, INT3_AE_WIN0_DONE);
         wake_up_interruptible_all(&isp_wq_ae_win0);
+
+        //isp_ae poll support
+        {
+            unsigned long flag;
+            struct list_head *pos;
+            IspIrqLink_t *elm;
+            spin_lock_irqsave(&g_IspAeLock,flag);
+            list_for_each(pos,&gIspAeWqList)
+            {
+                elm = list_entry(pos,IspIrqLink_t,list);
+                elm->ready = 1;
+                elm->fcount = isp_int.frame_cnt;
+                wake_up_interruptible_all(&elm->waitq);
+            }
+            spin_unlock_irqrestore(&g_IspAeLock,flag);
+        }
     }
 
     if (ISP_CHECKBITS(u4Status3, INT3_AE_BLK_ROW_INT_DONE)) {
+        pr_debug("AE_ROW\n");
         DBG_INFO_1("INT3_AE_BLK_ROW_INT_DONE %d", isp_int.frame_cnt);
         HalISPClearInt(&u4Clear3, INT3_AE_BLK_ROW_INT_DONE);
         INC_COUNT3(INT3_AE_BLK_ROW_INT_DONE);
-	 isp_int.ae_row_int= true;
+        isp_int.ae_row_int= true;
         wake_up_interruptible_all(&isp_wq_ae_row_int);
+        isp_int.share_data->isp_ints_state.u32IspInt1 |= AE_DONE_EVENT;
+        isp_int.epoll_event = true;
+        wake_up_interruptible_all(&isp_wq_epoll_event);
     }
 
     if (ISP_CHECKBITS(u4Status, INT_AWB_DONE)) {
+        isp_awb_cache_invalidate(); //invalid cache data
         DBG_INFO_1("INT_AWB_DONE %d", isp_int.frame_cnt);
         HalISPClearInt(&u4Clear, INT_AWB_DONE);
         INC_COUNT(INT_AWB_DONE);
         isp_int.awb = true;
         wake_up_interruptible_all(&isp_wq_awb);
+        isp_int.share_data->isp_ints_state.u32IspInt1 |= AWB_DONE_EVENT ;
+        isp_int.epoll_event = true;
+        wake_up_interruptible_all(&isp_wq_epoll_event);
     }
 
     if (ISP_CHECKBITS(u4Status, INT_AF_DONE)) {
+        isp_af_cache_invalidate();
         DBG_INFO_1("INT_AF_DONE %d", isp_int.frame_cnt);
         HalISPGetAFStat(isp_int.AF_Stat);
         HalISPClearInt(&u4Clear, INT_AF_DONE);
         INC_COUNT(INT_AF_DONE);
         isp_int.af = true;
         wake_up_interruptible_all(&isp_wq_af);
+        isp_int.share_data->isp_ints_state.u32IspInt1 |= AF_DONE_EVENT ;
+        isp_int.epoll_event = true;
+        wake_up_interruptible_all(&isp_wq_epoll_event);
     }
 
-    if (ISP_CHECKBITS(u4Status3, INT3_SW_INT_INPUT_DONE)) {
-        DBG_INFO_1("INT3_SW_INT_INPUT_DONE %d", isp_int.frame_cnt);
-        HalISPClearInt(&u4Clear3, INT3_SW_INT_INPUT_DONE);
-        INC_COUNT3(INT3_SW_INT_INPUT_DONE);
-        wake_up_interruptible_all(&isp_wq_sw_int_in);
-      }
+	if (ISP_CHECKBITS(u4Status3, INT3_HIT_LINE_COUNT1)) {
+		DBG_INFO_1("INT3_HIT_LINE_COUNT1 %d", isp_int.frame_cnt);
+		HalISPClearInt(&u4Clear3, INT3_HIT_LINE_COUNT1);
+		INC_COUNT3(INT3_HIT_LINE_COUNT1);
+		wake_up_interruptible_all(&isp_wq_hit_line_count1);
+	}
 
-    if (ISP_CHECKBITS(u4Status3, INT3_SW_INT_OUTPUT_DONE)) {
+	if (ISP_CHECKBITS(u4Status3, INT3_HIT_LINE_COUNT2)) {
+		DBG_INFO_1("INT3_HIT_LINE_COUNT2 %d", isp_int.frame_cnt);
+		HalISPClearInt(&u4Clear3, INT3_HIT_LINE_COUNT2);
+		INC_COUNT3(INT3_HIT_LINE_COUNT2);
+		wake_up_interruptible_all(&isp_wq_hit_line_count2);
+	}
+
+	if (ISP_CHECKBITS(u4Status3, INT3_HIT_LINE_COUNT3)) {
+		DBG_INFO_1("INT3_HIT_LINE_COUNT3 %d", isp_int.frame_cnt);
+		HalISPClearInt(&u4Clear3, INT3_HIT_LINE_COUNT3);
+		INC_COUNT3(INT3_HIT_LINE_COUNT3);
+		//wake_up_interruptible_all(&isp_wq_hit_line_count3);
+		isp_int.isp_idle = true;
+		wake_up_interruptible_all(&isp_wq_ISP_IDLE);
+        isp_int.share_data->isp_ints_state.u32IspInt1 |= IDLE_EVENT;
+        isp_int.epoll_event = true;
+        wake_up_interruptible_all(&isp_wq_epoll_event);
+	}
+
+	if (ISP_CHECKBITS(u4Status3, INT3_HDR_HISTO_DONE)) {
+		DBG_INFO_1("INT3_HDR_HISTO_DONE %d", isp_int.frame_cnt);
+		HalISPClearInt(&u4Clear3, INT3_HDR_HISTO_DONE);
+		INC_COUNT3(INT3_HDR_HISTO_DONE);
+        isp_histo_cache_invalidate();
+		wake_up_interruptible_all(&isp_wq_hdr_histo_done);
+	}
+
+	if (ISP_CHECKBITS(u4Status3, INT3_RGBIR_HISTO_DONE)) {
+		DBG_INFO_1("INT3_RGBIR_HISTO_DONE %d", isp_int.frame_cnt);
+		HalISPClearInt(&u4Clear3, INT3_RGBIR_HISTO_DONE);
+		INC_COUNT3(INT3_RGBIR_HISTO_DONE);
+        isp_histo_cache_invalidate();
+		wake_up_interruptible_all(&isp_wq_rgbir_histo_done);
+	}
+
+	if (ISP_CHECKBITS(u4Status3, INT3_AWB_ROW_DONE)) {
+		DBG_INFO_1("INT3_AWB_ROW_DONE %d", isp_int.frame_cnt);
+		HalISPClearInt(&u4Clear3, INT3_AWB_ROW_DONE);
+		INC_COUNT3(INT3_AWB_ROW_DONE);
+		wake_up_interruptible_all(&isp_wq_awb_row_done);
+	}
+
+	if (ISP_CHECKBITS(u4Status3, INT3_HISTO_ROW_DONE)) {
+		DBG_INFO_1("INT3_HISTO_ROW_DONE %d", isp_int.frame_cnt);
+		HalISPClearInt(&u4Clear3, INT3_HISTO_ROW_DONE);
+		INC_COUNT3(INT3_HISTO_ROW_DONE);
+		wake_up_interruptible_all(&isp_wq_histo_row_done);
+	}
+
+	if (ISP_CHECKBITS(u4Status3, INT3_SW_INT_OUTPUT_DONE)) {
         DBG_INFO_1("INT3_SW_INT_OUTPUT_DONE %d", isp_int.frame_cnt);
         HalISPClearInt(&u4Clear3, INT3_SW_INT_OUTPUT_DONE);
         INC_COUNT3(INT3_SW_INT_OUTPUT_DONE);
+
+        if(isp_int.fifo_mask.dirty)
+        {
+            IspInputEnable(~isp_int.fifo_mask.enable);
+            isp_int.fifo_mask.dirty = 0;
+            if(!isp_int.fifo_mask.enable) pr_debug("ISP OFF\n");
+        }
+        isp_apply_iq_at_vend();
         wake_up_interruptible_all(&isp_wq_sw_int_out);
     }
 
@@ -1414,34 +1639,57 @@ irqreturn_t isp_ISR(int num, void *priv)
         DBG_INFO_1("INT_ISP_BUSY %d", isp_int.frame_cnt);
         isp_int.isp_busy = true;
         wake_up_interruptible_all(&isp_wq_ISP_BUSY);
+        print_timestamp("K_BUSY");//TEST CODE
     }
 
     if (ISP_CHECKBITS(u4Status, INT_ISP_IDLE)) {
         HalISPClearInt(&u4Clear, INT_ISP_IDLE);
         INC_COUNT(INT_ISP_IDLE);
         DBG_INFO_1("INT_ISP_IDLE %d", isp_int.frame_cnt);
-        isp_int.isp_idle = true;
-        wake_up_interruptible_all(&isp_wq_ISP_IDLE);
+        //isp_int.isp_idle = true;
+        //wake_up_interruptible_all(&isp_wq_ISP_IDLE);
+        print_timestamp("K_IDLE");//TEST CODE
     }
 
     //////////////////////////////
     //             Vsync end                  //
     //////////////////////////////
 
+#if 0
+    if(ISP_CHECKBITS(u4Status, INT_PAD_VSYNC_RISING))
+    {
+        INC_COUNT(INT_PAD_VSYNC_RISING);
+        HalISPClearInt(&u4Clear, INT_PAD_VSYNC_RISING);
+    }
+
+    if(ISP_CHECKBITS(u4Status, INT_PAD_VSYNC_FALLING))
+    {
+        INC_COUNT(INT_PAD_VSYNC_FALLING);
+        HalISPClearInt(&u4Clear, INT_PAD_VSYNC_FALLING);
+    }
+
     if (!u4MIPI){
         if ((ISP_CHECKBITS(u4Status, INT_PAD_VSYNC_RISING) && u4VsyncPol == false) || (ISP_CHECKBITS(u4Status, INT_PAD_VSYNC_FALLING) && u4VsyncPol == true)){
             if (isp_int.vsync_end == false){
                 if (ISP_CHECKBITS(u4Status, INT_PAD_VSYNC_RISING) && u4VsyncPol == false ){
                     HalISPClearInt(&u4Clear, INT_PAD_VSYNC_RISING);
-                    INC_COUNT(INT_PAD_VSYNC_RISING);
-                    IspInputEnable(isp_int.share_data->frame_state.bIspInputEnable);
+                    //INC_COUNT(INT_PAD_VSYNC_RISING);
+                    //if(isp_int.fifo_mask.dirty)
+                    //{
+                    //    IspInputEnable(~isp_int.fifo_mask.enable);
+                    //    isp_int.fifo_mask.dirty = 0;
+                    //}
                     if (isp_int.frame_cnt%30==0)
                         DBG_INFO_1("Parallel Vsync End INT_PAD_VSYNC_RISING %d", isp_int.frame_cnt);
                 }
                 else if (ISP_CHECKBITS(u4Status, INT_PAD_VSYNC_FALLING) && u4VsyncPol == true){
                     HalISPClearInt(&u4Clear, INT_PAD_VSYNC_FALLING);
-                    INC_COUNT(INT_PAD_VSYNC_FALLING);
-                    IspInputEnable(isp_int.share_data->frame_state.bIspInputEnable);
+                    //INC_COUNT(INT_PAD_VSYNC_FALLING);
+                    //if(isp_int.fifo_mask.dirty)
+                    //{
+                    //    IspInputEnable(~isp_int.fifo_mask.enable);
+                    //    isp_int.fifo_mask.dirty = 0;
+                    //}
                     if (isp_int.frame_cnt%30==0)
                         DBG_INFO_1("Parallel Vsync End INT_PAD_VSYNC_FALLING %d", isp_int.frame_cnt);
                 }
@@ -1449,12 +1697,8 @@ irqreturn_t isp_ISR(int num, void *priv)
                 DBG_INFO_1(KERN_NOTICE "Parallel VSYNC End...%d %d\n", isp_int.share_data->frame_state.bActive, isp_int.share_data->frame_state.u4FrameCnt);
                 isp_int.vsync_end = true;
                 isp_int.share_data->frame_state.bActive = false;
-
-                if (isp_int.share_data->frame_state.u4OBCInValid == true){
-                  HalISPSetOBC(isp_int.share_data->frame_state.u4OBC_a, isp_int.share_data->frame_state.u4OBC_b);
-                  isp_int.share_data->frame_state.u4OBCInValid = false;
-                }
-
+                isp_apply_iq_at_vend();
+                isp_mot_cache_invalidate();
                 wake_up_interruptible_all(&isp_wq_VEND);
                 // Using menuload to write IQ table to SRAMs
                 pr_debug("VE\n");
@@ -1464,7 +1708,7 @@ irqreturn_t isp_ISR(int num, void *priv)
             }
         }
     }
-
+#endif
     ////////////////////////////////////////////
     //             DMA                        //
     ////////////////////////////////////////////
@@ -1476,6 +1720,9 @@ irqreturn_t isp_ISR(int num, void *priv)
         DBG_INFO_1("INT_WDMA_DONE %d", isp_int.frame_cnt);
         isp_int.wdma_done = true;
         wake_up_interruptible_all(&isp_wq_WDMA_DONE);
+        isp_int.share_data->isp_ints_state.u32IspInt1 |= WDMA_DONE_EVENT;
+        isp_int.epoll_event = true;
+        wake_up_interruptible_all(&isp_wq_epoll_event);
     } else {
         //DBG_INFO("INT_WDMA_DONE %d, --FALSE--", isp_int.frame_cnt);
     }
@@ -1486,6 +1733,9 @@ irqreturn_t isp_ISR(int num, void *priv)
         DBG_INFO_1("INT_RDMA_DONE %d", isp_int.frame_cnt);
         isp_int.rdma_done = true;
         wake_up_interruptible_all(&isp_wq_RDMA_DONE);
+        isp_int.share_data->isp_ints_state.u32IspInt1 |= RDMA_DONE_EVENT;
+        isp_int.epoll_event = true;
+        wake_up_interruptible_all(&isp_wq_epoll_event);
     } else {
         //DBG_INFO("INT_RDMA_DONE %d, --FALSE--", isp_int.frame_cnt);
     }
@@ -1502,6 +1752,9 @@ irqreturn_t isp_ISR(int num, void *priv)
         isp_int.isp_fifofull = true;
         IspReset(); //force ISP reset , when ISP FIFO FULL happen
         wake_up_interruptible_all(&isp_wq_ISP_FIFO_FULL);
+        isp_int.share_data->isp_ints_state.u32IspInt1 |= FIFO_FULL_EVENT;
+        isp_int.epoll_event = true;
+        wake_up_interruptible_all(&isp_wq_epoll_event);
     }
 
     if (ISP_CHECKBITS(u4Status, INT_WDMA_FIFO_FULL) && isp_int.wdma_fifofull == false){
@@ -1538,8 +1791,8 @@ static int isp_read(struct file *fd, struct kobject *kobj, struct bin_attribute 
     } FRAMEINFO_MEM;
 
     FRAMEINFO_MEM frameinfo;
-    frameinfo.u4BaseAddr = isp_mem.ShareData_Meminfo.phys + offsetof(ISP_SHARE_DATA,frame_state);
-    frameinfo.u4Size = sizeof(FRAME_STATE);
+    frameinfo.u4BaseAddr = isp_mem.ShareData_Meminfo.phys;
+    frameinfo.u4Size = sizeof(ISP_SHARE_DATA);
     data_size = sizeof(FRAMEINFO_MEM);
     if (buf && size >= data_size) {
         DBG_INFO("buff in %d, out %d\n", size, data_size);
@@ -1573,7 +1826,6 @@ static int isp_write(struct file *fd, struct kobject *kobj, struct bin_attribute
 
 static int vs_sr_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
 {
-    int data_size = 0;
     unsigned long flags;
     if (wait_event_interruptible(isp_wq_VSTART, isp_int.vsync_start == true))
     {
@@ -1586,13 +1838,19 @@ static int vs_sr_read(struct file *fd, struct kobject *kobj, struct bin_attribut
     isp_int.vsync_start = false;
     C_OUT(isp_lock);
 
-    data_size = sizeof(isp_int.frame_cnt);
-    if (buf && size >= data_size) {
-        memcpy((void *)buf, (void *)&isp_int.frame_cnt, data_size);
-    } else
-        data_size = 0;
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
+    }
 
-    return data_size;
+    return size;
 }
 
 static int vs_sr_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
@@ -1601,11 +1859,11 @@ static int vs_sr_write(struct file *fd, struct kobject *kobj, struct bin_attribu
     return size;
 }
 
-typedef struct
-{
-  u32  frame_cnt;
-  u32  hw_frame_cnt;
-}__attribute__((packed, aligned(1))) ve_isr_data; //vsync end isr data
+//typedef struct
+//{
+//  u32  frame_cnt;
+//  u32  hw_frame_cnt;
+//}__attribute__((packed, aligned(1))) ve_isr_data; //vsync end isr data
 
 static int ve_sr_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
 {
@@ -1652,15 +1910,17 @@ static int ae_read(struct file *fd, struct kobject *kobj, struct bin_attribute *
     C_OUT(isp_lock);
 
     // TODO
-    DBG_INFO_2("ae virtual offset[%d]: 0x%08x", isp_mem.AE_ReadIdx, (u32)isp_mem.AE_Offset[isp_mem.AE_ReadIdx]);
+    //DBG_INFO_2("ae virtual offset[%d]: 0x%08x", isp_mem.AE_ReadIdx, (u32)isp_mem.AE_Offset[isp_mem.AE_ReadIdx]);
 
-    if(buf){
-      ae_isr_data ae_data;
-      ae_data.data_offset = isp_mem.AE_Offset;
-      ae_data.fcount = isp_int.frame_cnt;
-      size = size>sizeof(ae_data)?sizeof(ae_data):size;
-      memcpy((void*)buf,(void*)&ae_data,size);
-    }else {
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
         size= 0;
     }
 
@@ -1684,14 +1944,18 @@ static int ae_win0_read(struct file *fd, struct kobject *kobj, struct bin_attrib
     isp_int.ae_win0 = false;
     C_OUT(isp_lock);
 
-    DBG_INFO_2("ae virtual offset[%d]: 0x%08x", isp_mem.AE_ReadIdx, (u32)isp_mem.AE_Offset[isp_mem.AE_ReadIdx]);
+    //DBG_INFO_2("ae virtual offset[%d]: 0x%08x", isp_mem.AE_ReadIdx, (u32)isp_mem.AE_Offset[isp_mem.AE_ReadIdx]);
 
-    if(buf){
-        ae_isr_data ae_data;
-        ae_data.data_offset = isp_mem.AE_Offset;
-        ae_data.fcount = isp_int.frame_cnt;
-        size = size>sizeof(ae_data)?sizeof(ae_data):size;
-        memcpy((void*)buf,(void*)&ae_data,size);
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
     }
 
     return size;
@@ -1728,16 +1992,18 @@ static int ae_row_int_read(struct file *fd, struct kobject *kobj, struct bin_att
     isp_int.ae_row_int = false;
     C_OUT(isp_lock);
 
-    if(buf){
-        ae_isr_data ae_data;
-        ae_data.data_offset = isp_mem.AE_Offset;
-        ae_data.fcount = isp_int.frame_cnt;
-        size = size>sizeof(ae_data)?sizeof(ae_data):size;
-        memcpy((void*)buf,(void*)&ae_data,size);
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
     }
-    else {
+    else
+    {
         size= 0;
     }
+
     return size;
 }
 
@@ -1771,7 +2037,6 @@ static int sw_int_out_write(struct file *fd, struct kobject *kobj, struct bin_at
 
 static int awb_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
 {
-    awb_isr_data awb_data;
     unsigned long flags;
     if (wait_event_interruptible(isp_wq_awb, isp_int.awb == true))
     {
@@ -1785,15 +2050,18 @@ static int awb_read(struct file *fd, struct kobject *kobj, struct bin_attribute 
     isp_int.awb = false;
     C_OUT(isp_lock);
 
-    DBG_INFO_2("awb virtual offset[%d]: 0x%08x", isp_mem.AWB_ReadIdx, (u32)isp_mem.AWB_Offset[isp_mem.AWB_ReadIdx]);
+    //DBG_INFO_2("awb virtual offset[%d]: 0x%08x", isp_mem.AWB_ReadIdx, (u32)isp_mem.AWB_Offset[isp_mem.AWB_ReadIdx]);
 
-    if (buf) {
-        awb_data.data_offset = isp_mem.AWB_Offset;
-        awb_data.fcount = isp_int.frame_cnt;
-        size = size>sizeof(awb_data)?sizeof(awb_data):size;
-        memcpy((void*)buf,(void*)&awb_data, size);
-    } else {
-        size = 0;
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
     }
 
     return size;
@@ -1807,7 +2075,6 @@ static int awb_write(struct file *fd, struct kobject *kobj, struct bin_attribute
 
 static int af_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
 {
-    u32 af_size = sizeof(isp_int.AF_Stat);
     unsigned long flags;
     if (wait_event_interruptible(isp_wq_af, isp_int.af == true)){
         C_IN(isp_lock);
@@ -1820,12 +2087,19 @@ static int af_read(struct file *fd, struct kobject *kobj, struct bin_attribute *
     isp_int.af = false;
     C_OUT(isp_lock);
 
-    if (buf && size >= af_size) {
-        memcpy((void *)buf, (void *)isp_int.AF_Stat, af_size);
-    } else
-        af_size = 0;
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
+    }
 
-    return af_size;
+    return size;
 }
 static int af_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size) {
     DBG_INFO();
@@ -1834,7 +2108,7 @@ static int af_write(struct file *fd, struct kobject *kobj, struct bin_attribute 
 
 static int busy_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
 {
-    int data_size = 0;
+    //int data_size = 0;
     unsigned long flags;
     if (wait_event_interruptible(isp_wq_ISP_BUSY, isp_int.isp_busy == true))
     {
@@ -1849,13 +2123,19 @@ static int busy_read(struct file *fd, struct kobject *kobj, struct bin_attribute
     isp_int.isp_busy = false;
     C_OUT(isp_lock);
 
-    data_size = sizeof(isp_int.frame_cnt);
-    if (buf && size >= data_size) {
-        memcpy((void *)buf, (void *)&isp_int.frame_cnt, data_size);
-    } else
-        data_size = 0;
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
+    }
 
-    return data_size;
+    return size;
 }
 
 static int busy_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
@@ -1881,11 +2161,17 @@ static int idle_read(struct file *fd, struct kobject *kobj, struct bin_attribute
     isp_int.isp_idle = false;
     C_OUT(isp_lock);
 
-    data_size = sizeof(isp_int.frame_cnt);
-    if (buf && size >= data_size) {
-        memcpy((void *)buf, (void *)&isp_int.frame_cnt, data_size);
-    } else
-        data_size = 0;
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
+    }
 
     return data_size;
 }
@@ -1900,7 +2186,6 @@ static int isp_fifofull_read(struct file *fd, struct kobject *kobj, struct bin_a
     unsigned long flags;
     if (wait_event_interruptible(isp_wq_ISP_FIFO_FULL, isp_int.isp_fifofull == true))
     {
-
         C_IN(isp_lock);
         isp_int.isp_fifofull = false;
         C_OUT(isp_lock);
@@ -1911,12 +2196,18 @@ static int isp_fifofull_read(struct file *fd, struct kobject *kobj, struct bin_a
     isp_int.isp_fifofull = false;
     C_OUT(isp_lock);
 
-    data_size = sizeof(isp_int.frame_cnt);
-    if (buf && size >= data_size) {
-        //DBG_INFO("buff in %d, out %d", size, data_size);
-        memcpy((void *)buf, (void *)&isp_int.frame_cnt, data_size);
-    } else
-        data_size = 0;
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
+    }
+
 
     return data_size;
 }
@@ -1941,12 +2232,17 @@ static int wdma_fifofull_read(struct file *fd, struct kobject *kobj, struct bin_
     isp_int.wdma_fifofull = false;
     C_OUT(isp_lock);
 
-    data_size = sizeof(isp_int.frame_cnt);
-    if (buf && size >= data_size) {
-        //DBG_INFO("buff in %d, out %d", size, data_size);
-        memcpy((void *)buf, (void *)&isp_int.frame_cnt, data_size);
-    } else
-        data_size = 0;
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
+    }
 
     return data_size;
 }
@@ -1974,12 +2270,17 @@ static int wdma_done_read(struct file *fd, struct kobject *kobj, struct bin_attr
     isp_int.wdma_done = false;
     C_OUT(isp_lock);
 
-    data_size = sizeof(isp_int.frame_cnt);
-    if (buf && size >= data_size) {
-        //DBG_INFO("buff in %d, out %d", size, data_size);
-        memcpy((void *)buf, (void *)&isp_int.frame_cnt, data_size);
-    } else
-        data_size = 0;
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
+    }
 
     return data_size;
 }
@@ -2006,11 +2307,17 @@ static int rdma_done_read(struct file *fd, struct kobject *kobj, struct bin_attr
     isp_int.rdma_done = false;
     C_OUT(isp_lock);
 
-    data_size = sizeof(isp_int.frame_cnt);
-    if (buf && size >= data_size) {
-        memcpy((void *)buf, (void *)&isp_int.frame_cnt, data_size);
-    } else
-        data_size = 0;
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
+    }
 
     return data_size;
 }
@@ -2038,6 +2345,18 @@ static int eis_read(struct file *fd, struct kobject *kobj, struct bin_attribute 
     isp_int.eis = false;
     C_OUT(isp_lock);
 
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
+    }
+
     return 0;
 }
 static int eis_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
@@ -2046,135 +2365,342 @@ static int eis_write(struct file *fd, struct kobject *kobj, struct bin_attribute
     return size;
 }
 
-static int iq_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size) {
-    unsigned short *pData;
-
-    if (buf && size >= 1) {
-        //Temp using
-        if(buf[0] == 1) {
-            isp_mem.IsWriteIQtbl = buf[0];
-
-        }
-        else if(buf[0] == 2) {
-            isp_mem.IsWriteIQtbl = 1;
-        }
-        else if(buf[0] == 3) {
-            pData = (unsigned short*)((uintptr_t)(isp_mem.Base_Meminfo.kvirt+isp_mem.IQ_tblOffset[IQ_MEM_ALSC_BGAIN]));
-        }
+// SCL vsync end
+static int scl_fe_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+    unsigned long flags;
+    if (wait_event_interruptible(isp_wq_scl_fe, isp_int.scl_fe == true))
+    {
+        C_IN(isp_lock);
+        isp_int.scl_fe = false;
+        C_OUT(isp_lock);
+        return - ERESTARTSYS;
     }
 
+    C_IN(isp_lock);
+    isp_int.scl_fe = false;
+    C_OUT(isp_lock);
+
+    if(buf)
+    {
+        isp_isr_event_data data;
+        data.fcount = isp_int.frame_cnt;
+        size = size>sizeof(data)?sizeof(data):size;
+        memcpy((void*)buf,(void*)&data,size);
+    }
+    else
+    {
+        size= 0;
+    }
+
+    return 0;
+}
+
+static int scl_fe_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+    DBG_INFO();
     return size;
 }
 
+void DrvISPMLoadWriteData(volatile unsigned int Sram_Id, volatile unsigned long Addr, size_t size)
+{
+	return HalISPMLoadWriteData(Sram_Id, Addr, size);
+}
 
-// iq
-typedef struct {
-    u32 u4BaseAddr;
-    u32 u4Size;
-    u32 u4IqTblOffset[IQ_MEM_NUM];
-    u32 u4IqTblSize[IQ_MEM_NUM];
-} ISP_KERNEL_MEM;
+void DrvISPMLoadReadData(ISP_MLOAD_ID Sram_Id, volatile unsigned short *table, size_t size)
+{
+	// only for gamma10to10 read
+	switch (Sram_Id){
+		case eMLOAD_ID_LN_GMA10TO10_R:
+		case eMLOAD_ID_LN_GMA10TO10_G:
+		case eMLOAD_ID_LN_GMA10TO10_B:
+			wait_event_interruptible(isp_wq_ISP_IDLE, isp_int.isp_idle == true);
+			// wait 8 line buffer time 8 * 30 us
+			udelay(300);
+			break;
+		default:
+			break;
+	}
+	return HalISPMLoadReadData(Sram_Id, table, size);
+}
 
-static int iq_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size) {
-    if (buf && size >= sizeof(ISP_KERNEL_MEM))
-    {
-      ISP_KERNEL_MEM *mem_info = (ISP_KERNEL_MEM*) buf;
-      mem_info->u4BaseAddr =  isp_mem.Base_Meminfo.phys;
-      mem_info->u4Size = isp_mem.Base_Meminfo.length;
-      memcpy(mem_info->u4IqTblOffset, (void *)isp_mem.IQ_tblOffset, sizeof(isp_mem.IQ_tblOffset));
-      memcpy(mem_info->u4IqTblSize, (void *)isp_mem.IQ_tblSize, sizeof(isp_mem.IQ_tblSize));
+static int mload_ALSC_R_TBL_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	int data_size = ALSC_TBL_SIZE*2;
+	memset(buf, 0, data_size);
+	DrvISPMLoadReadData(eMLOAD_ID_ALSC_R_TBL, (unsigned short*)buf, ALSC_TBL_SIZE);
+	return data_size;
+}
+
+static int mload_ALSC_R_TBL_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	//pr_info("[%s] called, offset = %#llx , size = %#x", __func__, offset, size);
+	if(offset == 0)
+	{
+		//pr_info("memset mload_virt_addr\n");
+		memset(mload_virt_addr,0, ALSC_TBL_SIZE*2);
+	}
+	memcpy(mload_virt_addr+offset, buf, size);
+
+	if(offset+size == ((ALSC_TBL_SIZE-1)*2))
+	{
+		//pr_info("[DrvISPMLoadWriteData] called, offset = %llx , size = %#x", offset, size);
+		DrvISPMLoadWriteData(eMLOAD_ID_ALSC_R_TBL, mload_dma_addr, ALSC_TBL_SIZE);
+	}
+	return size;
+}
+
+static int mload_ALSC_G_TBL_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	int data_size = ALSC_TBL_SIZE*2;
+	memset(buf, 0, data_size);
+	DrvISPMLoadReadData(eMLOAD_ID_ALSC_G_TBL, (unsigned short*)buf, ALSC_TBL_SIZE);
+	return data_size;
+}
+
+static int mload_ALSC_G_TBL_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	//pr_info("[%s] called, offset = %#llx , size = %#x", __func__, offset, size);
+	if(offset == 0)
+	{
+		//pr_info("memset mload_virt_addr\n");
+		memset(mload_virt_addr,0, ALSC_TBL_SIZE*2);
+	}
+	memcpy(mload_virt_addr+offset, buf, size);
+
+	if(offset+size == ((ALSC_TBL_SIZE-1)*2))
+	{
+		//pr_info("[DrvISPMLoadWriteData] called, offset = %llx , size = %#x", offset, size);
+		DrvISPMLoadWriteData(eMLOAD_ID_ALSC_G_TBL, mload_dma_addr, ALSC_TBL_SIZE);
+	}
+	return size;
+}
+
+static int mload_ALSC_B_TBL_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	int data_size = ALSC_TBL_SIZE*2;
+	memset(buf, 0, data_size);
+	DrvISPMLoadReadData(eMLOAD_ID_ALSC_B_TBL, (unsigned short*)buf, ALSC_TBL_SIZE);
+	return data_size;
+}
+
+static int mload_ALSC_B_TBL_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	//pr_info("[%s] called, offset = %#llx , size = %#x", __func__, offset, size);
+	if(offset == 0)
+	{
+		//pr_info("memset mload_virt_addr\n");
+		memset(mload_virt_addr,0, ALSC_TBL_SIZE*2);
+	}
+	memcpy(mload_virt_addr+offset, buf, size);
+
+	if(offset+size == ((ALSC_TBL_SIZE-1)*2))
+	{
+		//pr_info("[DrvISPMLoadWriteData] called, offset = %llx , size = %#x", offset, size);
+		DrvISPMLoadWriteData(eMLOAD_ID_ALSC_B_TBL, mload_dma_addr, ALSC_TBL_SIZE);
+	}
+	return size;
+}
+
+
+static int mload_LN_GMA12TO10_R_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	int data_size = GAMMA_TBL_SIZE*2;
+	memset(buf, 0, data_size);
+	DrvISPMLoadReadData(eMLOAD_ID_LN_GMA12TO10_R, (unsigned short*)buf, GAMMA_TBL_SIZE);
+	return data_size;
+}
+
+static int mload_LN_GMA12TO10_R_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	if(offset == 0)
+	{
+		memset(mload_virt_addr,0, GAMMA_TBL_SIZE*2);
+		memcpy(mload_virt_addr,buf, GAMMA_TBL_SIZE*2);
+		DrvISPMLoadWriteData(eMLOAD_ID_LN_GMA12TO10_R, mload_dma_addr, GAMMA_TBL_SIZE);
+	}
+	return size;
+}
+
+static int mload_LN_GMA12TO10_G_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	int data_size = GAMMA_TBL_SIZE*2;
+	memset(buf, 0, data_size);
+	DrvISPMLoadReadData(eMLOAD_ID_LN_GMA12TO10_G, (unsigned short*)buf, GAMMA_TBL_SIZE);
+	return data_size;
+}
+
+static int mload_LN_GMA12TO10_G_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	if(offset == 0)
+	{
+		memset(mload_virt_addr,0, GAMMA_TBL_SIZE*2);
+		memcpy(mload_virt_addr,buf, GAMMA_TBL_SIZE*2);
+		DrvISPMLoadWriteData(eMLOAD_ID_LN_GMA12TO10_G, mload_dma_addr, GAMMA_TBL_SIZE);
+	}
+	return size;
+}
+
+static int mload_LN_GMA12TO10_B_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	int data_size = GAMMA_TBL_SIZE*2;
+	memset(buf, 0, data_size);
+	DrvISPMLoadReadData(eMLOAD_ID_LN_GMA12TO10_B, (unsigned short*)buf, GAMMA_TBL_SIZE);
+	return data_size;
+}
+
+static int mload_LN_GMA12TO10_B_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	if(offset == 0)
+	{
+		memset(mload_virt_addr,0, GAMMA_TBL_SIZE*2);
+		memcpy(mload_virt_addr,buf, GAMMA_TBL_SIZE*2);
+		DrvISPMLoadWriteData(eMLOAD_ID_LN_GMA12TO10_B, mload_dma_addr, GAMMA_TBL_SIZE);
+	}
+	return size;
+}
+
+static int mload_DP_TBL_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	int data_size = DEFECTPIX_TBL_SIZE*2;
+	memset(buf, 0, data_size);
+	DrvISPMLoadReadData(eMLOAD_ID_DP_TBL, (unsigned short*)buf, DEFECTPIX_TBL_SIZE);
+	return data_size;
+}
+
+static int mload_DP_TBL_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	if(offset == 0)
+	{
+		memset(mload_virt_addr,0, DEFECTPIX_TBL_SIZE*2);
+		memcpy(mload_virt_addr,buf, DEFECTPIX_TBL_SIZE*2);
+		DrvISPMLoadWriteData(eMLOAD_ID_DP_TBL, mload_dma_addr, DEFECTPIX_TBL_SIZE);
+	}
+	return size;
+}
+
+static int mload_LN_GMA10TO10_R_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	int data_size = GAMMA_TBL_SIZE*2;
+	memset(buf, 0, data_size);
+	DrvISPMLoadReadData(eMLOAD_ID_LN_GMA10TO10_R, (unsigned short*)buf, GAMMA_TBL_SIZE);
+	return data_size;
+}
+
+static int mload_LN_GMA10TO10_R_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	if(offset == 0)
+	{
+		memset(mload_virt_addr,0, GAMMA_TBL_SIZE*2);
+		memcpy(mload_virt_addr,buf, GAMMA_TBL_SIZE*2);
+		DrvISPMLoadWriteData(eMLOAD_ID_LN_GMA10TO10_R, mload_dma_addr, GAMMA_TBL_SIZE);
+	}
+	return size;
+}
+
+static int mload_LN_GMA10TO10_G_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	int data_size = GAMMA_TBL_SIZE*2;
+	memset(buf, 0, data_size);
+	DrvISPMLoadReadData(eMLOAD_ID_LN_GMA10TO10_G, (unsigned short*)buf, GAMMA_TBL_SIZE);
+	return data_size;
+}
+
+static int mload_LN_GMA10TO10_G_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	if(offset == 0)
+	{
+		memset(mload_virt_addr,0, GAMMA_TBL_SIZE*2);
+		memcpy(mload_virt_addr,buf, GAMMA_TBL_SIZE*2);
+		DrvISPMLoadWriteData(eMLOAD_ID_LN_GMA10TO10_G, mload_dma_addr, GAMMA_TBL_SIZE);
+	}
+	return size;
+}
+
+static int mload_LN_GMA10TO10_B_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	int data_size = GAMMA_TBL_SIZE*2;
+	memset(buf, 0, data_size);
+	DrvISPMLoadReadData(eMLOAD_ID_LN_GMA10TO10_B, (unsigned short*)buf, GAMMA_TBL_SIZE);
+	return data_size;
+}
+
+static int mload_LN_GMA10TO10_B_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	if(offset == 0)
+	{
+		memset(mload_virt_addr,0, GAMMA_TBL_SIZE*2);
+		memcpy(mload_virt_addr,buf, GAMMA_TBL_SIZE*2);
+		DrvISPMLoadWriteData(eMLOAD_ID_LN_GMA10TO10_B, mload_dma_addr, GAMMA_TBL_SIZE);
+	}
+	return size;
+}
+
+static int mload_FPN_OFFSET_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	int data_size = FPN_OFFSET_TBL_SIZE*2;
+	memset(buf, 0, data_size);
+	DrvISPMLoadReadData(eMLOAD_ID_FPN_OFFSET, (unsigned short*)buf, FPN_OFFSET_TBL_SIZE);
+	return data_size;
+}
+
+static int mload_FPN_OFFSET_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	if(offset == 0)
+	{
+		memset(mload_virt_addr,0,FPN_OFFSET_TBL_SIZE*2);
+		memcpy(mload_virt_addr,buf, FPN_OFFSET_TBL_SIZE*2);
+		DrvISPMLoadWriteData(eMLOAD_ID_FPN_OFFSET, mload_dma_addr, FPN_OFFSET_TBL_SIZE);
+	}
+	return size;
+}
+
+static int mload_ALL_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	return 0;
+}
+
+static int mload_ALL_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+{
+	//pr_info("[%s] called, offset = %#llx , size = %#x", __func__, offset, size);
+	if(offset == 0)
+	{
+		//pr_info("memset mload_virt_addr\n");
+		memset(mload_virt_addr,0, sizeof(MLoadLayout));
+	}
+	memcpy(mload_virt_addr+offset, buf, size);
+
+	if(offset+size == sizeof(MLoadLayout))
+	{
+		//pr_info("[HalISPMLoadWriteAllTable] called\n");
+		HalISPMLoadWriteAllTable(mload_dma_addr);
+	}
+	return size;
+}
+
+
+void isp_to_scl_ve_isr(void)
+{
+    print_timestamp("K_ISP2SCL");
+}
+
+void scl_ve_isr(void)
+{
+    print_timestamp("K_SCL_VE");
+    if (!isp_int.scl_fe){
+        isp_int.scl_fe = true;
+        wake_up_interruptible_all(&isp_wq_scl_fe);
     }
-    return sizeof(ISP_KERNEL_MEM);
+    isp_int.share_data->isp_ints_state.u32IspInt1 |= SCL_VEND_EVENT;
+    isp_int.epoll_event = true;
+    wake_up_interruptible_all(&isp_wq_epoll_event);
 }
 
-// motion statistic
-static int mot_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
+void scl_vs_isr(void)
 {
-  if (buf && size >= isp_mem.MOT_Size)
-  {
-    memcpy( buf, (unsigned char*)((uintptr_t)(isp_mem.Base_Meminfo.kvirt+isp_mem.MOT_Offset)) ,isp_mem.MOT_Size);
-    return isp_mem.MOT_Size;
-  }
-  return 0;
-}
-static int mot_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
-{
-  DBG_INFO();
-  return size;
-}
+    print_timestamp("K_SCL_VS");
 
-#if 0
-//sensor i2c
-typedef struct
-{
-  u32 cmd;
-  u32 data_len;
-  char data[1];
-}__attribute__((packed, aligned(1))) isp_i2c_k_cmd; //kernel i2c command
-#define I2C_K_CMD_GET_BUFFER	0x00
-#define I2C_K_CMD_WRITE		0x01
-#define I2C_K_CMD_READ			0x02
-
-static int i2c_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
-{
-  return 0;
 }
-static int i2c_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
-{
-  i2c_handle_t* handle = (i2c_handle_t*) attr->private;
-  if (buf && size >= sizeof(ISP_K_I2C_RW))
-  {
-    ISP_K_I2C_RW *cmd = (ISP_K_I2C_RW*)buf;
-    memcpy(handle->req.data,cmd->i2c_data,sizeof(I2C_ARRAY)*cmd->num_i2c_data); //copy i2c data for write
-    handle->req.ndata = cmd->num_i2c_data;
-    handle->req.mode = cmd->cfg.mode;
-    handle->req.fmt = cmd->cfg.fmt;
-    handle->req.slave_addr = cmd->cfg.address;
-    handle->req.speed = cmd->cfg.speed;
-    handle->req.status = I2C_REQ_STATUS_WAIT;
-    pr_debug("i2cK, %d data, slave addr=0x%x",cmd->num_i2c_data,cmd->cfg.address);
-  }
-  return 0;
-}
-#endif
-
-#if 0
-//share memory address get
-typedef struct
-{
-  u32 id;
-  u8 data[1];
-}share_mem_ctl;
-
-typedef enum
-{
-  SHARE_FRAME_STATE = 0,
-  SHARE_I2C = 1,
-}ISP_SHARE_MEM_ID;
-
-static int share_mem_read(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
-{
-  share_mem_ctl *ctl = (share_mem_ctl*)buf;
-  //printk("%s+\n",__FUNCTION__);
-  printk("ctl id = %d\n",ctl->id);
-  switch(ctl->id)
-  {
-    case SHARE_FRAME_STATE:
-	printk("get share frame stat\n");
-    break;
-    case SHARE_I2C:
-	printk("get share i2c\n");
-    break;
-  }
-  printk("return size =%d\n", size);
-  return size/2;
-}
-
-static int share_mem_write(struct file *fd, struct kobject *kobj, struct bin_attribute *attr, char *buf, loff_t offset, size_t size)
-{
-  return 0;
-}
-#endif
 
 static ISP_BIN_ATTR(isp, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 static ISP_BIN_ATTR(vs_sr, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
@@ -2194,11 +2720,19 @@ static ISP_BIN_ATTR(rdma_done, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 static ISP_BIN_ATTR(eis, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 static ISP_BIN_ATTR(sw_int_in, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 static ISP_BIN_ATTR(sw_int_out, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
-static ISP_BIN_ATTR(iq, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
-static ISP_BIN_ATTR(mot, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
-//static ISP_BIN_ATTR(i2c, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
-//static ISP_BIN_ATTR(share_mem, S_IRUSR |S_IRGRP |S_IROTH);
-//static ISP_BIN_ATTR(share_mem,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(scl_fe, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_ALSC_R_TBL, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_ALSC_G_TBL, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_ALSC_B_TBL, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_LN_GMA12TO10_R, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_LN_GMA12TO10_G, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_LN_GMA12TO10_B, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_DP_TBL, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_LN_GMA10TO10_R, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_LN_GMA10TO10_G, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_LN_GMA10TO10_B, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_FPN_OFFSET, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+static ISP_BIN_ATTR(mload_ALL, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 
 static ssize_t isp_ints_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -2207,36 +2741,6 @@ static ssize_t isp_ints_show(struct device *dev, struct device_attribute *attr, 
 
     str += scnprintf(str, end - str, "%s			: %d\n","frame_count",isp_int.frame_cnt);
     str += scnprintf(str, end - str, "%s		: %d\n","frame_interval(ns)",isp_int.fps.frame_interval);
-#if 0
-    str += scnprintf(str, end - str, "%s			: %d\n","SR_VREF_RISING",isp_int.isp_int_count[INT_SR_VREF_RISING]);
-    str += scnprintf(str, end - str, "%s			: %d\n","SR_VREF_FALLING",isp_int.isp_int_count[INT_SR_VREF_FALLING]);
-    str += scnprintf(str, end - str, "%s			: %d\n","STROBE_DONE",isp_int.isp_int_count[INT_STROBE_DONE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","DB_UPDATE_DONE",isp_int.isp_int_count[INT_DB_UPDATE_DONE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","AF_DONE",isp_int.isp_int_count[INT_AF_DONE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","ISP_FIFO_FUL",isp_int.isp_int_count[INT_ISP_FIFO_FULL]);
-    str += scnprintf(str, end - str, "%s			: %d\n","ISP_BUSY",isp_int.isp_int_count[INT_ISP_BUSY]);
-    str += scnprintf(str, end - str, "%s			: %d\n","ISP_IDLE",isp_int.isp_int_count[INT_ISP_IDLE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","AWB_DONE",isp_int.isp_int_count[INT_AWB_DONE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","WDMA_DONE",isp_int.isp_int_count[INT_WDMA_DONE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","RDMA_DONE",isp_int.isp_int_count[INT_RDMA_DONE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","WDMA_FIFO_FULL",isp_int.isp_int_count[INT_WDMA_FIFO_FULL]);
-    str += scnprintf(str, end - str, "%s			: %d\n","PAD_VSYNC_RISING",isp_int.isp_int_count[INT_PAD_VSYNC_RISING]);
-    str += scnprintf(str, end - str, "%s			: %d\n","PAD_VSYNC_FALLING",isp_int.isp_int_count[INT_PAD_VSYNC_FALLING]);
-    str += scnprintf(str, end - str, "%s			: %d\n","ISPIF_VSYNC",isp_int.isp_int_count[INT_ISPIF_VSYNC]);
-    str += scnprintf(str, end - str, "%s			: %d\n","AE_DONE",isp_int.isp_int_count[INT_AE_DONE]);
-
-    str += scnprintf(str, end - str, "%s			: %d\n","VDOS_EVERYLINE",isp_int.isp_int2_count[INT2_VDOS_EVERYLINE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","VDOS_LINE0",isp_int.isp_int2_count[INT2_VDOS_LINE0]);
-    str += scnprintf(str, end - str, "%s			: %d\n","VDOS_LINE1 ",isp_int.isp_int2_count[INT2_VDOS_LINE1]);
-    str += scnprintf(str, end - str, "%s			: %d\n","VDOS_LINE2",isp_int.isp_int2_count[INT2_VDOS_LINE2]);
-
-    str += scnprintf(str, end - str, "%s			: %d\n","AE_WIN0_DONE",isp_int.isp_int3_count[INT3_AE_WIN0_DONE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","AE_WIN1_DONE",isp_int.isp_int3_count[INT3_AE_WIN1_DONE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","AE_BLK_ROW_INT_DONE",isp_int.isp_int3_count[INT3_AE_BLK_ROW_INT_DONE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","MENULOAD_DONE",isp_int.isp_int3_count[INT3_MENULOAD_DONE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","SW_INT_INPUT_DONE",isp_int.isp_int3_count[INT3_SW_INT_INPUT_DONE]);
-    str += scnprintf(str, end - str, "%s			: %d\n","SW_INT_OUTPUT_DONE",isp_int.isp_int3_count[INT3_SW_INT_OUTPUT_DONE]);
-#else
     str += scnprintf(str, end - str, "%s			: %d\n","SR_VREF_RISING",isp_int.isp_int_count[INT_SR_VREF_RISING]);
     str += scnprintf(str, end - str, "%s			: %d\n","SR_VREF_FALLING",isp_int.isp_int_count[INT_SR_VREF_FALLING]);
     str += scnprintf(str, end - str, "%s			: %d\n","STROBE_DONE",isp_int.isp_int_count[INT_STROBE_DONE]);
@@ -2303,7 +2807,14 @@ static ssize_t isp_ints_show(struct device *dev, struct device_attribute *attr, 
     str += scnprintf(str, end - str, "%s			: %d\n","MENULOAD_DONE",isp_int.isp_int3_count[INT3_MENULOAD_DONE]);
     str += scnprintf(str, end - str, "%s		: %d\n","SW_INT_INPUT_DONE",isp_int.isp_int3_count[INT3_SW_INT_INPUT_DONE]);
     str += scnprintf(str, end - str, "%s		: %d\n","SW_INT_OUTPUT_DONE",isp_int.isp_int3_count[INT3_SW_INT_OUTPUT_DONE]);
-#endif
+
+    str += scnprintf(str, end - str, "%s		: %d\n","HIT_LINE_COUNT1",isp_int.isp_int3_count[INT3_HIT_LINE_COUNT1]);
+    str += scnprintf(str, end - str, "%s		: %d\n","HIT_LINE_COUNT2",isp_int.isp_int3_count[INT3_HIT_LINE_COUNT2]);
+    str += scnprintf(str, end - str, "%s		: %d\n","HIT_LINE_COUNT3",isp_int.isp_int3_count[INT3_HIT_LINE_COUNT3]);
+    str += scnprintf(str, end - str, "%s		: %d\n","HDR_HISTO_DONE",isp_int.isp_int3_count[INT3_HDR_HISTO_DONE]);
+    str += scnprintf(str, end - str, "%s		: %d\n","RGBIR_HISTO_DONE",isp_int.isp_int3_count[INT3_RGBIR_HISTO_DONE]);
+    str += scnprintf(str, end - str, "%s		: %d\n","AWB_ROW_DONE",isp_int.isp_int3_count[INT3_AWB_ROW_DONE]);
+    str += scnprintf(str, end - str, "%s		: %d\n","HISTO_ROW_DONE",isp_int.isp_int3_count[INT3_HISTO_ROW_DONE]);
     str += scnprintf(str, end - str, "\n");
 
     return (str - buf);
@@ -2323,6 +2834,14 @@ static ssize_t isp_info_show(struct device *dev, struct device_attribute *attr, 
 }
 DEVICE_ATTR(isp_info, 0444, isp_info_show, NULL);
 
+static ssize_t isp_fps_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    char *str = buf;
+    char *end = buf + PAGE_SIZE;
+    str += scnprintf(str, end - str, "%d\n",1000000000/isp_int.fps.frame_interval);
+    return (str - buf);
+}
+DEVICE_ATTR( isp_fps, 0444, isp_fps_show, NULL);
 
 static ssize_t csi_ints_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -2452,8 +2971,6 @@ int isp_create_bin_file(struct device *dev)
     int error = -EINVAL;
     if (dev != NULL) {
         kobj_isp = &dev->kobj;
-        //error = sysfs_create_link(&dev->parent->kobj, kobj_isp, "isp0");
-        //error = sysfs_create_link(&dev->kobj, kobj_isp, "isp0");
         error = sysfs_create_bin_file(kobj_isp, &isp_attr);
         error = sysfs_create_bin_file(kobj_isp, &vs_sr_attr);
         error = sysfs_create_bin_file(kobj_isp, &ve_sr_attr);
@@ -2472,19 +2989,23 @@ int isp_create_bin_file(struct device *dev)
         error = sysfs_create_bin_file(kobj_isp, &eis_attr);
         error = sysfs_create_bin_file(kobj_isp, &sw_int_in_attr);
         error = sysfs_create_bin_file(kobj_isp, &sw_int_out_attr);
-        error = sysfs_create_bin_file(kobj_isp, &iq_attr);
-        error = sysfs_create_bin_file(kobj_isp, &mot_attr);
-
-        //i2c_attr.private = (void*) &isp_i2c;
-        //error = sysfs_create_bin_file(kobj_isp, &i2c_attr);
-
-        //share_mem_attr.private = 0;
-        //error = sysfs_create_bin_file(kobj_isp, &share_mem_attr);
-
+        error = sysfs_create_bin_file(kobj_isp, &scl_fe_attr);
         error = device_create_file(dev,&dev_attr_isp_ints);
         error = device_create_file(dev,&dev_attr_isp_info);
+        error = device_create_file(dev,&dev_attr_isp_fps);
+        error = sysfs_create_bin_file(kobj_isp, &mload_ALSC_R_TBL_attr);
+        error = sysfs_create_bin_file(kobj_isp, &mload_ALSC_G_TBL_attr);
+        error = sysfs_create_bin_file(kobj_isp, &mload_ALSC_B_TBL_attr);
+        error = sysfs_create_bin_file(kobj_isp, &mload_LN_GMA12TO10_R_attr);
+        error = sysfs_create_bin_file(kobj_isp, &mload_LN_GMA12TO10_G_attr);
+        error = sysfs_create_bin_file(kobj_isp, &mload_LN_GMA12TO10_B_attr);
+        error = sysfs_create_bin_file(kobj_isp, &mload_DP_TBL_attr);
+        error = sysfs_create_bin_file(kobj_isp, &mload_LN_GMA10TO10_R_attr);
+        error = sysfs_create_bin_file(kobj_isp, &mload_LN_GMA10TO10_G_attr);
+        error = sysfs_create_bin_file(kobj_isp, &mload_LN_GMA10TO10_B_attr);
+        error = sysfs_create_bin_file(kobj_isp, &mload_FPN_OFFSET_attr);
+        error = sysfs_create_bin_file(kobj_isp, &mload_ALL_attr);
     }
-    //pr_debug("[%s] end\n", __FUNCTION__);
     return error;
 }
 
@@ -2505,33 +3026,45 @@ void isp_remove_bin_file(void)
     sysfs_remove_bin_file(kobj_isp, &wdma_fifofull_attr);
     sysfs_remove_bin_file(kobj_isp, &wdma_done_attr);
     sysfs_remove_bin_file(kobj_isp, &rdma_done_attr);
-    sysfs_remove_bin_file(kobj_isp, &eis_attr);  // FIXJASON
+    sysfs_remove_bin_file(kobj_isp, &eis_attr);
     sysfs_remove_bin_file(kobj_isp, &sw_int_in_attr);
     sysfs_remove_bin_file(kobj_isp, &sw_int_out_attr);
-    sysfs_remove_bin_file(kobj_isp, &iq_attr);
-    //sysfs_remove_bin_file(kobj_isp, &share_mem_attr);
-    //sysfs_remove_bin_file(kobj_isp, &i2c_attr);
-    //    DBG_INFO("[%s] end", __FUNCTION__);
+    sysfs_remove_bin_file(kobj_isp, &mload_ALSC_R_TBL_attr);
+    sysfs_remove_bin_file(kobj_isp, &mload_ALSC_G_TBL_attr);
+    sysfs_remove_bin_file(kobj_isp, &mload_ALSC_B_TBL_attr);
+    sysfs_remove_bin_file(kobj_isp, &mload_LN_GMA12TO10_R_attr);
+    sysfs_remove_bin_file(kobj_isp, &mload_LN_GMA12TO10_G_attr);
+    sysfs_remove_bin_file(kobj_isp, &mload_LN_GMA12TO10_B_attr);
+    sysfs_remove_bin_file(kobj_isp, &mload_DP_TBL_attr);
+    sysfs_remove_bin_file(kobj_isp, &mload_LN_GMA10TO10_R_attr);
+    sysfs_remove_bin_file(kobj_isp, &mload_LN_GMA10TO10_G_attr);
+    sysfs_remove_bin_file(kobj_isp, &mload_LN_GMA10TO10_B_attr);
+    sysfs_remove_bin_file(kobj_isp, &mload_FPN_OFFSET_attr);
+    sysfs_remove_bin_file(kobj_isp, &mload_ALL_attr);
 }
 
 
 int csi_create_bin_file(struct device *dev)
 {
-    csi_dev_data *data = dev_get_platdata(dev);
     int error = -EINVAL;
-    if (dev != NULL) {
+    if(!dev)
+        return error;
+
+    if(dev != NULL)
+    {
+        csi_dev_data *data = dev_get_platdata(dev);
         //frame end
-        csi_fe_attr.private = (void*) data;
+        csi_fe_attr.private = (void*)data;
         error = sysfs_create_bin_file(&dev->kobj, &csi_fe_attr);
 
         //frame start
-        csi_fs_attr.private = (void*) data;
+        csi_fs_attr.private = (void*)data;
         error = sysfs_create_bin_file(&dev->kobj, &csi_fs_attr);
 
         //CSI error report interrupt
         error = device_create_file(dev, &dev_attr_csi_dbg_mask);
         //CSI interrupt counter
-        error = device_create_file(dev,&dev_attr_csi_ints);
+        error = device_create_file(dev, &dev_attr_csi_ints);
     }
     return error;
 }
@@ -2544,38 +3077,43 @@ void csi_remove_bin_file(struct device *dev)
 
 static int csi_probe(struct platform_device* pdev)
 {
-    int err;
+    int err, ret;
     int irq, u4IO_PHY_BASE;
     unsigned int u4Bank;
     csi_dev_data *data;
     data = kzalloc(sizeof(csi_dev_data),GFP_KERNEL);
+    if(!data)
+        return -ENOENT;
 
-    of_property_read_u32(pdev->dev.of_node, "io_phy_addr", &u4IO_PHY_BASE);  //get custom property, OPR base address
-    of_property_read_u32(pdev->dev.of_node, "banks", &u4Bank);         //get custom property,  CSI OPR bank offset
+    ret = of_property_read_u32(pdev->dev.of_node, "io_phy_addr", &u4IO_PHY_BASE);  //get custom property, OPR base address
+    if(ret != 0)
+        pr_err("[ISP] read node error!\n");
+    ret = of_property_read_u32(pdev->dev.of_node, "banks", &u4Bank);         //get custom property,  CSI OPR bank offset
+    if(ret != 0)
+        pr_err("[ISP] read node error!\n");
 
     data->reg_base = (void*)ioremap(BANK_TO_ADDR32(u4Bank)+u4IO_PHY_BASE, 0x200);
     pr_debug("[%s] IO remap phys:0x%.8x virt: 0x%.8x\n", __FUNCTION__,
                     BANK_TO_ADDR32(u4Bank)+u4IO_PHY_BASE,
                     (u32) data->reg_base );         //(u32) isp_mem.pCSIRegs );
 
-    csi_create_bin_file(&pdev->dev);
-
     data->sysfs_dev = device_create(msys_get_sysfs_class(), NULL, MKDEV(MAJOR_ISP_NUM, MINOR_CSI_NUM), NULL, "csi0");
-    isp_create_bin_file(data->sysfs_dev);
+    csi_create_bin_file(data->sysfs_dev);
     err = sysfs_create_link(&pdev->dev.parent->kobj,&data->sysfs_dev->kobj, "csi0"); //create symlink for older firmware version
+    data->sysfs_dev->platform_data = pdev->dev.platform_data = (void*)data;
 
     //TODO, init status
     data->lock = __SPIN_LOCK_UNLOCKED("csi_lock");
     data->count = 0;
     data->frame_end = false;
 
-    //data->p_wq_fe = &csi_wq_fe;    //notify csi frame end
     data->p_wq_fe = &isp_wq_VEND;  //notify isp frame end
-    //data->p_wq_fs = &csi_wq_fs;    //notify csi frame start
     data->p_wq_fs = &isp_wq_VSTART;    //notify ISP frame start
 
     //TODO: CSI clock enable
     data->hal_handle = HalCsi_Open(data->reg_base);
+    if(!data->hal_handle)
+        return -ENOENT;
     HalCsi_RegInit(data->hal_handle);
 
     pdev->dev.platform_data = (void*)data;
@@ -2640,14 +3178,15 @@ irqreturn_t csi_ISR(int num, void *priv)
     }
 #endif
     if(ISP_CHECKBITS(rpt_status,RPT_INT_VC0)){  //frame end interrupt
+        print_timestamp("K_VE");//TEST CODE
         isp_int.vsync_end = true; //notify ISP fe
         isp_int.share_data->frame_state.bActive = false;
-        if (isp_int.share_data->frame_state.u4OBCInValid == true){
-            HalISPSetOBC(isp_int.share_data->frame_state.u4OBC_a, isp_int.share_data->frame_state.u4OBC_b);
-            isp_int.share_data->frame_state.u4OBCInValid = false;
+        isp_apply_iq_at_vend();
+        if(isp_int.fifo_mask.dirty)
+        {
+            IspInputEnable(~isp_int.fifo_mask.enable);
+            isp_int.fifo_mask.dirty = 0;
         }
-
-        IspInputEnable(isp_int.share_data->frame_state.bIspInputEnable);
         ISP_SETBIT(rpt_clear,RPT_INT_VC0);
         data->vc0_int_count++;
         wake_up_interruptible_all(data->p_wq_fe);
@@ -2799,6 +3338,34 @@ static void __exit mstar_isp_exit(void)
     isp_remove_bin_file();
     pr_debug("[ISP] exit");
 }
+
+//isp resolution parameter
+static int __init isp_res_early_init(char *opt)
+{
+    long res = 1;
+    if(!kstrtol(opt,10,&res))
+    {
+        g_isp_max_res = res;
+    }
+    else
+    {
+        printk("Invaild param : isp_res=%s\n",opt);
+    }
+    return 0;
+}
+early_param("isp_res", isp_res_early_init);
+
+//isp flags
+static int __init isp_flag_early_init(char *opt)
+{
+    long flag = ISP_FB_DNR | ISP_FB_ROT;
+    if(!kstrtol(opt,16,&flag))
+    {
+        g_isp_flag = flag;
+    }
+    return 0;
+}
+early_param("isp_flag", isp_flag_early_init);
 
 module_init(mstar_isp_init);
 module_exit(mstar_isp_exit);

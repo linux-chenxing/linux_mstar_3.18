@@ -142,10 +142,12 @@ typedef struct
 
 
 INTERFACE MS_BOOL Drv_PNL_Init(ST_PNL_INIT_CONFIG *pCfg);
+INTERFACE void Drv_PNL_Exit(unsigned char bCloseISR);
 INTERFACE MS_BOOL Drv_PNL_Set_Timing_Config(ST_PNL_TIMING_CONFIG *pCfg);
+INTERFACE MS_BOOL Drv_PNL_Set_LPLL_Config(ST_PNL_TIMING_CONFIG *pCfg);
 INTERFACE MS_BOOL Drv_PNL_Set_CSC_Y2R_Config(ST_PNL_CSC_Y2R_CONFIG *pCfg);
 INTERFACE void Drv_PNL_Resume(void);
-INTERFACE MS_U32 Drv_PNL_GetLPLLDclk(void);
+INTERFACE MS_U64 Drv_PNL_GetLPLLDclk(void);
 INTERFACE void Drv_PNL_Release(void);
 INTERFACE MS_BOOL Drv_PNL_GetPnlOpen(void);
 

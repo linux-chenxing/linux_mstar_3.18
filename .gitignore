@@ -57,7 +57,7 @@ Module.symvers
 #
 !.gitignore
 !.mailmap
-
+!ramdisk_linaro4.8_minit.img.xz
 #
 # Generated include files
 #
@@ -85,6 +85,7 @@ GTAGS
 *.orig
 *~
 \#*#
+~$*
 
 #
 # Leavings from module signing
@@ -96,3 +97,14 @@ x509.genkey
 
 # Kconfig presets
 all.config
+
+Release
+/Release/
+
+
+arch/arm/boot/Image*
+arch/arm/boot/kernel.img
+arch/arm/boot/kernel.mz.img
+drivers/mstar/include/ms_version.h
+modules
+xipmodules

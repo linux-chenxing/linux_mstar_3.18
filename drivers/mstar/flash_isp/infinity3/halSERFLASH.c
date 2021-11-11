@@ -185,6 +185,8 @@ MS_BOOL _bXIUMode = 0;      // default XIU mode, set 0 to RIU mode
 MS_BOOL bDetect = FALSE;    // initial flasg : true and false
 MS_BOOL _bIBPM = FALSE;     // Individual Block Protect mode : true and false
 MS_BOOL _bWPPullHigh = 0;   // WP pin pull high or can control info
+MS_BOOL _bHasEAR = FALSE;   // Extended Address Register mode supported
+MS_U8 _u8RegEAR = 0xFF;     // Extended Address Register value
 MS_U8 u8Mode;
 
 MS_U32 pu8BDMA_phys = 0;
@@ -967,7 +969,7 @@ MS_BOOL HAL_SERFLASH_Set2XREAD(MS_BOOL b2XMode)
     }
     else
     {
-        UNUSED(b2XMode);
+        //UNUSED(b2XMode);
         printk("%s This flash does not support 2XREAD!!!\n", __FUNCTION__);
     }
 
@@ -996,7 +998,7 @@ MS_BOOL HAL_SERFLASH_Set4XREAD(MS_BOOL b4XMode)
     }
     else
     {
-        UNUSED(b4XMode);
+        //UNUSED(b4XMode);
         printk("%s This flash does not support 4XREAD!!!\n", __FUNCTION__);
     }
 
@@ -1031,9 +1033,9 @@ MS_BOOL HAL_SERFLASH_ChipSelect(MS_U8 u8FlashIndex)
             Ret = TRUE;
             break;
         case FLASH_ID3:
-            UNUSED(u8FlashIndex); //Reserved
+            //UNUSED(u8FlashIndex); //Reserved
         default:
-            UNUSED(u8FlashIndex); //Invalid flash ID
+            //UNUSED(u8FlashIndex); //Invalid flash ID
             Ret = FALSE;
             break;
     }
@@ -1244,6 +1246,13 @@ MS_BOOL HAL_SERFLASH_DetectType(void)
 
             _hal_SERFLASH.u8WrsrBlkProtect = BITS(6:2, 0x00);
             _hal_SERFLASH.pWriteProtectTable = _pstWriteProtectTable_W25Q32BV_CMP1;
+        }
+        if(_hal_SERFLASH.u32FlashSize >= 0x2000000)
+        {
+            if((_hal_SERFLASH.u8MID == MID_MXIC)||(_hal_SERFLASH.u8MID == MID_GD))
+            {
+                _bHasEAR = TRUE; // support EAR mode
+            }
         }
 
         // If the Board uses a unknown flash type, force setting a secure flash type for booting. //FLASH_IC_MX25L6405D
@@ -1943,7 +1952,27 @@ MS_BOOL HAL_SERFLASH_Read(MS_U32 u32Addr, MS_U32 u32Size, MS_U8 *pu8Data)
             //printk("[SER flash]MS_SPI_ADDR=(0x%08X)\n",(int)BASE_FLASH_OFFSET);
         }
         if(BASE_FLASH_OFFSET)
-            memcpy((void *)pu8Data,(const void *) (BASE_FLASH_OFFSET+u32Addr), u32Size);
+        {
+            MS_U32 u32ReadSize = 0;
+            if (u32Addr < 0x1000000)
+            {
+                if (_u8RegEAR) // switch back to bottom 16MB
+                    HAL_FSP_WriteExtAddrReg(0);
+                u32ReadSize = u32Size > (0x1000000 - u32Addr) ? (0x1000000 - u32Addr) : u32Size;
+                memcpy((void *)pu8Data, (const void *)(BASE_FLASH_OFFSET+u32Addr), u32ReadSize);
+                u32Size = u32Size - u32ReadSize;
+            }
+            if (u32Size)
+            {
+                MS_U8 u8EAR = 0;
+
+                u32Addr += u32ReadSize;
+                u8EAR = u32Addr >> 24;
+                if (u8EAR)
+                    HAL_FSP_WriteExtAddrReg(u8EAR);
+                memcpy((void *)pu8Data+u32ReadSize,(const void *)(BASE_FLASH_OFFSET+(u32Addr&0xFFFFFF)), u32Size);
+            }
+        }
         Ret = TRUE;
     #elif defined(CONFIG_FSP_READ_RIUOP)
         Ret = HAL_FSP_Read(u32Addr, u32Size, pu8Data);
@@ -2273,7 +2302,7 @@ MS_BOOL HAL_SERFLASH_SPSNDYB_UNLOCK(MS_U32 u32StartBlock, MS_U32 u32EndBlock)
         {
             goto HAL_SPSNFLASH_DYB_UNLOCK_return;
         }
-        if(u32I>=0 && u32I<=31)
+        if(u32I<=31)
             u32FlashAddr = u32I * 4096;
         else
             u32FlashAddr = (u32I -30) * 64 * 1024;
@@ -2465,7 +2494,7 @@ MS_BOOL HAL_SERFLASH_WriteProtect(MS_BOOL bEnable)
         }
         else
         {
-        ISP_WRITE(REG_ISP_SPI_WDATA, SF_SR_SRWD | 0 << 2); // [4:2] or [5:2] protect blocks
+        ISP_WRITE(REG_ISP_SPI_WDATA, SF_SR_SRWD); // [4:2] or [5:2] protect blocks
     }
 
     }
@@ -3486,6 +3515,7 @@ HAL_SPI_ReadBlockStatus_return:
     return ts.tv_sec* 1000+ ts.tv_nsec/1000000;
 }*/
 
+/*
 
 //FSP command , note that it cannot be access only by PM51 if secure boot on.
 MS_U8 HAL_SERFLASH_ReadStatusByFSP(void)
@@ -3522,7 +3552,7 @@ void HAL_SERFLASH_CheckEmptyByFSP(MS_U32 u32Addr, MS_U32 u32ChkSize)
         if(u32FlashData != 0xFFFFFFFF)
         {
             printk("check failed in addr:%x value:%x\n",(int)(u32Addr+i), (int)u32FlashData);
-            while(1);
+            //while(1);
         }
     }
 }
@@ -3551,16 +3581,16 @@ void HAL_SERFLASH_ProgramFlashByFSP(MS_U32 u32Addr, MS_U32 u32Data)
 {
 
    #define HAL_FSP_WRITE_SIZE	4
-   MS_U8 *pu8Write_Data = NULL;
+   MS_U8 pu8Write_Data = NULL;
    MS_U8 u8index;
    for (u8index=0;u8index<HAL_FSP_WRITE_SIZE;u8index++)
    {
-     *pu8Write_Data=(MS_U8)(u32Data >>(u8index*8));
-     if(!HAL_FSP_Write(u32Addr,HAL_FSP_WRITE_SIZE,pu8Write_Data))
+     pu8Write_Data=(MS_U8)(u32Data >>(u8index*8));
+     if(!HAL_FSP_Write(u32Addr,HAL_FSP_WRITE_SIZE, &pu8Write_Data))
      printk("HAL_FSP_WRITE Fail:Addr is %x pu8Buf is :%x\n",(int)u32Addr, (int)pu8Write_Data);
    }
 
-}
+}*/
 
 static MS_BOOL _HAL_FSP_WaitDone(void)
 {
@@ -3707,7 +3737,12 @@ MS_BOOL HAL_FSP_EraseChip(void)
 static MS_BOOL _HAL_FSP_BlockErase(MS_U32 u32FlashAddr, EN_FLASH_ERASE eSize)
 {
     MS_BOOL bRet = TRUE;
+    MS_U8 u8EAR = u32FlashAddr >> 24;
    // DEBUG_SER_FLASH(E_SERFLASH_DBGLV_DEBUG, printf("%s(0x%08X, 0x%08X)\n", __FUNCTION__, (int)u32FlashAddr, (int)eSize));
+    if (u8EAR != _u8RegEAR)
+    {
+        HAL_FSP_WriteExtAddrReg(u8EAR);
+    }
     HAL_FSP_WriteBufs(0,SPI_CMD_WREN);
     HAL_FSP_WriteBufs(1,eSize);
     HAL_FSP_WriteBufs(2,(MS_U8)((u32FlashAddr>>0x10)&0xFF));
@@ -4204,28 +4239,21 @@ MS_BOOL HAL_FSP_WriteProtect_Area(MS_BOOL bEnableAllArea, MS_U8 u8BlockProtectBi
 MS_BOOL HAL_FSP_WriteProtect(MS_BOOL bEnable)
 {
     MS_BOOL bRet = TRUE;
+    MS_U8 u8Status;
     DEBUG_SER_FLASH(E_SERFLASH_DBGLV_DEBUG, printk("%s(%d)\n", __FUNCTION__, bEnable));
+
+    u8Status = SF_SR_SRWD;
+    if (gReadMode==E_QUAD_MODE)
+        u8Status |= SF_SR_QUALD;
+    if (bEnable)
+        u8Status |= SERFLASH_WRSR_BLK_PROTECT;
+
     _HAL_SERFLASH_ActiveFlash_Set_HW_WP(0);
     //MsOS_DelayTask(bEnable ? 5 : 20);
     udelay(20);
     HAL_FSP_WriteBufs(0,SPI_CMD_WREN);
     HAL_FSP_WriteBufs(1,SPI_CMD_WRSR);
-    if (bEnable)
-    {
-        // SF_SR_SRWD: SRWD Status Register Write Protect
-        if (gReadMode==E_QUAD_MODE)
-            HAL_FSP_WriteBufs(2,(MS_U8)(SF_SR_SRWD | SERFLASH_WRSR_BLK_PROTECT|SF_SR_QUALD));
-	    else
-	        HAL_FSP_WriteBufs(2,(MS_U8)(SF_SR_SRWD | SERFLASH_WRSR_BLK_PROTECT));
-    }
-    else
-    {
-        // [4:2] or [5:2] protect blocks
-        if (gReadMode==E_QUAD_MODE)
-            HAL_FSP_WriteBufs(2,(MS_U8)(SF_SR_SRWD | (0 << 2)|SF_SR_QUALD));
-        else
-	        HAL_FSP_WriteBufs(2,(MS_U8)(SF_SR_SRWD | (0 << 2)));
-    }
+    HAL_FSP_WriteBufs(2, u8Status);
     HAL_FSP_WriteBufs(3,SPI_CMD_RDSR);
     FSP_WRITE_MASK(REG_FSP_WBF_SIZE,REG_FSP_WBF_SIZE0(1),REG_FSP_WBF_SIZE0_MASK);
     FSP_WRITE_MASK(REG_FSP_WBF_SIZE,REG_FSP_WBF_SIZE1(2),REG_FSP_WBF_SIZE1_MASK);
@@ -4491,6 +4519,39 @@ MS_BOOL HAL_FSP_WriteStatus(MS_U8 u8CMD, MS_U8 u8CountData, MS_U8* pu8Data)
     return bRet;
 }
 
+MS_BOOL HAL_FSP_WriteExtAddrReg(MS_U8 u8ExtAddrReg)
+{
+    MS_BOOL bRet = TRUE;
+
+    if (!_bHasEAR)
+        return FALSE;
+    else if (u8ExtAddrReg == _u8RegEAR)
+        return TRUE;
+
+    DEBUG_SER_FLASH(E_SERFLASH_DBGLV_DEBUG, printk("%s()", __FUNCTION__));
+    HAL_FSP_WriteBufs(0,SPI_CMD_WREN);
+    HAL_FSP_WriteBufs(1,SPI_CMD_WREAR);
+    HAL_FSP_WriteBufs(2,u8ExtAddrReg);
+    FSP_WRITE_MASK(REG_FSP_WBF_SIZE,REG_FSP_WBF_SIZE0(1),REG_FSP_WBF_SIZE0_MASK);
+    FSP_WRITE_MASK(REG_FSP_WBF_SIZE,REG_FSP_WBF_SIZE1(2),REG_FSP_WBF_SIZE1_MASK);
+    FSP_WRITE_MASK(REG_FSP_WBF_SIZE,REG_FSP_WBF_SIZE2(0),REG_FSP_WBF_SIZE2_MASK);
+    FSP_WRITE_MASK(REG_FSP_RBF_SIZE,REG_FSP_RBF_SIZE0(0),REG_FSP_RBF_SIZE0_MASK);
+    FSP_WRITE_MASK(REG_FSP_RBF_SIZE,REG_FSP_RBF_SIZE1(0),REG_FSP_RBF_SIZE1_MASK);
+    FSP_WRITE_MASK(REG_FSP_RBF_SIZE,REG_FSP_RBF_SIZE2(0),REG_FSP_RBF_SIZE2_MASK);
+    FSP_WRITE_MASK(REG_FSP_CTRL,REG_FSP_ENABLE,REG_FSP_ENABLE_MASK);
+    FSP_WRITE_MASK(REG_FSP_CTRL,REG_FSP_NRESET,REG_FSP_RESET_MASK);
+    FSP_WRITE_MASK(REG_FSP_CTRL,REG_FSP_INT,REG_FSP_INT_MASK);
+    FSP_WRITE_MASK(REG_FSP_CTRL,REG_FSP_2NDCMD_ON,REG_FSP_2NDCMD_MASK);
+    FSP_WRITE_MASK(REG_FSP_CTRL,REG_FSP_3THCMD_OFF,REG_FSP_3THCMD_MASK);
+    FSP_WRITE_MASK(REG_FSP_CTRL,REG_FSP_FSCHK_ON,REG_FSP_FSCHK_MASK);
+    FSP_WRITE_MASK(REG_FSP_TRIGGER,REG_FSP_FIRE,REG_FSP_TRIGGER_MASK);
+    bRet &= _HAL_FSP_WaitDone();
+    if (bRet)
+    {
+        _u8RegEAR = u8ExtAddrReg;
+    }
+    return bRet;
+}
 
 #ifndef CONFIG_RIUISP
 
@@ -4508,7 +4569,8 @@ void _HAL_BDMA_INIT(void)
     {
         pu8BDMA_phys =  mem_info.phys;
         pu8BDMA_virt = mem_info.kvirt;
-        pu8BDMA_bus = pu8BDMA_phys&0x0FFFFFFF;
+        pu8BDMA_bus = pu8BDMA_phys&0x1FFFFFFF;
+        printk("[Ser flash] phys=0x%08x, virt=0x%08x, bus=0x%08x\n", (unsigned int)pu8BDMA_phys, (unsigned int)pu8BDMA_virt, (unsigned int)pu8BDMA_bus);
     }
     else
     {
@@ -4629,12 +4691,21 @@ static MS_BOOL _HAL_PP_BDMAToFSP(MS_U32 u32Src_off, MS_U32 u32Dst_off, MS_U32 u3
 {
     //struct timeval time_st;
     MS_U16 u16data;
-    MS_BOOL bRet;
+    MS_BOOL bRet=FALSE;
     unsigned long deadline;
-
+    MS_U8 u8EAR = u32Dst_off >> 24;
 
     if(u32Len>256)
         return FALSE;
+    if((u8EAR == 0) && ((u32Dst_off + u32Len) > 0x1000000))
+    {
+        printk("[FSP] PP BDMA cross the 16MB boundary\r\n");
+        return FALSE;
+    }
+    if(u8EAR != _u8RegEAR)
+    {
+        HAL_FSP_WriteExtAddrReg(u8EAR);
+    }
 
     if(pu8BDMA_virt == 0)
         _HAL_BDMA_INIT();
@@ -4645,7 +4716,7 @@ static MS_BOOL _HAL_PP_BDMAToFSP(MS_U32 u32Src_off, MS_U32 u32Dst_off, MS_U32 u3
     }
 
     memcpy((void *)pu8BDMA_virt, (const void *)u32Src_off, u32Len);
-    Chip_Flush_Memory();
+    Chip_Flush_Cache_Range(pu8BDMA_virt, u32Len);
 
    // printk("    %s(0x%08X, %3d)\n", __FUNCTION__, (int)u32Dst_off, (int)u32Len);
 

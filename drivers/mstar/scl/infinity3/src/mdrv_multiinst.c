@@ -240,16 +240,16 @@ unsigned char MDrv_MultiInst_Lock_IsFree(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_
 
 }
 
-unsigned char MDrv_MultiInst_Lock_Alloc(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_ID, ST_MDRV_MULTI_INST_LOCK_CONFIG stCfg)
+unsigned char MDrv_MultiInst_Lock_Alloc(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_ID, ST_MDRV_MULTI_INST_LOCK_CONFIG *stCfg)
 {
     unsigned char i, bRet,bFree = 1;
     unsigned char u8PrivateIDNum = _MDrv_MultiInst_Lock_Get_PrivateID_Num(enLock_ID);
 
-    SCL_DBG(SCL_DBG_LV_MULTI_INST_FUNC()&(Get_DBGMG_MULTI(enLock_ID)), "[MULTIINST]%s(%d)Id:%ld\n", __FUNCTION__, __LINE__,stCfg.ps32PrivateID[0]);
-    if(stCfg.u8IDNum != u8PrivateIDNum)
+    SCL_DBG(SCL_DBG_LV_MULTI_INST_FUNC()&(Get_DBGMG_MULTI(enLock_ID)), "[MULTIINST]%s(%d)Id:%ld\n", __FUNCTION__, __LINE__,stCfg->ps32PrivateID[0]);
+    if(stCfg->u8IDNum != u8PrivateIDNum)
     {
         SCL_DBG(SCL_DBG_LV_MULTI_INST_ERR, "[MULTIINST]%s(%d) LockAlloc fail LockID:%d, %d!=%d\n",
-            __FUNCTION__, __LINE__, enLock_ID, stCfg.u8IDNum, u8PrivateIDNum);
+            __FUNCTION__, __LINE__, enLock_ID, stCfg->u8IDNum, u8PrivateIDNum);
 
         return 0;
     }
@@ -266,7 +266,7 @@ unsigned char MDrv_MultiInst_Lock_Alloc(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_I
         MULTIINST_WAIT_SEM(gMultiInstLockSem[enLock_ID]);
         _LOCK_Mutex_flag[E_MDRV_MULTI_INST_LOCK_ID_SC_3] = 1;
         MULTIINST_RELEASE_SEM(gMultiInstLockSem[enLock_ID]);
-        SCL_DBG(SCL_DBG_LV_MULTI_INST_FUNC()&(Get_DBGMG_MULTI(enLock_ID)), "[MULTIINST]LOCK !! Id:%ld\n",stCfg.ps32PrivateID[0]);
+        SCL_DBG(SCL_DBG_LV_MULTI_INST_FUNC()&(Get_DBGMG_MULTI(enLock_ID)), "[MULTIINST]LOCK !! Id:%ld\n",stCfg->ps32PrivateID[0]);
     }
     else if(enLock_ID == E_MDRV_MULTI_INST_LOCK_ID_DISP)
     {
@@ -293,9 +293,9 @@ unsigned char MDrv_MultiInst_Lock_Alloc(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_I
         for(i=0;i<u8PrivateIDNum;i++)
         {
             SCL_DBG(SCL_DBG_LV_MULTI_INST_LOCK()&(Get_DBGMG_MULTI(enLock_ID)), "[MULTIINST]%s(%d): LockID:%d, idx:%d, PirvateId:%lx\n",
-                __FUNCTION__, __LINE__, enLock_ID, i, stCfg.ps32PrivateID[i]);
+                __FUNCTION__, __LINE__, enLock_ID, i, stCfg->ps32PrivateID[i]);
 
-            gstMultiInstLockCfg[enLock_ID].ps32PrivateID[i] = stCfg.ps32PrivateID[i];
+            gstMultiInstLockCfg[enLock_ID].ps32PrivateID[i] = stCfg->ps32PrivateID[i];
         }
 
         bRet = 1;
@@ -307,7 +307,7 @@ unsigned char MDrv_MultiInst_Lock_Alloc(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_I
         for(i=0;i<u8PrivateIDNum;i++)
         {
             SCL_DBG(SCL_DBG_LV_MULTI_INST_LOCK()&(Get_DBGMG_MULTI(enLock_ID)), "[MULTIINST]%s(%d) LockAlloc fail: idx:%d, PrivateId:%lx\n",
-                __FUNCTION__, __LINE__, i, stCfg.ps32PrivateID[i]);
+                __FUNCTION__, __LINE__, i, stCfg->ps32PrivateID[i]);
         }
     #endif
         bRet = 0;
@@ -374,7 +374,7 @@ unsigned char MDrv_MultiInst_Lock_Free(EN_MDRV_MULTI_INST_LOCK_ID_TYPE enLock_ID
     else if(enLock_ID == E_MDRV_MULTI_INST_LOCK_ID_DISP && _LOCK_Mutex_flag[E_MDRV_MULTI_INST_LOCK_ID_DISP])
     {
         _LOCK_Mutex_flag[E_MDRV_MULTI_INST_LOCK_ID_DISP]=0;
-        DRV_DSP_MUTEX_LOCK();
+        DRV_DSP_MUTEX_UNLOCK();
     }
     MULTIINST_RELEASE_SEM(gMultiInstLockSem[enLock_ID]);
     return bRet;
@@ -441,7 +441,13 @@ unsigned char _MDrv_MultiInst_Entry_SaveHvspData(
 {
     unsigned char bRet = 1;
 
-    if(pEntry)
+    if(pEntry == NULL)
+    {
+        bRet = 0;
+        SCL_DBG(SCL_DBG_LV_MULTI_INST_ERR, "[MULTIINST]%s(%d): HvspSaveData fail: PrivateId NULL\n", __FUNCTION__, __LINE__);
+        return bRet;
+    }
+    else
     {
         MULTIINST_WAIT_SEM(gMultiInstHvspEntrySem[enID]);
 
@@ -479,11 +485,6 @@ unsigned char _MDrv_MultiInst_Entry_SaveHvspData(
         MULTIINST_RELEASE_SEM(gMultiInstHvspEntrySem[enID]);
         bRet = 1;
     }
-    else
-    {
-        bRet = 0;
-        SCL_DBG(SCL_DBG_LV_MULTI_INST_ERR, "[MULTIINST]%s(%d): HvspSaveData fail: PrivateId=%lx\n", __FUNCTION__, __LINE__, pEntry->s32PivateId);
-    }
 
     return bRet;
 }
@@ -496,9 +497,14 @@ unsigned char _MDrv_MultiInst_Entry_SaveScldmaData(
 {
     unsigned char bRet = 1;
     unsigned char index = 0;
-    if(pEntry)
+    if(pEntry == NULL)
     {
-
+        bRet = 0;
+        SCL_DBG(SCL_DBG_LV_MULTI_INST_ERR, "[MULTIINST]%s(%d): ScldmaSaveData fail: PrivateId:NULL\n", __FUNCTION__, __LINE__);
+        return bRet;
+    }
+    else
+    {
         MULTIINST_WAIT_SEM(gMultiInstScldmaEntrySem[enID]);
         if(enCmd == E_MDRV_MULTI_INST_CMD_SCLDMA_IN_BUFFER_CONFIG)
         {
@@ -559,11 +565,6 @@ unsigned char _MDrv_MultiInst_Entry_SaveScldmaData(
 
         MULTIINST_RELEASE_SEM(gMultiInstScldmaEntrySem[enID]);
         bRet = 1;
-    }
-    else
-    {
-        bRet = 0;
-        SCL_DBG(SCL_DBG_LV_MULTI_INST_ERR, "[MULTIINST]%s(%d): ScldmaSaveData fail: PrivateId:%lx\n", __FUNCTION__, __LINE__, pEntry->s32PivateId);
     }
 
     return bRet;
@@ -643,11 +644,11 @@ unsigned char _MDrv_MultiInst_Entry_ReloadHvspData(
         if(stFlag.bMemCfg)
         {
             ST_HVSP_CMD_TRIG_CONFIG stHvspCmdTrigCfg;
-            stHvspCmdTrigCfg = Drv_HVSP_SetCMDQTrigTypeByRIU();
+            Drv_HVSP_SetCMDQTrigTypeByRIU(&stHvspCmdTrigCfg);
 
             bRet &= MDrv_HVSP_SetInitIPMConfig(enHvspId, &pEntry->stData.stMemCfg);
 
-            Drv_HVSP_SetCMDQTrigType(stHvspCmdTrigCfg);
+            Drv_HVSP_SetCMDQTrigType(&stHvspCmdTrigCfg);
         }
 
         if(stFlag.bInCfg)
@@ -697,7 +698,7 @@ unsigned char _MDrv_MultiInst_Entry_ReloadScldmaData(
                                         enID == E_MDRV_MULTI_INST_SCLDMA_DATA_ID_2 ? E_MDRV_SCLDMA_ID_2 :
                                         enID == E_MDRV_MULTI_INST_SCLDMA_DATA_ID_3 ? E_MDRV_SCLDMA_ID_3 :
                                         enID == E_MDRV_MULTI_INST_SCLDMA_DATA_ID_4 ? E_MDRV_SCLDMA_ID_PNL :
-                                                                                     E_MDRV_HVSP_ID_MAX ;
+                                                                                     E_MDRV_SCLDMA_ID_NUM;
     MsOS_Memset(&stFlag, 0, sizeof(ST_MDRV_MULTI_INST_SCLDMA_FLAG_TYPE));
 
     MULTIINST_WAIT_SEM(gMultiInstScldmaEntrySem[enID]);
@@ -818,8 +819,21 @@ unsigned char _MDrv_MultiInst_Entry_ReloadScldmaData(
     return bRet;
 }
 
-
-
+unsigned char MDrv_MultiInst_GetHvspQuantifyPreInstId(void)
+{
+    unsigned char i;
+    unsigned char Ret = 0;
+    for(i=0; i<MDRV_MULTI_INST_HVSP_NUM; i++)
+    {
+        if(gs32PreMultiInstHvspPrivateId[E_MDRV_MULTI_INST_HVSP_DATA_ID_1] ==
+            gstMultiInstHvspEntryCfg[E_MDRV_MULTI_INST_HVSP_DATA_ID_1][i].s32PivateId)
+        {
+            Ret = i;
+            break;
+        }
+    }
+    return Ret;
+}
 EN_MDRV_MULTI_INST_STATUS_TYPE _MDrv_MultiInst_Entry_FlashHvspData(
     EN_MDRV_MULTI_INST_HVSP_DATA_ID_TYPE enID,
     ST_MDRV_MULTI_INST_HVSP_ENTRY_CONFIG *pEntry,
@@ -837,7 +851,7 @@ EN_MDRV_MULTI_INST_STATUS_TYPE _MDrv_MultiInst_Entry_FlashHvspData(
         SCL_DBG(SCL_DBG_LV_MULTI_INST_ENTRY()&(Get_DBGMG_MULTI(enID)), "[MULTIINST]%s(%d): Force_Relaod, PrivateId=%lx\n",
             __FUNCTION__, __LINE__, gs32PreMultiInstHvspPrivateId[enID]);
 
-        for(i=0; i<E_MDRV_MULTI_INST_HVSP_DATA_ID_MAX; i++)
+        for(i=0; i<MDRV_MULTI_INST_HVSP_NUM; i++)
         {
             if(gs32PreMultiInstHvspPrivateId[enID] == gstMultiInstHvspEntryCfg[enID][i].s32PivateId)
             {
@@ -854,7 +868,13 @@ EN_MDRV_MULTI_INST_STATUS_TYPE _MDrv_MultiInst_Entry_FlashHvspData(
         }
     }
 
-    if(pEntry)
+    if(pEntry == NULL)
+    {
+        enRet = E_MDRV_MULTI_INST_STATUS_FAIL;
+        SCL_DBG(SCL_DBG_LV_MULTI_INST_ERR, "[MULTIINST]%s(%d): FlashHvspData fail, PrivateId= NULL\n", __FUNCTION__, __LINE__);
+        return enRet;
+    }
+    else
     {
         if(enCmd == E_MDRV_MULTI_INST_CMD_MAX)
         {
@@ -895,11 +915,6 @@ EN_MDRV_MULTI_INST_STATUS_TYPE _MDrv_MultiInst_Entry_FlashHvspData(
             }
         }
     }
-    else
-    {
-        enRet = E_MDRV_MULTI_INST_STATUS_FAIL;
-        SCL_DBG(SCL_DBG_LV_MULTI_INST_ERR, "[MULTIINST]%s(%d): FlashHvspData fail, PrivateId= NULL\n", __FUNCTION__, __LINE__);
-    }
     return enRet;
 }
 
@@ -920,7 +935,7 @@ EN_MDRV_MULTI_INST_STATUS_TYPE _MDrv_MultiInst_Entry_FlashScldmaData(
         SCL_DBG(SCL_DBG_LV_MULTI_INST_ENTRY()&(Get_DBGMG_MULTI(enID)), "[MULTIINST]%s(%d): Force_Relaod, PrivateId=%lx\n",
             __FUNCTION__, __LINE__, gs32PreMultiInstScldmaPrivateId[enID]);
 
-        for(i=0; i<E_MDRV_MULTI_INST_SCLDMA_DATA_ID_MAX; i++)
+        for(i=0; i<MDRV_MULTI_INST_SCLDMA_NUM; i++)
         {
             if(gs32PreMultiInstScldmaPrivateId[enID] == gstMultiInstScldmaEntryCfg[enID][i].s32PivateId)
             {
@@ -938,7 +953,13 @@ EN_MDRV_MULTI_INST_STATUS_TYPE _MDrv_MultiInst_Entry_FlashScldmaData(
 
     }
 
-    if(pEntry)
+    if(pEntry == NULL)
+    {
+        enRet = E_MDRV_MULTI_INST_STATUS_FAIL;
+        SCL_DBG(SCL_DBG_LV_MULTI_INST_ERR, "[MULTIINST]%s(%d): FlashDmaData fail, PrivateId= NULL\n", __FUNCTION__, __LINE__);
+        return enRet;
+    }
+    else
     {
         if(enCmd == E_MDRV_MULTI_INST_CMD_MAX)
         {
@@ -979,11 +1000,6 @@ EN_MDRV_MULTI_INST_STATUS_TYPE _MDrv_MultiInst_Entry_FlashScldmaData(
                 SCL_DBG(SCL_DBG_LV_MULTI_INST_ENTRY()&(Get_DBGMG_MULTI(enID)), "[MULTIINST]%s(%d): FlashScldmaData LOCKED, PrivateId=%lx\n", __FUNCTION__, __LINE__, pEntry->s32PivateId);
             }
         }
-    }
-    else
-    {
-        enRet = E_MDRV_MULTI_INST_STATUS_FAIL;
-        SCL_DBG(SCL_DBG_LV_MULTI_INST_ERR, "[MULTIINST]%s(%d): FlashScldmaData fail, PrivateId=%lx\n", __FUNCTION__, __LINE__, pEntry->s32PivateId);
     }
 
     return enRet;
@@ -1079,6 +1095,8 @@ unsigned char MDrv_MultiInst_Entry_Alloc(EN_MDRV_MULTI_INST_ENTRY_ID_TYPE enID, 
             {
                 *pPrivate_Data = NULL;
                 bRet = 0;
+                MULTIINST_RELEASE_SEM(gMultiInstHvspEntrySem[enHvspId]);
+                return bRet;
             }
             else
             {
@@ -1116,6 +1134,8 @@ unsigned char MDrv_MultiInst_Entry_Alloc(EN_MDRV_MULTI_INST_ENTRY_ID_TYPE enID, 
             {
                 *pPrivate_Data = NULL;
                 bRet = 0;
+                MULTIINST_RELEASE_SEM(gMultiInstScldmaEntrySem[enScldmaId]);
+                return bRet;
             }
             else
             {
@@ -1205,9 +1225,8 @@ EN_MDRV_MULTI_INST_STATUS_TYPE MDrv_MultiInst_Entry_FlashData(
     EN_MDRV_MULTI_INST_CMD_TYPE enCmd,
     void *pData)
 {
-    EN_MDRV_MULTI_INST_STATUS_TYPE enRet = E_MDRV_MULTI_INST_STATUS_SUCCESS;
+    EN_MDRV_MULTI_INST_STATUS_TYPE enRet;
     SCL_DBG(SCL_DBG_LV_MULTI_INST_FUNC()&(Get_DBGMG_MULTI(enID)), "[MULTIINST]%s(%d)\n", __FUNCTION__, __LINE__);
-
     if(enID <= E_MDRV_MULTI_INST_ENTRY_ID_HVSP3)
     {
         EN_MDRV_MULTI_INST_HVSP_DATA_ID_TYPE enHvspId;
@@ -1240,6 +1259,7 @@ EN_MDRV_MULTI_INST_STATUS_TYPE MDrv_MultiInst_Entry_FlashData(
     {
         SCL_DBG(SCL_DBG_LV_MULTI_INST_ERR, "[MULTIINST]%s(%d): FlashData fail, EntryId=%d\n", __FUNCTION__, __LINE__, enID);
         enRet = E_MDRV_MULTI_INST_STATUS_FAIL;
+        return enRet;
     }
 
     return enRet;
@@ -1307,8 +1327,7 @@ EN_MDRV_MULTI_INST_STATUS_TYPE MDrv_MultiInst_Etnry_IsFree(EN_MDRV_MULTI_INST_EN
 
         enLock_ID = (enID == E_MDRV_MULTI_INST_ENTRY_ID_HVSP1) ? E_MDRV_MULTI_INST_LOCK_ID_SC_1_2 :
                     (enID == E_MDRV_MULTI_INST_ENTRY_ID_HVSP2) ? E_MDRV_MULTI_INST_LOCK_ID_SC_1_2 :
-                    (enID == E_MDRV_MULTI_INST_ENTRY_ID_HVSP3) ? E_MDRV_MULTI_INST_LOCK_ID_SC_3   :
-                                                                 E_MDRV_MULTI_INST_LOCK_ID_MAX;
+                                                                E_MDRV_MULTI_INST_LOCK_ID_SC_3 ;
         if(pEntry)
         {
             if( MDrv_MultiInst_Lock_IsFree(enLock_ID, pEntry->s32PivateId) )
@@ -1326,14 +1345,13 @@ EN_MDRV_MULTI_INST_STATUS_TYPE MDrv_MultiInst_Etnry_IsFree(EN_MDRV_MULTI_INST_EN
             enIsFree = E_MDRV_MULTI_INST_STATUS_FAIL;
         }
     }
-    else if(enID <= E_MDRV_MULTI_INST_ENTRY_ID_DISP)
+    else if(enID <= E_MDRV_MULTI_INST_ENTRY_ID_DISP && enID > E_MDRV_MULTI_INST_ENTRY_ID_HVSP3)
     {
         ST_MDRV_MULTI_INST_SCLDMA_ENTRY_CONFIG *pEntry =  (ST_MDRV_MULTI_INST_SCLDMA_ENTRY_CONFIG *)pPrivateData;
         enLock_ID = (enID == E_MDRV_MULTI_INST_ENTRY_ID_SCLDMA1) ? E_MDRV_MULTI_INST_LOCK_ID_SC_1_2 :
                     (enID == E_MDRV_MULTI_INST_ENTRY_ID_SCLDMA2) ? E_MDRV_MULTI_INST_LOCK_ID_SC_1_2 :
                     (enID == E_MDRV_MULTI_INST_ENTRY_ID_SCLDMA3) ? E_MDRV_MULTI_INST_LOCK_ID_SC_3   :
-                    (enID == E_MDRV_MULTI_INST_ENTRY_ID_DISP)    ? E_MDRV_MULTI_INST_LOCK_ID_DISP   :
-                                                                   E_MDRV_MULTI_INST_LOCK_ID_MAX;
+                                                                    E_MDRV_MULTI_INST_LOCK_ID_DISP;
         if(pEntry)
         {
             if( MDrv_MultiInst_Lock_IsFree(enLock_ID, pEntry->s32PivateId) )

@@ -30,8 +30,6 @@
 //=============================================================================
 // Defines
 //=============================================================================
-#define VIP_DNR_Y_RANGE_NUM             4           ///< VIP_DNR_Y_RANGE_NUM
-#define VIP_DNR_C_RANGE_NUM             4           ///< VIP_DNR_C_RANGE_NUM
 #define VIP_LCE_CURVE_SECTION_NUM       16          ///< VIP_LCE_CURVE_SECTION_NUM
 #define VIP_PEAKING_BAND_NUM            8           ///< VIP_PEAKING_BAND_NUM
 #define VIP_PEAKING_ADP_Y_LUT_NUM       8           ///< VIP_PEAKING_ADP_Y_LUT_NUM
@@ -48,7 +46,9 @@
 #define VIP_NLM_WEIGHT_NUM              32          ///< VIP_NLM_WEIGHT_NUM
 #define VIP_NLM_LUMAGAIN_NUM            64          ///< VIP_NLM_LUMAGAIN_NUM
 #define VIP_NLM_POSTLUMA_NUM            16          ///< VIP_NLM_POSTLUMA_NUM
-#define VIP_SNR_MD_NUM                  4           ///< VIP_SNR_MD_NUM
+#define VIP_CMDQ_MEM_256K               0x0040000   ///< VIP_CMDQ_MEM_164K
+#define VIP_CMDQ_MEM_196K               0x0030000   ///< VIP_CMDQ_MEM_164K
+#define VIP_CMDQ_MEM_164K               0x0028000   ///< VIP_CMDQ_MEM_164K
 #define VIP_CMDQ_MEM_128K               0x0020000   ///< VIP_CMDQ_MEM_128K
 #define VIP_CMDQ_MEM_64K                0x0010000   ///< VIP_CMDQ_MEM_64K
 #define VIP_CMDQ_MEM_32K                0x0008000   ///< VIP_CMDQ_MEM_32K
@@ -189,8 +189,6 @@ typedef enum
     EN_VIP_LDC_DMAP_CONFIG      = 0x2000,   ///< LDCDMAP
     EN_VIP_LDC_SRAM_CONFIG      = 0x4000,   ///< LDC SRAM
     EN_VIP_LDC_CONFIG           = 0x8000,   ///< LDC
-    EN_VIP_DNR_CONFIG           = 0x10000,  ///< DNR
-    EN_VIP_SNR_CONFIG           = 0x20000,  ///< SNR
     EN_VIP_CONFIG               = 0x40000,  ///< 19 bit to control 19 IOCTL
 }__attribute__ ((__packed__))EN_VIP_CONFIG_TYPE;
 /**
@@ -202,6 +200,49 @@ typedef enum
     EN_VIP_IOCTL_VTRACK_ENABLE_OFF,     ///< Vtrack off
     EN_VIP_IOCTL_VTRACK_ENABLE_DEBUG,   ///< Vtrack debug
 }EN_VIP_IOCTL_VTRACK_ENABLE_TYPE;
+/**
+* Used to setup the AIP  of vip device
+*/
+typedef enum
+{
+    EN_VIP_IOCTL_AIP_YEE = 0,           ///< yee
+    EN_VIP_IOCTL_AIP_YEE_AC_LUT,        ///< yee ac lut
+    EN_VIP_IOCTL_AIP_WDR_GLOB,          ///< wdr glob
+    EN_VIP_IOCTL_AIP_WDR_LOC,           ///< wdr loc
+    EN_VIP_IOCTL_AIP_MXNR,              ///< mxnr
+    EN_VIP_IOCTL_AIP_UVADJ,             ///< uvadj
+    EN_VIP_IOCTL_AIP_XNR,               ///< xnr
+    EN_VIP_IOCTL_AIP_YCUVM,             ///< ycuvm
+    EN_VIP_IOCTL_AIP_COLORTRAN,         ///< ct
+    EN_VIP_IOCTL_AIP_GAMMA,             ///< gamma
+    EN_VIP_IOCTL_AIP_422TO444,          ///< 422to444
+    EN_VIP_IOCTL_AIP_YUVTORGB,          ///< yuv2rgb
+    EN_VIP_IOCTL_AIP_GM10TO12,          ///< 10 to 12
+    EN_VIP_IOCTL_AIP_CCM,               ///< ccm
+    EN_VIP_IOCTL_AIP_HSV,               ///< hsv
+    EN_VIP_IOCTL_AIP_GM12TO10,          ///< gm12to10
+    EN_VIP_IOCTL_AIP_RGBTOYUV,          ///< rgb2yuv
+    EN_VIP_IOCTL_AIP_444TO422,          ///< 4442422
+    EN_VIP_IOCTL_AIP_NUM,               ///< Num
+}EN_VIP_IOCTL_AIP_TYPE;
+
+/**
+* Used to setup the AIP SRAM of vip device
+*/
+typedef enum
+{
+    EN_VIP_IOCTL_AIP_SRAM_GAMMA_Y, ///< gamma y
+    EN_VIP_IOCTL_AIP_SRAM_GAMMA_U, ///< gamma u
+    EN_VIP_IOCTL_AIP_SRAM_GAMMA_V, ///< gamma v
+    EN_VIP_IOCTL_AIP_SRAM_GM10to12_R, ///< gamma R
+    EN_VIP_IOCTL_AIP_SRAM_GM10to12_G, ///< gamma G
+    EN_VIP_IOCTL_AIP_SRAM_GM10to12_B, ///< gamma B
+    EN_VIP_IOCTL_AIP_SRAM_GM12to10_R, ///< gamma R
+    EN_VIP_IOCTL_AIP_SRAM_GM12to10_G, ///< gamma G
+    EN_VIP_IOCTL_AIP_SRAM_GM12to10_B, ///< gamma B
+    EN_VIP_IOCTL_AIP_SRAM_WDR, ///< wdr
+    EN_VIP_IOCTL_AIP_SRAM_NUM, ///< wdr
+}EN_VIP_IOCTL_AIP_SRAM_TYPE;
 
 //=============================================================================
 // struct
@@ -217,7 +258,6 @@ typedef struct
     unsigned int   VerChk_Size;     ///< VerChk Size
 }__attribute__ ((__packed__)) ST_IOCTL_VIP_VERSION_CONFIG;
 
-// IOCTL_VIP_SET_DNR_CONFIG
 /**
 * Used to setup CMDQ be used of vip device
 */
@@ -227,85 +267,39 @@ typedef struct
     unsigned char u8framecnt;  ///<  assign framecount
 }ST_IOCTL_VIP_FC_CONFIG;
 /**
-* Used to setup snr format of vip device
-*/
-typedef struct
-{
-    unsigned char bsnr_en;                          ///<  reg_snr_en
-    unsigned char bsnr_md_en;                       ///<  reg_snr_md_en
-    unsigned char u8f2_sharp_level;                 ///<  reg_f2_sharp_level
-    unsigned short u16snr_md_table[VIP_SNR_MD_NUM]; ///<  reg_snr_md_table_0~3 16bit *4
-} __attribute__ ((__packed__)) ST_IOCTL_VIP_SNR_MAIN_CONFIG;
-/**
-* Used to setup snr config of vip device
+* Used to setup AIP config of vip device
 */
 typedef struct
 {
     unsigned int   VerChk_Version ; ///< VerChk version
     ST_IOCTL_VIP_FC_CONFIG stFCfg;      ///< CMDQ
-    ST_IOCTL_VIP_SNR_MAIN_CONFIG stSNR; ///< SNR setting
-    // VerChk_Version & VerChk_Size must be the latest 2 parameter and
-    // the order can't be changed
+    unsigned long u32Viraddr; ///< AIP setting
+    EN_VIP_IOCTL_AIP_TYPE enAIPType;
     unsigned int   VerChk_Size; ///< VerChk Size
-} __attribute__ ((__packed__)) ST_IOCTL_VIP_SNR_CONFIG;
+} __attribute__ ((__packed__)) ST_IOCTL_VIP_AIP_CONFIG;
 /**
-* Used to setup the DNR format of vip device
-*/
-typedef struct
-{
-    unsigned char bEn;                             ///<  DNR enable reg_dnr_en_f2
-    unsigned char bCoreEn;                         ///<  DNR core function enable reg_dnr_core_en_f2
-    unsigned char bEncode;                         ///<  reg_ipm_ce_en
-    unsigned char bDecode;                         ///<  reg_ipm_ce_de_en    need together bEncode
-    unsigned char bStickyYEn;                      ///<  reg_f2_sticky_solver_en_y
-    unsigned char bStickyCEn;                      ///<  reg_f2_sticky_solver_en_c
-    unsigned char bStickyDithEn;                   ///<  reg_f2_sticky_solver_dith_en
-    unsigned char bStickyThEn;                     ///<  reg_f2_sticky_solver_th
-} __attribute__ ((__packed__)) ST_IOCTL_VIP_DNR_ONOFF_CONFIG;
-
-/**
-* Used to setup DNR Y filter of vip device
-*/
-typedef struct
-{
-    unsigned char u8nr_table_sel_y;                        ///<  reg_nr_table_sel_y
-    unsigned char bf2_dnr_filter_en_y;                     ///<  reg_f2_dnr_filter_en_y
-    unsigned char bf2_max_mot_enable_y;                    ///<  reg_f2_max_mot_enable_y
-    unsigned char u8filter_y_div0;                         ///<  reg_filter_y_div0
-    unsigned char u8filter_y_div1;                         ///<  reg_filter_y_div1
-    unsigned char u8filter_y_mode;                         ///<  reg_filter_y_mode
-    unsigned short u16dnr_tabley[VIP_DNR_Y_RANGE_NUM];     ///<  reg_dnr_tabley_0~3 16bit * 4
-    unsigned char u8f2_round_mode_y;                       ///<  reg_f2_round_mode_y
-} __attribute__ ((__packed__)) ST_IOCTL_VIP_DNR_Y_CONFIG;
-
-/**
-* Used to setup DNR Y filter of vip device
-*/
-typedef struct
-{
-    unsigned char u8nr_table_sel_c;                        ///<  reg_nr_table_sel_c
-    unsigned char bf2_dnr_filter_en_c;                     ///<  reg_f2_dnr_filter_en_c
-    unsigned char bf2_max_mot_enable_c;                    ///<  reg_f2_max_mot_enable_c
-    unsigned char u8filter_c_div0;                         ///<  reg_filter_c_div0
-    unsigned char u8filter_c_div1;                         ///<  reg_filter_c_div1
-    unsigned char u8filter_c_mode;                         ///<  reg_filter_c_mode
-    unsigned short u16dnr_tablec[VIP_DNR_C_RANGE_NUM];     ///<  reg_dnr_tablec_0~3 16bit * 4
-    unsigned char u8f2_round_mode_c;                       ///<  reg_f2_round_mode_c
-} __attribute__ ((__packed__)) ST_IOCTL_VIP_DNR_C_CONFIG;
-/**
-* Used to setup the DNR config of vip device
+* Used to setup AIP SRAM config of vip device
 */
 typedef struct
 {
     unsigned int   VerChk_Version ; ///< VerChk version
-    ST_IOCTL_VIP_FC_CONFIG stFCfg;                  ///<  CMDQ
-    ST_IOCTL_VIP_DNR_ONOFF_CONFIG stOnOff;          ///<  DNR enable
-    ST_IOCTL_VIP_DNR_Y_CONFIG stY;                  ///<  DNR Y function
-    ST_IOCTL_VIP_DNR_C_CONFIG stC;                  ///<  DNR C function
-    // VerChk_Version & VerChk_Size must be the latest 2 parameter and
-    // the order can't be changed
+    unsigned long u32Viraddr; ///< AIP setting
+    EN_VIP_IOCTL_AIP_SRAM_TYPE enAIPType;
     unsigned int   VerChk_Size; ///< VerChk Size
-} __attribute__ ((__packed__)) ST_IOCTL_VIP_DNR_CONFIG;
+} __attribute__ ((__packed__)) ST_IOCTL_VIP_AIP_SRAM_CONFIG;
+
+/**
+* Used to setup MCNR config of vip device
+*/
+typedef struct
+{
+    unsigned int   VerChk_Version ; ///< VerChk version
+    ST_IOCTL_VIP_FC_CONFIG stFCfg;      ///< CMDQ
+    unsigned char bEnMCNR;
+    unsigned char bEnCIIR;
+    unsigned long u32Viraddr; ///< MCNR setting
+    unsigned int   VerChk_Size; ///< VerChk Size
+} __attribute__ ((__packed__)) ST_IOCTL_VIP_MCNR_CONFIG;
 
 
 /**
@@ -404,9 +398,11 @@ typedef struct
     unsigned char bnlmdsw_lpf_en;                                      ///<  reg_nlm_dsw_lpf_en
     unsigned char bnlm_region_adap_en;                                 ///<  reg_nlm_region_adap_en
     EN_VIP_NLM_DSW_TYPE u8nlm_region_adap_size_config;                 ///<  reg_nlm_region_adap_size_config 0:16x8 1:32x16
+    unsigned char bnlm_histIIR_en;                                     ///<  reg_nlm_histiir_adap_en
     unsigned char bnlm_bypass_en;                                      ///<  reg_nlm_bypass_en
     unsigned char u8nlm_fin_gain;                                      ///<  reg_nlm_fin_gain
-    unsigned char u8nlm_sad_shift;                                     ///<  reg_nlm_sad_shift
+    unsigned char u8nlm_histIIR;                                       ///<  reg_nlm_histiir_adap_ratio
+    unsigned char u8nlm_sad_shift;                                      ///<  reg_nlm_sad_shift
     unsigned char u8nlm_sad_gain;                                      ///<  reg_nlm_sad_gain
     unsigned char u8nlm_dsw_ratio;                                     ///<  reg_nlm_dsw_ratio
     unsigned char u8nlm_dsw_offset;                                    ///<  reg_nlm_dsw_offset
@@ -415,6 +411,8 @@ typedef struct
     unsigned char u8nlm_luma_adap_gain_lut[VIP_NLM_LUMAGAIN_NUM];      ///<  reg_nlm_luma_adap_gain_lut0-63,adjust register squence
     unsigned char u8nlm_post_luma_adap_gain_lut[VIP_NLM_POSTLUMA_NUM]; ///<  reg_nlm_post_luma_adap_gain_lut0-15,adjust register squence
     unsigned char u8nlm_dist_weight_7x7_lut[VIP_NLM_DISTWEIGHT_NUM];   ///<  reg_nlm_dist_weight_7x7_lut0-8,adjust register squence
+    unsigned char u8nlm_main_snr_lut[VIP_NLM_POSTLUMA_NUM];   ///<  reg_main_snr_lut
+    unsigned char u8nlm_wb_snr_lut[VIP_NLM_POSTLUMA_NUM];   ///<  reg_wb_snr_lut
 } __attribute__ ((__packed__)) ST_IOCTL_VIP_NLM_MAIN_CONFIG;
 /**
 * Used to setup NLM autodown load of vip device
@@ -520,6 +518,7 @@ typedef struct
     unsigned char bpost_peaking_en;            ///<  reg_main_post_peaking_en
     unsigned char u8vps_sram_act;              ///<  reg_vps_sram_act
     unsigned char u8band6_dia_filter_sel;      ///<  reg_main_band6_dia_filter_sel
+    unsigned char u8peaking_ac_yee_mode;      ///<  reg_peaking_ac_yee_mode
 } __attribute__ ((__packed__)) ST_IOCTL_VIP_PEAKING_ONOFFCONFIG;
 
 /**
@@ -640,6 +639,8 @@ typedef struct
 typedef struct
 {
     unsigned char bLCE_En;  ///< LCE en
+    unsigned char u8ControlNum;  ///<  vip control guard pipe number
+
 } __attribute__ ((__packed__)) ST_IOCTL_VIP_LCE_ONOFF_CONFIG;
 
 
@@ -1238,6 +1239,7 @@ typedef struct
 typedef struct
 {
     unsigned long bresetflag;                   ///< flag
+    unsigned long bAIPreflag;                   ///< flag
     ST_IOCTL_VIP_ACK_CONFIG stack;              ///< ack
     ST_IOCTL_VIP_IBC_CONFIG stibc;              ///< ibc
     ST_IOCTL_VIP_IHCICC_CONFIG stihcicc;        ///< iccihc
@@ -1254,9 +1256,9 @@ typedef struct
     ST_IOCTL_VIP_LDC_DMAP_CONFIG stldcdmap;     ///< ldc
     ST_IOCTL_VIP_LDC_SRAM_CONFIG stldcsram;     ///< ldc
     ST_IOCTL_VIP_LDC_CONFIG stldc;              ///< ldc
-    ST_IOCTL_VIP_DNR_CONFIG stdnr;              ///< dnr
-    ST_IOCTL_VIP_SNR_CONFIG stsnr;              ///< snr
+    ST_IOCTL_VIP_MCNR_CONFIG stmcnr;            ///<Mcnr
     ST_IOCTL_VIP_CONFIG stvip;                  ///< vipmix
+    ST_IOCTL_VIP_AIP_CONFIG staip[EN_VIP_IOCTL_AIP_NUM]; ///<AIP
 } __attribute__ ((__packed__)) ST_IOCTL_VIP_SUSPEND_CONFIG;
 /**
 * Used to setup the susupend of vip device

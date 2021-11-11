@@ -2,7 +2,7 @@
 #include <linux/moduleparam.h>
 #include <linux/types.h>
 #include <linux/timer.h>
-#include <linux/miscdevice.h> 
+#include <linux/miscdevice.h>
 #include <linux/watchdog.h>
 #include <linux/init.h>
 #include <linux/fs.h>
@@ -16,6 +16,8 @@
 #include <linux/cpufreq.h>
 #include <linux/slab.h>
 #include <linux/err.h>
+#include <linux/delay.h>
+
 #include "../include/ms_types.h"
 #include "../include/ms_platform.h"
 #include "mdrv_sar.h"
@@ -31,8 +33,9 @@ static U32 _gMIO_MapBase = 0;
 #define sarDbg(...)
 #endif
 
-struct ms_sar {
-	struct device		*dev;
+struct ms_sar
+{
+    struct device		*dev;
     void __iomem *reg_base;
 };
 
@@ -42,11 +45,11 @@ static long ms_sar_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 void ms_sar_hw_init(void);
 
 
-static const struct file_operations sar_fops = 
+static const struct file_operations sar_fops =
 {
-    .open     = ms_sar_open,    
+    .open     = ms_sar_open,
     .unlocked_ioctl = ms_sar_ioctl,
-    
+
 };
 static struct miscdevice sar_miscdev = {MISC_DYNAMIC_MINOR, DEVICE_NAME, &sar_fops};
 
@@ -63,9 +66,9 @@ U16 HAL_SAR_Read2Byte(U32 u32RegAddr)
 }
 
 BOOL HAL_SAR_Write2ByteMask(U32 u32RegAddr, U16 u16Val, U16 u16Mask)
-{  
+{
     u16Val = (HAL_SAR_Read2Byte(u32RegAddr) & ~u16Mask) | (u16Val & u16Mask);
-	//sarDbg("sar IOMap base:%16llx u16Val:%4x\n", _gMIO_MapBase, u16Val);
+    //sarDbg("sar IOMap base:%16llx u16Val:%4x\n", _gMIO_MapBase, u16Val);
     HAL_SAR_Write2Byte(u32RegAddr, u16Val);
     return TRUE;
 }
@@ -73,8 +76,8 @@ BOOL HAL_SAR_Write2ByteMask(U32 u32RegAddr, U16 u16Val, U16 u16Mask)
 static long ms_sar_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     S32 s32Err= 0;
-	ADC_CONFIG_READ_ADC adcCfg;
-	
+    ADC_CONFIG_READ_ADC adcCfg;
+
     //printk("%s is invoked\n", __FUNCTION__);
 
     /*
@@ -105,127 +108,123 @@ static long ms_sar_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         return -EFAULT;
     }
 
-   
-	
+
+
     switch(cmd)
     {
-        case MS_SAR_INIT:
-			ms_sar_hw_init();
-			break;
-			
-        case MS_SAR_SET_CHANNEL_READ_VALUE:
-           if(copy_from_user(&adcCfg, (ADC_CONFIG_READ_ADC __user *)arg, sizeof(ADC_CONFIG_READ_ADC)))
-           {
-               return EFAULT;
-           }
-		   
-           channel = adcCfg.channel_value & 3;
-		   
-		   adcCfg.adc_value = ms_sar_get(channel);
-		   sarDbg("channel = %d , adc =%d \n",channel, adcCfg.adc_value);
-		   
-           if(copy_to_user((ADC_CONFIG_READ_ADC __user *)arg, &adcCfg, sizeof( ADC_CONFIG_READ_ADC)))
-           {
-               return EFAULT;
-           }
-		   break;
-           
-        default:
-            printk("ioctl: unknown command\n");
-            return -ENOTTY;
+    case MS_SAR_INIT:
+        ms_sar_hw_init();
+        break;
+
+    case MS_SAR_SET_CHANNEL_READ_VALUE:
+        if(copy_from_user(&adcCfg, (ADC_CONFIG_READ_ADC __user *)arg, sizeof(ADC_CONFIG_READ_ADC)))
+        {
+            return EFAULT;
+        }
+
+        channel = adcCfg.channel_value & 3;
+
+        adcCfg.adc_value = ms_sar_get(channel);
+        sarDbg("channel = %d , adc =%d \n",channel, adcCfg.adc_value);
+
+        if(copy_to_user((ADC_CONFIG_READ_ADC __user *)arg, &adcCfg, sizeof( ADC_CONFIG_READ_ADC)))
+        {
+            return EFAULT;
+        }
+        break;
+
+    default:
+        printk("ioctl: unknown command\n");
+        return -ENOTTY;
     }
     return 0;
-    
+
 }
 
 static int ms_sar_open(struct inode *inode, struct file *file)
 {
-    int ret=0;
-    if (ret) 
-    {
-        printk(KERN_ERR " error %d\n", ret);
-        return -EINVAL;
-    }
-
     return 0;
 }
 
 void ms_sar_hw_init(void)
 {
     HAL_SAR_Write2Byte(REG_SAR_CTRL0,0x0a20);
-    HAL_SAR_Write2Byte(REG_SAR_CKSAMP_PRD,0x0005);
-	HAL_SAR_Write2ByteMask(REG_SAR_CTRL0,0x4000,0x4000);	
+    //HAL_SAR_Write2Byte(REG_SAR_CKSAMP_PRD,0x0005);
+    //HAL_SAR_Write2ByteMask(REG_SAR_CTRL0,0x4000,0x4000);
 }
 EXPORT_SYMBOL(ms_sar_hw_init);
 
 int ms_sar_get(int ch)
 {
     U16 value=0;
-	HAL_SAR_Write2ByteMask(REG_SAR_CTRL0,0x4000,0x4000);
-	switch(ch)
-	{
+    U32 count=0;
+    HAL_SAR_Write2ByteMask(REG_SAR_CTRL0,BIT14, 0x4000);
+    while(HAL_SAR_Read2Byte(REG_SAR_CTRL0)&BIT14 && count<100000)
+    {
+        udelay(1);
+        count++;
+    }
+
+    switch(ch)
+    {
     case 0:
-	    HAL_SAR_Write2ByteMask(REG_SAR_AISEL_CTRL,0x0001,0x0001);	
-		value=HAL_SAR_Read2Byte(REG_SAR_CH1_DATA);
-        break;	
+        HAL_SAR_Write2ByteMask(REG_SAR_AISEL_CTRL, BIT0, BIT0);
+        value=HAL_SAR_Read2Byte(REG_SAR_CH1_DATA);
+        break;
     case 1:
-	    HAL_SAR_Write2ByteMask(REG_SAR_AISEL_CTRL,0x0002,0x0002);			
-		value=HAL_SAR_Read2Byte(REG_SAR_CH2_DATA);
+        HAL_SAR_Write2ByteMask(REG_SAR_AISEL_CTRL, BIT1, BIT1);
+        value=HAL_SAR_Read2Byte(REG_SAR_CH2_DATA);
         break;
     case 2:
-	    HAL_SAR_Write2ByteMask(REG_SAR_AISEL_CTRL,0x0004,0x0004);					
-		value=HAL_SAR_Read2Byte(REG_SAR_CH3_DATA);
+        HAL_SAR_Write2ByteMask(REG_SAR_AISEL_CTRL, BIT2, BIT2);
+        value=HAL_SAR_Read2Byte(REG_SAR_CH3_DATA);
         break;
     case 3:
-	    HAL_SAR_Write2ByteMask(REG_SAR_AISEL_CTRL,0x0008,0x0008);					
-		value=HAL_SAR_Read2Byte(REG_SAR_CH4_DATA);
+        HAL_SAR_Write2ByteMask(REG_SAR_AISEL_CTRL, BIT3, BIT3);
+        value=HAL_SAR_Read2Byte(REG_SAR_CH4_DATA);
         break;
-	default:
-       printk(KERN_ERR "error channel,support SAR0,SAR1,SAR2,SAR3\n");
-		break;
-	}
-    return  value;   
+    default:
+        printk(KERN_ERR "error channel,support SAR0,SAR1,SAR2,SAR3\n");
+        break;
+    }
+    return  value;
 }
 EXPORT_SYMBOL(ms_sar_get);
 
 
 static int infinity_sar_probe(struct platform_device *pdev)
 {
-    int ret = 0;
     struct device *dev;
-    struct ms_sar *sar;	
+    struct ms_sar *sar;
     struct resource *res;
-	
+
     //sarDbg("[SAR] infinity_sar_probe \n");
     printk("[SAR] infinity_sar_probe \n");
-	dev = &pdev->dev;
-	sar = devm_kzalloc(dev, sizeof(*sar), GFP_KERNEL);
-	if (!sar)
-		return -ENOMEM;
-	
-	sar->dev = &pdev->dev;
-	   
+    dev = &pdev->dev;
+    sar = devm_kzalloc(dev, sizeof(*sar), GFP_KERNEL);
+    if (!sar)
+        return -ENOMEM;
+
+    sar->dev = &pdev->dev;
+
     res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res)
+    if (!res)
     {
-		sarDbg("[%s]: failed to get IORESOURCE_MEM\n", __func__);
-		return -ENODEV;
-	}
+        sarDbg("[%s]: failed to get IORESOURCE_MEM\n", __func__);
+        return -ENODEV;
+    }
     sar->reg_base = devm_ioremap_resource(&pdev->dev, res);
-	_gMIO_MapBase=(U32)sar->reg_base;
+    _gMIO_MapBase=(U32)sar->reg_base;
 
     misc_register(&sar_miscdev);
-	return 0;
-
-
-	return ret;
+    return 0;
 }
 
 static int infinity_sar_remove(struct platform_device *dev)
 {
     sarDbg("[SAR]infinity_sar_remove \n");
-	misc_deregister(&sar_miscdev);
-	return 0;
+    misc_deregister(&sar_miscdev);
+    return 0;
 }
 
 #ifdef CONFIG_PM
@@ -233,13 +232,13 @@ static int infinity_sar_remove(struct platform_device *dev)
 static int infinity_sar_suspend(struct platform_device *dev, pm_message_t state)
 {
     sarDbg("[SAR]infinity_sar_suspend \n");
-	return 0;
+    return 0;
 }
 
 static int infinity_sar_resume(struct platform_device *dev)
 {
     sarDbg("[SAR]infinity_sar_resume \n");
-	return 0;
+    return 0;
 }
 
 #else
@@ -250,24 +249,26 @@ static int infinity_sar_resume(struct platform_device *dev)
 
 
 
-static const struct of_device_id ms_sar_of_match_table[] = {
+static const struct of_device_id ms_sar_of_match_table[] =
+{
     { .compatible = "mstar,infinity-sar" },
     {}
 };
 MODULE_DEVICE_TABLE(of, ms_sar_of_match_table);
 
-static struct platform_driver infinity_sar_driver = {
-	.probe		= infinity_sar_probe,
-	.remove		= infinity_sar_remove,
-#ifdef CONFIG_PM	
-	.suspend	= infinity_sar_suspend,
-	.resume		= infinity_sar_resume,
-#endif	
-	.driver		= {
-		.owner	= THIS_MODULE,
-		.name	= "infinity-sar",
+static struct platform_driver infinity_sar_driver =
+{
+    .probe		= infinity_sar_probe,
+    .remove		= infinity_sar_remove,
+#ifdef CONFIG_PM
+    .suspend	= infinity_sar_suspend,
+    .resume		= infinity_sar_resume,
+#endif
+    .driver		= {
+        .owner	= THIS_MODULE,
+        .name	= "infinity-sar",
         .of_match_table = ms_sar_of_match_table,
-	},
+    },
 };
 
 module_platform_driver(infinity_sar_driver);

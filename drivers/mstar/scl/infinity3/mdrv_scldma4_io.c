@@ -54,7 +54,9 @@
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include "ms_msys.h"
-
+#include "MsCommon.h"
+#include "MsTypes.h"
+#include "MsOS.h"
 #include "ms_platform.h"
 #include "mdrv_scldma_io_i3_st.h"
 #include "mdrv_scldma_io_i3.h"
@@ -106,7 +108,7 @@ typedef struct
     struct cdev cdev;
     struct file_operations fops;
     ST_MDRV_SCLDMA_CLK_CONFIG stclk;
-	struct device *devicenode;
+    struct device *devicenode;
 }ST_DEV_SCLDMA;
 
 static ST_DEV_SCLDMA _dev_ms_scldma4 =
@@ -172,16 +174,13 @@ static struct platform_device st_ms_scldma4_device =
 //-------------------------------------------------------------------------------------------------
 static ssize_t check_frm_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-    ST_MDRV_SCLDMA_ATTR_TYPE u16Y;
-    //out =0,in=1
-    u16Y = MDrv_SCLDMA_GetDMAInformationByClient(E_MDRV_SCLDMA_ID_PNL, E_MDRV_SCLDMA_MEM_FRM,1);
-    return sprintf(buf,"V count:%hd trig Count:%ld \n",u16Y.u16DMAcount,u16Y.u32Trigcount);
+    return MDrv_SCLDMA_ProcShow(buf,E_MDRV_SCLDMA_ID_PNL, E_MDRV_SCLDMA_MEM_FRM,1);
 }
 static ssize_t check_frm_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t n)
 {
-	if(NULL != buf)
-	{
-		const char *str = buf;
+    if(NULL != buf)
+    {
+        const char *str = buf;
         if((int)*str == 48)  //input 0  echo 0 >ptgen_call
         {
             SCL_ERR( "dma count reset %d\n",(int)*str);
@@ -193,35 +192,33 @@ static ssize_t check_frm_store(struct device *dev, struct device_attribute *attr
 }
 
 static DEVICE_ATTR(ckfrm,0600, check_frm_show, check_frm_store);
-ST_MDRV_SCLDMA_VERSIONCHK_CONFIG _mdrv_ms_scldma4_io_fill_versionchkstruct
-(unsigned int u32StructSize,unsigned int u32VersionSize,unsigned int *pVersion)
+void _mdrv_ms_scldma4_io_fill_versionchkstruct
+(unsigned int u32StructSize,unsigned int u32VersionSize,unsigned int *pVersion,ST_MDRV_SCLDMA_VERSIONCHK_CONFIG *stVersion)
 {
-    ST_MDRV_SCLDMA_VERSIONCHK_CONFIG stVersion;
-    stVersion.u32StructSize  = (unsigned int)u32StructSize;
-    stVersion.u32VersionSize = (unsigned int)u32VersionSize;
-    stVersion.pVersion      = (unsigned int *)pVersion;
-    return stVersion;
+    stVersion->u32StructSize  = (unsigned int)u32StructSize;
+    stVersion->u32VersionSize = (unsigned int)u32VersionSize;
+    stVersion->pVersion      = (unsigned int *)pVersion;
 }
-int _mdrv_ms_scldma4_io_version_check(ST_MDRV_SCLDMA_VERSIONCHK_CONFIG stVersion)
+int _mdrv_ms_scldma4_io_version_check(ST_MDRV_SCLDMA_VERSIONCHK_CONFIG *stVersion)
 {
-    if ( CHK_VERCHK_HEADER(stVersion.pVersion) )
+    if ( CHK_VERCHK_HEADER(stVersion->pVersion) )
     {
-        if( CHK_VERCHK_MAJORVERSION_LESS( stVersion.pVersion, IOCTL_SCLDMA_VERSION) )
+        if( CHK_VERCHK_MAJORVERSION_LESS( stVersion->pVersion, IOCTL_SCLDMA_VERSION) )
         {
 
             VERCHK_ERR("[SCLDMA3] Version(%04x) < %04x!!! \n",
-                *(stVersion.pVersion) & VERCHK_VERSION_MASK,
+                *(stVersion->pVersion) & VERCHK_VERSION_MASK,
                 IOCTL_SCLDMA_VERSION);
 
             return -EINVAL;
         }
         else
         {
-            if( CHK_VERCHK_SIZE( &stVersion.u32VersionSize, stVersion.u32StructSize) == 0 )
+            if( CHK_VERCHK_SIZE( &stVersion->u32VersionSize, stVersion->u32StructSize) == 0 )
             {
                 VERCHK_ERR("[SCLDMA3] Size(%04x) != %04x!!! \n",
-                    stVersion.u32StructSize,
-                    stVersion.u32VersionSize);
+                    stVersion->u32StructSize,
+                    stVersion->u32VersionSize);
 
                 return -EINVAL;
             }
@@ -266,11 +263,12 @@ int _mdrv_ms_scldma4_io_get_information_config(struct file *filp, unsigned long 
     ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG stIOGetCfg;
     int u32Bufferidx;
     ST_MDRV_SCLDMA_VERSIONCHK_CONFIG stVersion;
-
-    stVersion = _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG),
+    MsOS_Memset(&stDmaInfo,0,sizeof(ST_MDRV_SCLDMA_ATTR_TYPE));
+    MsOS_Memset(&stIOGetCfg,0,sizeof(ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG));
+     _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG),
         (((ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_scldma4_io_version_check(stVersion))
+        &(((ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_scldma4_io_version_check(&stVersion))
     {
         SCL_ERR( "[SCLDMA4]   %s  \n", __FUNCTION__);
         return -EINVAL;
@@ -278,7 +276,7 @@ int _mdrv_ms_scldma4_io_get_information_config(struct file *filp, unsigned long 
     else
     {
         if(copy_from_user(&stIOGetCfg,
-            (ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG __user *)arg, sizeof(ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG)))
+            (__user ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG  *)arg, sizeof(ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG)))
         {
             return -EFAULT;
         }
@@ -286,20 +284,21 @@ int _mdrv_ms_scldma4_io_get_information_config(struct file *filp, unsigned long 
 
     if(stIOGetCfg.enMemType == E_IOCTL_SCLDMA_MEM_FRM)
     {
-        stDmaInfo = MDrv_SCLDMA_GetDMAInformationByClient(E_MDRV_SCLDMA_ID_PNL, E_MDRV_SCLDMA_MEM_FRM,0);
+        MDrv_SCLDMA_GetDMAInformationByClient(E_MDRV_SCLDMA_ID_PNL, E_MDRV_SCLDMA_MEM_FRM,0,&stDmaInfo);
     }
     else
     {
         SCL_ERR( "[SCLDMA4] not support\n");
     }
-    stIOGetCfg.enBufMDType = stDmaInfo.enBufMDType;
-    stIOGetCfg.enColorType = stDmaInfo.enColorType;
+    stIOGetCfg.enBufMDType = (EN_IOCTL_SCLDMA_BUFFER_MODE_TYPE)stDmaInfo.enBufMDType;
+    stIOGetCfg.enColorType = (EN_IOCTL_SCLDMA_COLOR_TYPE)stDmaInfo.enColorType;
     stIOGetCfg.u16BufNum = stDmaInfo.u16BufNum;
     stIOGetCfg.u16DMAH = stDmaInfo.u16DMAH;
     stIOGetCfg.u16DMAV = stDmaInfo.u16DMAV;
     for(u32Bufferidx=0;u32Bufferidx<BUFFER_BE_ALLOCATED_MAX;u32Bufferidx++)
     {
         stIOGetCfg.u32Base_C[u32Bufferidx] = stDmaInfo.u32Base_C[u32Bufferidx];
+        stIOGetCfg.u32Base_V[u32Bufferidx] = stDmaInfo.u32Base_V[u32Bufferidx];
         stIOGetCfg.u32Base_Y[u32Bufferidx] = stDmaInfo.u32Base_Y[u32Bufferidx];
     }
     if(copy_to_user((ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG __user *)arg, &stIOGetCfg, sizeof(ST_IOCTL_SCLDMA_GET_INFORMATION_CONFIG)))
@@ -309,21 +308,18 @@ int _mdrv_ms_scldma4_io_get_information_config(struct file *filp, unsigned long 
     return 0;
 }
 
-ST_MDRV_SCLDMA_BUFFER_CONFIG _mdrv_ms_scldma4_io_fillbufferconfig(ST_IOCTL_SCLDMA_BUFFER_CONFIG stIODMABufferCfg)
+void _mdrv_ms_scldma4_io_fillbufferconfig(ST_IOCTL_SCLDMA_BUFFER_CONFIG *stIODMABufferCfg,ST_MDRV_SCLDMA_BUFFER_CONFIG *stDMABufferCfg)
 {
-    ST_MDRV_SCLDMA_BUFFER_CONFIG stDMABufferCfg;
-    stDMABufferCfg.u8Flag = stIODMABufferCfg.u8Flag;
-    stDMABufferCfg.enBufMDType = stIODMABufferCfg.enBufMDType;
-    stDMABufferCfg.enColorType = stIODMABufferCfg.enColorType;
-    stDMABufferCfg.enMemType = stIODMABufferCfg.enMemType;
-    stDMABufferCfg.u16BufNum = stIODMABufferCfg.u16BufNum;
-    stDMABufferCfg.u16Height = stIODMABufferCfg.u16Height;
-    stDMABufferCfg.u16Width = stIODMABufferCfg.u16Width;
-    memcpy(stDMABufferCfg.u32Base_Y,stIODMABufferCfg.u32Base_Y,sizeof(unsigned long)*BUFFER_BE_ALLOCATED_MAX);
-    memcpy(stDMABufferCfg.u32Base_C,stIODMABufferCfg.u32Base_C,sizeof(unsigned long)*BUFFER_BE_ALLOCATED_MAX);
-    memcpy(stDMABufferCfg.u32Base_V,stIODMABufferCfg.u32Base_V,sizeof(unsigned long)*BUFFER_BE_ALLOCATED_MAX);
-
-    return stDMABufferCfg;
+    stDMABufferCfg->u8Flag = stIODMABufferCfg->u8Flag;
+    stDMABufferCfg->enBufMDType = (EN_MDRV_SCLDMA_BUFFER_MODE_TYPE)stIODMABufferCfg->enBufMDType;
+    stDMABufferCfg->enColorType = (EN_MDRV_SCLDMA_COLOR_TYPE)stIODMABufferCfg->enColorType;
+    stDMABufferCfg->enMemType = (EN_MDRV_SCLDMA_MEM_TYPE)stIODMABufferCfg->enMemType;
+    stDMABufferCfg->u16BufNum = stIODMABufferCfg->u16BufNum;
+    stDMABufferCfg->u16Height = stIODMABufferCfg->u16Height;
+    stDMABufferCfg->u16Width = stIODMABufferCfg->u16Width;
+    memcpy(stDMABufferCfg->u32Base_Y,stIODMABufferCfg->u32Base_Y,sizeof(unsigned long)*BUFFER_BE_ALLOCATED_MAX);
+    memcpy(stDMABufferCfg->u32Base_C,stIODMABufferCfg->u32Base_C,sizeof(unsigned long)*BUFFER_BE_ALLOCATED_MAX);
+    memcpy(stDMABufferCfg->u32Base_V,stIODMABufferCfg->u32Base_V,sizeof(unsigned long)*BUFFER_BE_ALLOCATED_MAX);
 }
 
 int _mdrv_ms_scldma4_io_set_in_buffer_config(struct file *filp, unsigned long arg)
@@ -333,10 +329,10 @@ int _mdrv_ms_scldma4_io_set_in_buffer_config(struct file *filp, unsigned long ar
     int ret = 0;
     ST_MDRV_SCLDMA_VERSIONCHK_CONFIG stVersion;
 
-    stVersion = _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_BUFFER_CONFIG),
+     _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_BUFFER_CONFIG),
         (((ST_IOCTL_SCLDMA_BUFFER_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_SCLDMA_BUFFER_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_scldma4_io_version_check(stVersion))
+        &(((ST_IOCTL_SCLDMA_BUFFER_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_scldma4_io_version_check(&stVersion))
     {
         SCL_ERR( "[SCLDMA4]   %s  \n", __FUNCTION__);
         return -EINVAL;
@@ -344,13 +340,13 @@ int _mdrv_ms_scldma4_io_set_in_buffer_config(struct file *filp, unsigned long ar
     else
     {
         if(copy_from_user(&stIODMABufferCfg,
-            (ST_IOCTL_SCLDMA_BUFFER_CONFIG __user *)arg, sizeof(ST_IOCTL_SCLDMA_BUFFER_CONFIG)))
+            (__user ST_IOCTL_SCLDMA_BUFFER_CONFIG  *)arg, sizeof(ST_IOCTL_SCLDMA_BUFFER_CONFIG)))
         {
             return -EFAULT;
         }
         else
         {
-            stDMABufferCfg = _mdrv_ms_scldma4_io_fillbufferconfig(stIODMABufferCfg);
+            _mdrv_ms_scldma4_io_fillbufferconfig(&stIODMABufferCfg,&stDMABufferCfg);
         }
     }
 
@@ -381,10 +377,10 @@ int _mdrv_ms_scldma4_io_set_in_trigger_config(struct file *filp, unsigned long a
     int ret = 0;
     ST_MDRV_SCLDMA_VERSIONCHK_CONFIG stVersion;
 
-    stVersion = _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_TRIGGER_CONFIG),
+     _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_TRIGGER_CONFIG),
         (((ST_IOCTL_SCLDMA_TRIGGER_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_SCLDMA_TRIGGER_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_scldma4_io_version_check(stVersion))
+        &(((ST_IOCTL_SCLDMA_TRIGGER_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_scldma4_io_version_check(&stVersion))
     {
         SCL_ERR( "[SCLDMA4]   %s  \n", __FUNCTION__);
         return -EINVAL;
@@ -392,14 +388,14 @@ int _mdrv_ms_scldma4_io_set_in_trigger_config(struct file *filp, unsigned long a
     else
     {
         if(copy_from_user(&stIOTrigCfg,
-            (ST_IOCTL_SCLDMA_TRIGGER_CONFIG __user *)arg, sizeof(ST_IOCTL_SCLDMA_TRIGGER_CONFIG)))
+            (__user ST_IOCTL_SCLDMA_TRIGGER_CONFIG  *)arg, sizeof(ST_IOCTL_SCLDMA_TRIGGER_CONFIG)))
         {
             return -EFAULT;
         }
         else
         {
             stDrvTrigCfg.bEn = stIOTrigCfg.bEn;
-            stDrvTrigCfg.enMemType = stIOTrigCfg.enMemType;
+            stDrvTrigCfg.enMemType = (EN_MDRV_SCLDMA_MEM_TYPE)stIOTrigCfg.enMemType;
         }
     }
     stDrvTrigCfg.stclk=&(_dev_ms_scldma4.stclk);
@@ -444,11 +440,12 @@ int _mdrv_ms_scldma4_io_get_in_active_buffer_config(struct file *filp, unsigned 
     EN_MDRV_MULTI_INST_STATUS_TYPE enMultiInstRet;
     int ret = 0;
     ST_MDRV_SCLDMA_VERSIONCHK_CONFIG stVersion;
-
-    stVersion = _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG),
+    MsOS_Memset(&stActiveCfg,0,sizeof(ST_MDRV_SCLDMA_ACTIVE_BUFFER_CONFIG));
+    MsOS_Memset(&stIOActiveCfg,0,sizeof(ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG));
+     _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG),
         (((ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_scldma4_io_version_check(stVersion))
+        &(((ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_scldma4_io_version_check(&stVersion))
     {
         SCL_ERR( "[SCLDMA4]   %s  \n", __FUNCTION__);
         return -EINVAL;
@@ -456,13 +453,13 @@ int _mdrv_ms_scldma4_io_get_in_active_buffer_config(struct file *filp, unsigned 
     else
     {
         if(copy_from_user(&stIOActiveCfg,
-            (ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG __user *)arg, sizeof(ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG)))
+            (__user ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG  *)arg, sizeof(ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG)))
         {
             ret = -EFAULT;
         }
         else
         {
-            stActiveCfg.enMemType = stIOActiveCfg.enMemType;
+            stActiveCfg.enMemType = (EN_MDRV_SCLDMA_MEM_TYPE)stIOActiveCfg.enMemType;
             stActiveCfg.u8ActiveBuffer = stIOActiveCfg.u8ActiveBuffer;
             enMultiInstRet = MDrv_MultiInst_Etnry_IsFree(E_MDRV_MULTI_INST_ENTRY_ID_DISP, filp->private_data);
             stActiveCfg.stOnOff.stclk=&(_dev_ms_scldma4.stclk);
@@ -493,9 +490,9 @@ int _mdrv_ms_scldma4_io_get_in_active_buffer_config(struct file *filp, unsigned 
                 else
                 {
                     stIOActiveCfg.u8ActiveBuffer  = stActiveCfg.u8ActiveBuffer;
-                    stIOActiveCfg.enMemType       = stActiveCfg.enMemType;
+                    stIOActiveCfg.enMemType       = (EN_IOCTL_SCLDMA_MEM_TYPE)stActiveCfg.enMemType;
                     stIOActiveCfg.u8ISPcount      = stActiveCfg.u8ISPcount;
-                    stIOActiveCfg.u32FRMDoneTime  = stActiveCfg.u32FRMDoneTime;
+                    stIOActiveCfg.u64FRMDoneTime  = stActiveCfg.u64FRMDoneTime;
                     if(copy_to_user((ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG __user *)arg,
                         &stIOActiveCfg, sizeof(ST_IOCTL_SCLDMA_ACTIVE_BUFFER_CONFIG)))
                     {
@@ -526,24 +523,24 @@ int _mdrv_ms_scldma4_io_buffer_queue_handle_config(struct file *filp, unsigned l
     int ret = 0;
     ST_MDRV_SCLDMA_VERSIONCHK_CONFIG stVersion;
     EN_MDRV_MULTI_INST_STATUS_TYPE enMultiInstRet;
-    stVersion = _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_BUFFER_QUEUE_CONFIG),
+     _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_BUFFER_QUEUE_CONFIG),
         (((ST_IOCTL_SCLDMA_BUFFER_QUEUE_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_SCLDMA_BUFFER_QUEUE_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_scldma4_io_version_check(stVersion))
+        &(((ST_IOCTL_SCLDMA_BUFFER_QUEUE_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_scldma4_io_version_check(&stVersion))
     {
         SCL_ERR( "[SCLDMA4]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
     else
     {
-        if(copy_from_user(&stIOBufferQCfg, (ST_IOCTL_SCLDMA_BUFFER_QUEUE_CONFIG __user *)arg, sizeof(ST_IOCTL_SCLDMA_BUFFER_QUEUE_CONFIG)))
+        if(copy_from_user(&stIOBufferQCfg, (__user ST_IOCTL_SCLDMA_BUFFER_QUEUE_CONFIG  *)arg, sizeof(ST_IOCTL_SCLDMA_BUFFER_QUEUE_CONFIG)))
         {
             return -EFAULT;
         }
         else
         {
-            stBufferQCfg.enMemType = stIOBufferQCfg.enMemType;
-            stBufferQCfg.enUsedType = stIOBufferQCfg.enUsedType;
+            stBufferQCfg.enMemType = (EN_MDRV_SCLDMA_MEM_TYPE)stIOBufferQCfg.enMemType;
+            stBufferQCfg.enUsedType = (EN_MDRV_SCLDMA_USED_BUFFER_QUEUE_TYPE)stIOBufferQCfg.enUsedType;
             stBufferQCfg.u8EnqueueIdx = stIOBufferQCfg.u8EnqueueIdx;
         }
     }
@@ -604,35 +601,55 @@ int _mdrv_ms_scldma4_io_set_lock_config(struct file *filp, unsigned long arg)
     ST_IOCTL_SCLDMA_LOCK_CONFIG stCfg;
     ST_MDRV_MULTI_INST_LOCK_CONFIG stMultiInstLockCfg;
     ST_MDRV_SCLDMA_VERSIONCHK_CONFIG stVersion;
-
-    stVersion = _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_LOCK_CONFIG),
+    signed long *ps32PrivateID = NULL;
+    MsOS_Memset(&stCfg,0,sizeof(ST_IOCTL_SCLDMA_LOCK_CONFIG));
+     _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_LOCK_CONFIG),
         (((ST_IOCTL_SCLDMA_LOCK_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_SCLDMA_LOCK_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_scldma4_io_version_check(stVersion))
+        &(((ST_IOCTL_SCLDMA_LOCK_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_scldma4_io_version_check(&stVersion))
     {
         SCL_ERR( "[SCLDMA4]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
-    else
+    if(copy_from_user(&stCfg, (__user ST_IOCTL_SCLDMA_LOCK_CONFIG  *)arg, sizeof(ST_IOCTL_SCLDMA_LOCK_CONFIG)))
     {
-        if(copy_from_user(&stCfg, (ST_IOCTL_SCLDMA_LOCK_CONFIG __user *)arg, sizeof(ST_IOCTL_SCLDMA_LOCK_CONFIG)))
-        {
-            return -EFAULT;
-        }
-    }
-    if(stCfg.ps32IdBuf == NULL || *(stCfg.ps32IdBuf) ==0)
-    {
-        SCL_ERR( "[SCLDMA4] not alloc multiinst buffer");
         return -EFAULT;
     }
-    stMultiInstLockCfg.ps32PrivateID = stCfg.ps32IdBuf;
+    if(stCfg.u8BufSize == 0 || stCfg.u8BufSize>10)
+    {
+        return -EFAULT;
+    }
+    if(stCfg.ps32IdBuf == NULL)
+    {
+        SCL_ERR( "[SCLDMA4] not free multiinst buffer");
+        return -EFAULT;
+    }
+    else
+    {
+        ps32PrivateID = MsOS_VirMemalloc(stCfg.u8BufSize * sizeof(signed long));
+        if(ps32PrivateID == NULL)
+        {
+            SCL_ERR( "[SCLDMA4] not free alloc buffer");
+            return -EFAULT;
+        }
+        if(copy_from_user(ps32PrivateID, (__user signed long  *)stCfg.ps32IdBuf, stCfg.u8BufSize*sizeof(signed long)))
+        {
+            MsOS_VirMemFree(ps32PrivateID);
+            return -EFAULT;
+        }
+#if SCL_DBG_LV_MULTI_INST_LOCK_LOG
+        SCL_ERR( "[SCLDMA4]%s ps32PrivateID:%lx %lx %lx\n",__FUNCTION__,(MS_U32)ps32PrivateID,*ps32PrivateID,*(ps32PrivateID+1));
+#endif
+    }
+    stMultiInstLockCfg.ps32PrivateID = ps32PrivateID;
     stMultiInstLockCfg.u8IDNum = stCfg.u8BufSize;
 
-    if( !MDrv_MultiInst_Lock_Alloc(E_MDRV_MULTI_INST_LOCK_ID_DISP, stMultiInstLockCfg) )
+    if( !MDrv_MultiInst_Lock_Alloc(E_MDRV_MULTI_INST_LOCK_ID_DISP, &stMultiInstLockCfg) )
     {
+        MsOS_VirMemFree(ps32PrivateID);
         return -EINVAL;
     }
-
+    MsOS_VirMemFree(ps32PrivateID);
     return 0;
 }
 
@@ -641,35 +658,55 @@ int _mdrv_ms_scldma4_io_set_unlock_config(struct file *filp, unsigned long arg)
     ST_IOCTL_SCLDMA_LOCK_CONFIG stCfg;
     ST_MDRV_MULTI_INST_LOCK_CONFIG stMultiInstLockCfg;
     ST_MDRV_SCLDMA_VERSIONCHK_CONFIG stVersion;
-
-    stVersion = _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_LOCK_CONFIG),
+    signed long *ps32PrivateID = NULL;
+    MsOS_Memset(&stCfg,0,sizeof(ST_IOCTL_SCLDMA_LOCK_CONFIG));
+     _mdrv_ms_scldma4_io_fill_versionchkstruct(sizeof(ST_IOCTL_SCLDMA_LOCK_CONFIG),
         (((ST_IOCTL_SCLDMA_LOCK_CONFIG __user *)arg)->VerChk_Size),
-        &(((ST_IOCTL_SCLDMA_LOCK_CONFIG __user *)arg)->VerChk_Version));
-    if(_mdrv_ms_scldma4_io_version_check(stVersion))
+        &(((ST_IOCTL_SCLDMA_LOCK_CONFIG __user *)arg)->VerChk_Version),&stVersion);
+    if(_mdrv_ms_scldma4_io_version_check(&stVersion))
     {
         SCL_ERR( "[SCLDMA4]   %s  \n", __FUNCTION__);
         return -EINVAL;
     }
-    else
+    if(copy_from_user(&stCfg, (__user ST_IOCTL_SCLDMA_LOCK_CONFIG  *)arg, sizeof(ST_IOCTL_SCLDMA_LOCK_CONFIG)))
     {
-        if(copy_from_user(&stCfg, (ST_IOCTL_SCLDMA_LOCK_CONFIG __user *)arg, sizeof(ST_IOCTL_SCLDMA_LOCK_CONFIG)))
-        {
-            return -EFAULT;
-        }
-    }
-    if(stCfg.ps32IdBuf == NULL || *(stCfg.ps32IdBuf) ==0)
-    {
-        SCL_ERR( "[SCLDMA4] not free multiinst buffer");
         return -EFAULT;
     }
-    stMultiInstLockCfg.ps32PrivateID = stCfg.ps32IdBuf;
+    if(stCfg.u8BufSize == 0 || stCfg.u8BufSize>10)
+    {
+        return -EFAULT;
+    }
+    if(stCfg.ps32IdBuf == NULL)
+    {
+        SCL_ERR( "[SCLDMA1] not free multiinst buffer");
+        return -EFAULT;
+    }
+    else
+    {
+        ps32PrivateID = MsOS_VirMemalloc(stCfg.u8BufSize * sizeof(signed long));
+        if(ps32PrivateID == NULL)
+        {
+            SCL_ERR( "[SCLDMA4] not free alloc buffer");
+            return -EFAULT;
+        }
+        if(copy_from_user(ps32PrivateID, (__user signed long  *)stCfg.ps32IdBuf, stCfg.u8BufSize*sizeof(signed long)))
+        {
+            MsOS_VirMemFree(ps32PrivateID);
+            return -EFAULT;
+        }
+#if SCL_DBG_LV_MULTI_INST_LOCK_LOG
+        SCL_ERR( "[SCLDMA1]%s ps32PrivateID:%lx %lx %lx\n",__FUNCTION__,(MS_U32)ps32PrivateID,*ps32PrivateID,*(ps32PrivateID+1));
+#endif
+    }
+    stMultiInstLockCfg.ps32PrivateID = ps32PrivateID;
     stMultiInstLockCfg.u8IDNum = stCfg.u8BufSize;
 
     if( !MDrv_MultiInst_Lock_Free(E_MDRV_MULTI_INST_LOCK_ID_DISP, &stMultiInstLockCfg) )
     {
+        MsOS_VirMemFree(ps32PrivateID);
         return -EFAULT;
     }
-
+    MsOS_VirMemFree(ps32PrivateID);
     return 0;
 }
 
@@ -772,9 +809,9 @@ long mdrv_ms_scldma4_ioctl(struct file *filp, unsigned int u32Cmd, unsigned long
     {
         return -EFAULT;
     }
-	/* not allow query or command once driver suspend */
+    /* not allow query or command once driver suspend */
 
-    SCL_DBG(SCL_DBG_LV_IOCTL()&EN_DBGMG_IOCTLEVEL_ELSE, "[SCLDMA1] IOCTL_NUM:: == %s == \n", (CMD_PARSING(u32Cmd)));
+    SCL_DBG(SCL_DBG_LV_IOCTL()&EN_DBGMG_IOCTLEVEL_LCD, "[SCLDMA1] IOCTL_NUM:: == %s == \n", (CMD_PARSING(u32Cmd)));
 
     switch(u32Cmd)
     {
@@ -922,7 +959,10 @@ static int mdrv_ms_scldma4_probe(struct platform_device *pdev)
     }
 
     stSCLDMAInitCfg.u32Riubase = 0x1F000000; //ToDo
-
+    MsOS_SetSclIrqIDFormSys(pdev,0,E_SCLIRQ_SC0);
+    MsOS_SetCmdqIrqIDFormSys(pdev,1,E_CMDQIRQ_CMDQ0);
+    stSCLDMAInitCfg.u32IRQNUM     = MsOS_GetIrqIDSCL(E_SCLIRQ_SC0);
+    stSCLDMAInitCfg.u32CMDQIRQNUM = MsOS_GetIrqIDCMDQ(E_CMDQIRQ_CMDQ0);
     if( MDrv_SCLDMA_Init(E_MDRV_SCLDMA_ID_PNL, &stSCLDMAInitCfg) == 0)
     {
         return -EFAULT;
@@ -950,6 +990,15 @@ static int mdrv_ms_scldma4_remove(struct platform_device *pdev)
 
     MDrv_MultiInst_Lock_Exit(E_MDRV_MULTI_INST_LOCK_ID_DISP);
     MDrv_SCLDMA_ClkClose(&(_dev_ms_scldma4.stclk));
+    gbProbeAlready = (gbProbeAlready&(~EN_DBG_SCLDMA4_CONFIG));
+    if(gbProbeAlready == 0)
+    {
+        MDrv_SCLDMA_Exit(1);
+    }
+    else if(!(gbProbeAlready& (EN_DBG_SCLDMA1_CONFIG|EN_DBG_SCLDMA2_CONFIG|EN_DBG_SCLDMA3_CONFIG|EN_DBG_SCLDMA4_CONFIG)))
+    {
+        MDrv_SCLDMA_Exit(0);
+    }
     cdev_del(&_dev_ms_scldma4.cdev);
     device_destroy(m_scldma4_class, MKDEV(_dev_ms_scldma4.s32Major, _dev_ms_scldma4.s32Minor));
     class_destroy(m_scldma4_class);
@@ -1011,7 +1060,7 @@ static int mdrv_ms_scldma4_suspend(struct platform_device *dev, pm_message_t sta
 
 static int mdrv_ms_scldma4_resume(struct platform_device *dev)
 {
-    EN_MDRV_MULTI_INST_STATUS_TYPE enMultiInstRet = E_MDRV_MULTI_INST_STATUS_SUCCESS;
+    EN_MDRV_MULTI_INST_STATUS_TYPE enMultiInstRet;
     int ret = 0;
 
     SCL_DBG(SCL_DBG_LV_MDRV_IO(), "[SCLDMA4] %s\n",__FUNCTION__);
@@ -1057,8 +1106,10 @@ int mdrv_ms_scldma4_open(struct inode *inode, struct file *filp)
             ret =  -EFAULT;
         }
     }
-
-    _dev_ms_scldma4.refCnt++;
+    if(!ret)
+    {
+        _dev_ms_scldma4.refCnt++;
+    }
 
     return ret;
 }

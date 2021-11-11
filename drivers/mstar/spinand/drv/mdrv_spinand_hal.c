@@ -95,7 +95,7 @@ static BOOL _MDrv_SPINAND_GET_INFO(void)
     u8DstAddr = (U8*)(&_gtSpinandInfo);
 
     // if ecc error read back up block(block2 ,4, 6, 8)
-    for (u8Idx = 0; u8Idx < 2; u8Idx+=2)
+    for (u8Idx = 0; u8Idx < 10; u8Idx+=2)
     {
         u16PageIndex = 64 * u8Idx;
 

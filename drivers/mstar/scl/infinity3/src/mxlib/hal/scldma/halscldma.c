@@ -94,10 +94,10 @@
 #define HAL_SCLDMA_C
 
 #ifdef MSOS_TYPE_LINUX_KERNEL
-#include <linux/wait.h>
-#include <linux/irqreturn.h>
+//#include <linux/wait.h>
+//#include <linux/irqreturn.h>
 #endif
-#include <asm/div64.h>
+//#include <asm/div64.h>
 
 //-------------------------------------------------------------------------------------------------
 //  Include Files
@@ -111,8 +111,11 @@
 #include "halscldma_utility.h"
 #include "drvscldma_st.h"
 #include "halscldma.h"
-#include <linux/clk.h>
-#include <linux/clk-provider.h>
+#include "drvsclirq_st.h"
+#include "drvsclirq.h"
+#include "mdrv_scl_dbg.h"
+//#include <linux/clk.h>
+//#include <linux/clk-provider.h>
 //-------------------------------------------------------------------------------------------------
 //  Driver Compiler Options
 //-------------------------------------------------------------------------------------------------
@@ -124,12 +127,14 @@
 #define HAL_SCLDMA_ERR(x)  x
 #define DISABLE_CLK 0x1
 #define LOW_CLK 0x4
+#define Is_CLK_Increase(height,width,rate)    (((height) > 720 || (width) > 1280)&& (rate) < 172000000)
+#define Is_CLK_Decrease(height,width,rate)    (((height) <= 720 && (width) <= 1280)&& (rate) >= 172000000)
 //-------------------------------------------------------------------------------------------------
 //  Variable
 //-------------------------------------------------------------------------------------------------
 MS_U32 SCLDMA_RIU_BASE = 0;
 MS_U16 u16gheight[2]  = {1080,720};
-
+MS_U16 u16gwidth[2]  = {1920,1280};
 
 //-------------------------------------------------------------------------------------------------
 //  Functions
@@ -140,8 +145,8 @@ void Hal_SCLDMA_SetRiuBase(MS_U32 u32riubase)
 }
 void Hal_SCLDMA_Set_SW_Reset(void)
 {
-    W2BYTEMSK(REG_SCL0_01_L,BIT0,BIT0);
-    W2BYTEMSK(REG_SCL0_01_L,0,BIT0);
+    W2BYTEMSK(REG_SCL0_01_L,0x1E,0x1E);
+    W2BYTEMSK(REG_SCL0_01_L,0,0x1E);
 }
 void Hal_SCLDMA_SetReqLen(EN_SCLDMA_CLIENT_TYPE enSCLDMA_ID, MS_U8 u8value)
 {
@@ -296,7 +301,7 @@ void Hal_SCLDMA_HKHWAuto(MS_BOOL bEn)
 void Hal_SCLDMA_HWInit(void)
 {
     Hal_SCLDMA_HKForceAuto();
-    Hal_SCLDMA_HKHWAuto(1);
+    //Hal_SCLDMA_HKHWAuto(1);
     Hal_SCLDMA_DbHWAuto(1);
     Hal_SCLDMA_SetMCMByDMAClient(E_SCLDMA_1_SNP_W,0);
     Hal_SCLDMA_SetPriThd(E_SCLDMA_3_FRM_R,0x08);
@@ -319,107 +324,206 @@ void Hal_SCLDMA_HWInit(void)
 void Hal_SCLDMA_CLKInit(MS_BOOL bEn,ST_SCLDMA_CLK_CONFIG *stclk)
 {
     struct clk* stclock = NULL;
-    MS_U16 regclk;
+    MS_U32 u32Events;
+    if(Drv_SCLIRQ_GetEachDMAEn()|| (!Drv_SCLIRQ_GetIsBlankingRegion()))
+    {
+        HAL_SCLDMA_ERR(printf("[FCLK]%s %d,Wait\n", __FUNCTION__, __LINE__));
+        MsOS_WaitEvent(Drv_SCLIRQ_Get_IRQ_SYNCEventID(),
+            (E_SCLIRQ_EVENT_ISPFRMEND|E_SCLIRQ_EVENT_FRMENDSYNC), &u32Events, E_AND, 200); // get status: FRM END
+    }
     if(bEn)
     {
-        if (__clk_get_enable_count(stclk->fclk1) == 0)
+        W2BYTEMSK(REG_SCL_CLK_64_L,0x0000,0x000F);//To Do
+        if (MsOS_clk_get_enable_count(stclk->fclk1) == 0)
         {
-            if(u16gheight[0] > 720)
+#if CLKDynamic
+            if(Is_CLK_Increase(u16gheight[0],u16gwidth[0],0))
+#else
+            if(1)
+#endif
             {
-                if (NULL != (stclock = clk_get_parent_by_index(stclk->fclk1, 0)))
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk1, 0)))
                 {
-                    clk_set_parent(stclk->fclk1, stclock);
-                    clk_prepare_enable(stclk->fclk1);
-                    regclk = R2BYTE(REG_SCL_CLK_64_L);
-                    //printf("[SCLDMA]flag:%ld index:%hx\n",__clk_get_rate(stclk->fclk1),regclk);
+                    MsOS_clk_set_parent(stclk->fclk1, stclock);
+                    MsOS_clk_prepare_enable(stclk->fclk1);
                 }
+                else
+                {
+                    SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
+                }
+        #if OSDinverseBug
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk2, 0)))
+                {
+                    MsOS_clk_set_parent(stclk->fclk2, stclock);
+                    MsOS_clk_prepare_enable(stclk->fclk2);
+                }
+                else
+                {
+                    SCL_ERR("[HAlHVSP]CLK Tree Not Ready \n");
+                }
+        #endif
             }
             else
             {
-                if (NULL != (stclock = clk_get_parent_by_index(stclk->fclk1, 1)))
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk1, 1)))
                 {
-                    clk_set_parent(stclk->fclk1, stclock);
-                    clk_prepare_enable(stclk->fclk1);
-                    regclk = R2BYTE(REG_SCL_CLK_64_L);
-                    //printf("[SCLDMA]flag:%ld index:%hx\n",__clk_get_rate(stclk->fclk1),regclk);
+                    MsOS_clk_set_parent(stclk->fclk1, stclock);
+                    MsOS_clk_prepare_enable(stclk->fclk1);
                 }
+                else
+                {
+                    SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
+                }
+        #if OSDinverseBug
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk2, 1)))
+                {
+                    MsOS_clk_set_parent(stclk->fclk2, stclock);
+                    MsOS_clk_prepare_enable(stclk->fclk2);
+                }
+                else
+                {
+                    SCL_ERR("[HAlHVSP]CLK Tree Not Ready \n");
+                }
+        #endif
             }
         }
+        #if CLKDynamic
         else
         {
-            if(u16gheight[0] > 720 && __clk_get_rate(stclk->fclk1) < 172000000)
+            if(Is_CLK_Increase(u16gheight[0],u16gwidth[0], MsOS_clk_get_rate(stclk->fclk1)))
             {
-                if (NULL != (stclock = clk_get_parent_by_index(stclk->fclk1, 0)))
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk1, 0)))
                 {
-                    clk_set_parent(stclk->fclk1, stclock);
-                    regclk = R2BYTE(REG_SCL_CLK_64_L);
-                    //printf("[SCLDMA]flag:%ld index:%hx\n",__clk_get_rate(stclk->fclk1),regclk);
+                    MsOS_clk_set_parent(stclk->fclk1, stclock);
                 }
+                else
+                {
+                    SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
+                }
+            #if OSDinverseBug
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk2, 0)))
+                {
+                    MsOS_clk_set_parent(stclk->fclk2, stclock);
+                }
+                else
+                {
+                    SCL_ERR("[HAlHVSP]CLK Tree Not Ready \n");
+                }
+            #endif
             }
-            else if(u16gheight[0] <= 720 && __clk_get_rate(stclk->fclk1) >= 172000000)
+            else if(Is_CLK_Decrease(u16gheight[0],u16gwidth[0], MsOS_clk_get_rate(stclk->fclk1)))
             {
-                if (NULL != (stclock = clk_get_parent_by_index(stclk->fclk1, 1)))
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk1, 1)))
                 {
-                    clk_set_parent(stclk->fclk1, stclock);
-                    regclk = R2BYTE(REG_SCL_CLK_64_L);
-                    //printf("[SCLDMA]flag:%ld index:%hx\n",__clk_get_rate(stclk->fclk1),regclk);
+                    MsOS_clk_set_parent(stclk->fclk1, stclock);
                 }
+                else
+                {
+                    SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
+                }
+            #if OSDinverseBug
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk2, 1)))
+                {
+                    MsOS_clk_set_parent(stclk->fclk2, stclock);
+                }
+                else
+                {
+                    SCL_ERR("[HAlHVSP]CLK Tree Not Ready \n");
+                }
+            #endif
             }
         }
-
+#endif
     }
     else
     {
-        if (NULL != (stclock = clk_get_parent_by_index(stclk->fclk1, 0)))
+        if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk1, 0)))
         {
-            clk_set_parent(stclk->fclk1, stclock);
+            MsOS_clk_set_parent(stclk->fclk1, stclock);
         }
-        while (__clk_get_enable_count(stclk->fclk1))
+        else
         {
-            clk_disable_unprepare(stclk->fclk1);
+            SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
         }
+#if OSDinverseBug
+        if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk2, 0)))
+        {
+            MsOS_clk_set_parent(stclk->fclk2, stclock);
+        }
+        else
+        {
+            SCL_ERR("[HAlHVSP]CLK Tree Not Ready \n");
+        }
+#endif
+        while (MsOS_clk_get_enable_count(stclk->fclk1))
+        {
+            MsOS_clk_disable_unprepare(stclk->fclk1);
+        }
+    #if OSDinverseBug
+        while (MsOS_clk_get_enable_count(stclk->fclk2))
+        {
+            MsOS_clk_disable_unprepare(stclk->fclk2);
+        }
+    #endif
     }
 }
 
 void Hal_SCLDMA_SC3CLKInit(MS_BOOL bEn,ST_SCLDMA_CLK_CONFIG *stclk)
 {
+#if OSDinverseBug
+#else
     struct clk* stclock = NULL;
     if(bEn)
     {
-        if (__clk_get_enable_count(stclk->fclk2) == 0)
+        if (MsOS_clk_get_enable_count(stclk->fclk2) == 0)
         {
-            if(u16gheight[1] > 720)
+            if(Is_CLK_Increase(u16gheight[1],u16gwidth[1],0))
             {
-                if (NULL != (stclock = clk_get_parent_by_index(stclk->fclk2, 0)))
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk2, 0)))
                 {
-                    clk_set_parent(stclk->fclk2, stclock);
-                    clk_prepare_enable(stclk->fclk2);
+                    MsOS_clk_set_parent(stclk->fclk2, stclock);
+                    MsOS_clk_prepare_enable(stclk->fclk2);
+                }
+                else
+                {
+                    SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
                 }
             }
             else
             {
-                if (NULL != (stclock = clk_get_parent_by_index(stclk->fclk2, 1)))
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk2, 1)))
                 {
-                    clk_set_parent(stclk->fclk2, stclock);
-                    clk_prepare_enable(stclk->fclk2);
+                    MsOS_clk_set_parent(stclk->fclk2, stclock);
+                    MsOS_clk_prepare_enable(stclk->fclk2);
                 }
-
+                else
+                {
+                    SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
+                }
             }
         }
         else
         {
-            if(u16gheight[1] > 720 && __clk_get_rate(stclk->fclk2) < 172000000)
+            if(Is_CLK_Increase(u16gheight[1],u16gwidth[1], MsOS_clk_get_rate(stclk->fclk2)))
             {
-                if (NULL != (stclock = clk_get_parent_by_index(stclk->fclk2, 0)))
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk2, 0)))
                 {
-                    clk_set_parent(stclk->fclk2, stclock);
+                    MsOS_clk_set_parent(stclk->fclk2, stclock);
+                }
+                else
+                {
+                    SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
                 }
             }
-            else if(u16gheight[1] <= 720 && __clk_get_rate(stclk->fclk2) >= 172000000)
+            else if(Is_CLK_Decrease(u16gheight[1],u16gwidth[1], MsOS_clk_get_rate(stclk->fclk2)))
             {
-                if (NULL != (stclock = clk_get_parent_by_index(stclk->fclk2, 1)))
+                if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk2, 1)))
                 {
-                    clk_set_parent(stclk->fclk2, stclock);
+                    MsOS_clk_set_parent(stclk->fclk2, stclock);
+                }
+                else
+                {
+                    SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
                 }
             }
         }
@@ -427,32 +531,36 @@ void Hal_SCLDMA_SC3CLKInit(MS_BOOL bEn,ST_SCLDMA_CLK_CONFIG *stclk)
     }
     else
     {
-        if (NULL != (stclock = clk_get_parent_by_index(stclk->fclk2, 0)))
+        if (NULL != (stclock = MsOS_clk_get_parent_by_index(stclk->fclk2, 0)))
         {
-            clk_set_parent(stclk->fclk2, stclock);
+            MsOS_clk_set_parent(stclk->fclk2, stclock);
         }
-        while (__clk_get_enable_count(stclk->fclk2))
+        else
         {
-            clk_disable_unprepare(stclk->fclk2);
+            SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
+        }
+        while (MsOS_clk_get_enable_count(stclk->fclk2))
+        {
+            MsOS_clk_disable_unprepare(stclk->fclk2);
         }
     }
+#endif
 }
 void Hal_SCLDMA_ODCLKInit(MS_BOOL bEn,ST_SCLDMA_CLK_CONFIG *stclk)
 {
     struct clk* pstclock = NULL;
     if(bEn)
     {
-        if(__clk_get_enable_count(stclk->odclk)==0)
+        if(MsOS_clk_get_enable_count(stclk->odclk)==0)
         {
-            if (NULL != (pstclock = clk_get_parent_by_index(stclk->odclk, 3)))
+            if (NULL != (pstclock = MsOS_clk_get_parent_by_index(stclk->odclk, 3)))
             {
-                clk_set_parent(stclk->odclk, pstclock);
-                clk_prepare_enable(stclk->odclk);
+                MsOS_clk_set_parent(stclk->odclk, pstclock);
+                MsOS_clk_prepare_enable(stclk->odclk);
             }
             else
             {
-                printf("[odclk]NULL\n");
-
+                SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
             }
         }
         else
@@ -463,13 +571,17 @@ void Hal_SCLDMA_ODCLKInit(MS_BOOL bEn,ST_SCLDMA_CLK_CONFIG *stclk)
     }
     else
     {
-        if (NULL != (pstclock = clk_get_parent_by_index(stclk->odclk, 0)))
+        if (NULL != (pstclock = MsOS_clk_get_parent_by_index(stclk->odclk, 0)))
         {
-            clk_set_parent(stclk->odclk, pstclock);
+            MsOS_clk_set_parent(stclk->odclk, pstclock);
         }
-        while (__clk_get_enable_count(stclk->odclk))
+        else
         {
-            clk_disable_unprepare(stclk->odclk);
+            SCL_ERR("[HAlSCLDMA]CLK Tree Not Ready \n");
+        }
+        while (MsOS_clk_get_enable_count(stclk->odclk))
+        {
+            MsOS_clk_disable_unprepare(stclk->odclk);
         }
     }
 }
@@ -483,7 +595,7 @@ void Hal_SCLDMA_CLKInit(MS_BOOL bEn,ST_SCLDMA_CLK_CONFIG *stclk)
     {
         if ((R2BYTE(REG_SCL_CLK_64_L)&DISABLE_CLK))
         {
-            if(u16gheight[0] > 720)
+            if(Is_CLK_Increase(u16gheight[0],u16gwidth[0],0))
             {
                 W2BYTEMSK(REG_SCL_CLK_64_L,0x0000,0x000F);//h61
                 regclk = R2BYTE(REG_SCL_CLK_64_L);
@@ -496,12 +608,12 @@ void Hal_SCLDMA_CLKInit(MS_BOOL bEn,ST_SCLDMA_CLK_CONFIG *stclk)
         }
         else
         {
-            if(u16gheight[0] > 720 && (R2BYTE(REG_SCL_CLK_64_L)&LOW_CLK))
+            if((u16gheight[0] > 720 || u16gwidth[0] > 1280)&& (R2BYTE(REG_SCL_CLK_64_L)&LOW_CLK))
             {
                 W2BYTEMSK(REG_SCL_CLK_64_L,0x0000,0x000F);//h61
                 regclk = R2BYTE(REG_SCL_CLK_64_L);
             }
-            else if(u16gheight[0] <= 720 && !(R2BYTE(REG_SCL_CLK_64_L)&LOW_CLK))
+            else if((u16gheight[0] <= 720 && u16gwidth[0] <= 1280)&& !(R2BYTE(REG_SCL_CLK_64_L)&LOW_CLK))
             {
                 W2BYTEMSK(REG_SCL_CLK_64_L,LOW_CLK,0x000F);//h61
                 regclk = R2BYTE(REG_SCL_CLK_64_L);
@@ -522,7 +634,7 @@ void Hal_SCLDMA_SC3CLKInit(MS_BOOL bEn,ST_SCLDMA_CLK_CONFIG *stclk)
     {
         if ((R2BYTE(REG_SCL_CLK_65_L)&DISABLE_CLK))
         {
-            if(u16gheight[1] > 720)
+            if(Is_CLK_Increase(u16gheight[1],u16gwidth[1],0))
             {
                 W2BYTEMSK(REG_SCL_CLK_65_L,0x0000,0x000F);//h61
                 regclk = R2BYTE(REG_SCL_CLK_65_L);
@@ -535,12 +647,12 @@ void Hal_SCLDMA_SC3CLKInit(MS_BOOL bEn,ST_SCLDMA_CLK_CONFIG *stclk)
         }
         else
         {
-            if(u16gheight[1] > 720 && (R2BYTE(REG_SCL_CLK_65_L)&LOW_CLK))
+            if((u16gheight[1] > 720 || u16gwidth[1] > 1280) && (R2BYTE(REG_SCL_CLK_65_L)&LOW_CLK))
             {
                 W2BYTEMSK(REG_SCL_CLK_65_L,0x0000,0x000F);//h61
                 regclk = R2BYTE(REG_SCL_CLK_65_L);
             }
-            else if(u16gheight[1] <= 720 && !(R2BYTE(REG_SCL_CLK_65_L)&LOW_CLK))
+            else if((u16gheight[1] <= 720 && u16gwidth[1] <= 1280) && !(R2BYTE(REG_SCL_CLK_65_L)&LOW_CLK))
             {
                 W2BYTEMSK(REG_SCL_CLK_65_L,LOW_CLK,0x000F);//h61
                 regclk = R2BYTE(REG_SCL_CLK_65_L);
@@ -716,19 +828,28 @@ void Hal_SCLDMA_SetSC1DMAEn(EN_SCLDMA_RW_MODE_TYPE enRWMode, MS_BOOL bEn)
 void Hal_SCLDMA_GetHVSPResolutionForEnsure(MS_U16 u16height)
 {
     MS_U16 u16Srcheight,u16Dspheight,u16FBheight;
+    MS_U16 u16Srcwidth,u16Dspwidth,u16FBwidth;
     u16Srcheight = R2BYTE(REG_SCL_HVSP0_21_L);
     u16Dspheight = R2BYTE(REG_SCL_HVSP0_23_L);
     u16FBheight  = R2BYTE(REG_SCL_DNR1_0D_L);
+    u16Srcwidth = R2BYTE(REG_SCL_HVSP0_20_L);
+    u16Dspwidth = R2BYTE(REG_SCL_HVSP0_22_L);
+    u16FBwidth  = R2BYTE(REG_SCL_DNR1_0E_L);
     if(u16Srcheight>0)
     {
         u16gheight[0] = (u16Srcheight>u16Dspheight) ? u16Srcheight : u16Dspheight ;
-        u16gheight[0] = (u16FBheight>u16gheight[0])? u16FBheight:u16gheight[0];
+        u16gheight[0] = (u16FBheight>u16gheight[0])? u16FBheight: u16gheight[0];
+        u16gwidth[0] = (u16Srcwidth>u16Dspwidth) ? u16Srcwidth : u16Dspwidth ;
+        u16gwidth[0] = (u16FBwidth>u16gwidth[0])? u16FBwidth: u16gwidth[0];
     }
     u16Srcheight = R2BYTE(REG_SCL_HVSP2_21_L);
     u16Dspheight = R2BYTE(REG_SCL_HVSP2_23_L);
+    u16Srcwidth = R2BYTE(REG_SCL_HVSP2_20_L);
+    u16Dspwidth = R2BYTE(REG_SCL_HVSP2_22_L);
     if(u16Srcheight>0)
     {
         u16gheight[1] = (u16Srcheight>u16Dspheight) ? u16Srcheight : u16Dspheight ;
+        u16gwidth[1] = (u16Srcwidth>u16Dspwidth) ? u16Srcwidth : u16Dspwidth ;
     }
 
 }
@@ -752,145 +873,163 @@ MS_U16 Hal_GetHVSPOutputVSize(EN_SCLDMA_ID_TYPE enSCLDMA_ID)
                 0;
     return u16Height;
 }
-void Hal_SCLDMA_SetSC1DMAConfig(ST_SCLDMA_RW_CONFIG stSCLDMACfg)
+void Hal_SCLDMA_SetSC1DMAConfig(ST_SCLDMA_RW_CONFIG *stSCLDMACfg)
 {
     MS_U32 u32yoffset;
     MS_U32 u32coffset;
     MS_U8 u8420md;
     MS_U8 u8DataMd;
-    if(stSCLDMACfg.enRWMode == E_SCLDMA_FRM_W)
+    if(stSCLDMACfg->enRWMode == E_SCLDMA_FRM_W)
     {
-        if(stSCLDMACfg.bvFlag.btsBase_0)
+        if(stSCLDMACfg->bvFlag.btsBase_0)
         {
-            W4BYTE(REG_SCL_DMA0_08_L, stSCLDMACfg.u32Base_Y[0]>>3);
-            W4BYTE(REG_SCL_DMA0_10_L, stSCLDMACfg.u32Base_C[0]>>3);
-            W4BYTE(REG_SCL3_38_L, stSCLDMACfg.u32Base_V[0]>>3);
+            W4BYTE(REG_SCL_DMA0_08_L, stSCLDMACfg->u32Base_Y[0]>>3);
+            W4BYTE(REG_SCL_DMA0_10_L, stSCLDMACfg->u32Base_C[0]>>3);
+            W4BYTE(REG_SCL3_38_L, stSCLDMACfg->u32Base_V[0]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_1)
+        if(stSCLDMACfg->bvFlag.btsBase_1)
         {
-            W4BYTE(REG_SCL_DMA0_0A_L, stSCLDMACfg.u32Base_Y[1]>>3);
-            W4BYTE(REG_SCL_DMA0_12_L, stSCLDMACfg.u32Base_C[1]>>3);
-            W4BYTE(REG_SCL3_3A_L, stSCLDMACfg.u32Base_V[1]>>3);
+            W4BYTE(REG_SCL_DMA0_0A_L, stSCLDMACfg->u32Base_Y[1]>>3);
+            W4BYTE(REG_SCL_DMA0_12_L, stSCLDMACfg->u32Base_C[1]>>3);
+            W4BYTE(REG_SCL3_3A_L, stSCLDMACfg->u32Base_V[1]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_2)
+        if(stSCLDMACfg->bvFlag.btsBase_2)
         {
-            W4BYTE(REG_SCL_DMA0_0C_L, stSCLDMACfg.u32Base_Y[2]>>3);
-            W4BYTE(REG_SCL_DMA0_14_L, stSCLDMACfg.u32Base_C[2]>>3);
-            W4BYTE(REG_SCL3_3C_L, stSCLDMACfg.u32Base_V[2]>>3);
+            W4BYTE(REG_SCL_DMA0_0C_L, stSCLDMACfg->u32Base_Y[2]>>3);
+            W4BYTE(REG_SCL_DMA0_14_L, stSCLDMACfg->u32Base_C[2]>>3);
+            W4BYTE(REG_SCL3_3C_L, stSCLDMACfg->u32Base_V[2]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_3)
+        if(stSCLDMACfg->bvFlag.btsBase_3)
         {
-            W4BYTE(REG_SCL_DMA0_0E_L, stSCLDMACfg.u32Base_Y[3]>>3);
-            W4BYTE(REG_SCL_DMA0_16_L, stSCLDMACfg.u32Base_C[3]>>3);
-            W4BYTE(REG_SCL3_3E_L, stSCLDMACfg.u32Base_V[3]>>3);
+            W4BYTE(REG_SCL_DMA0_0E_L, stSCLDMACfg->u32Base_Y[3]>>3);
+            W4BYTE(REG_SCL_DMA0_16_L, stSCLDMACfg->u32Base_C[3]>>3);
+            W4BYTE(REG_SCL3_3E_L, stSCLDMACfg->u32Base_V[3]>>3);
         }
-
-        W2BYTEMSK(REG_SCL_DMA0_18_L, stSCLDMACfg.u8MaxIdx<<3, BIT4|BIT3);
-        Hal_SCLDMA_GetHVSPResolutionForEnsure(stSCLDMACfg.u16Height);
-        u8420md = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
-                stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
+        if(stSCLDMACfg->enBuffMode == E_SCLDMA_BUF_MD_RING)
+        {
+            W2BYTEMSK(REG_SCL_DMA0_18_L, stSCLDMACfg->u8MaxIdx<<3, BIT4|BIT3);
+        }
+        else
+        {
+            W2BYTEMSK(REG_SCL_DMA0_18_L, 0, BIT4|BIT3);
+        }
+        Hal_SCLDMA_GetHVSPResolutionForEnsure(stSCLDMACfg->u16Height);
+        u8420md = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
+                stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
                                                                 0;
         W2BYTEMSK(REG_SCL_DMA0_1E_L, u8420md, BIT3);   // w_422to420_md[3]
         W2BYTEMSK(REG_SCL_DMA0_1E_L, BIT2, BIT2);
-        W2BYTEMSK(REG_SCL_DMA0_01_L, stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14); // w_422_pack[14]
-        u8DataMd = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
+        W2BYTEMSK(REG_SCL_DMA0_01_L, stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14); // w_422_pack[14]
+        u8DataMd = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
                                                                     0;
         W2BYTEMSK(REG_SCL3_20_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
     }
-    else if(stSCLDMACfg.enRWMode == E_SCLDMA_SNP_W)
+    else if(stSCLDMACfg->enRWMode == E_SCLDMA_SNP_W)
     {
-        if(stSCLDMACfg.bvFlag.btsBase_0)
+        if(stSCLDMACfg->bvFlag.btsBase_0)
         {
-            W4BYTE(REG_SCL_DMA0_38_L, stSCLDMACfg.u32Base_Y[0]>>3);
-            W4BYTE(REG_SCL_DMA0_40_L, stSCLDMACfg.u32Base_C[0]>>3);
-            W4BYTE(REG_SCL3_40_L, stSCLDMACfg.u32Base_V[0]>>3);
+            W4BYTE(REG_SCL_DMA0_38_L, stSCLDMACfg->u32Base_Y[0]>>3);
+            W4BYTE(REG_SCL_DMA0_40_L, stSCLDMACfg->u32Base_C[0]>>3);
+            W4BYTE(REG_SCL3_40_L, stSCLDMACfg->u32Base_V[0]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_1)
+        if(stSCLDMACfg->bvFlag.btsBase_1)
         {
-            W4BYTE(REG_SCL_DMA0_3A_L, stSCLDMACfg.u32Base_Y[1]>>3);
-            W4BYTE(REG_SCL_DMA0_42_L, stSCLDMACfg.u32Base_C[1]>>3);
-            W4BYTE(REG_SCL3_42_L, stSCLDMACfg.u32Base_V[1]>>3);
+            W4BYTE(REG_SCL_DMA0_3A_L, stSCLDMACfg->u32Base_Y[1]>>3);
+            W4BYTE(REG_SCL_DMA0_42_L, stSCLDMACfg->u32Base_C[1]>>3);
+            W4BYTE(REG_SCL3_42_L, stSCLDMACfg->u32Base_V[1]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_2)
+        if(stSCLDMACfg->bvFlag.btsBase_2)
         {
-            W4BYTE(REG_SCL_DMA0_3C_L, stSCLDMACfg.u32Base_Y[2]>>3);
-            W4BYTE(REG_SCL_DMA0_44_L, stSCLDMACfg.u32Base_C[2]>>3);
-            W4BYTE(REG_SCL3_44_L, stSCLDMACfg.u32Base_V[2]>>3);
+            W4BYTE(REG_SCL_DMA0_3C_L, stSCLDMACfg->u32Base_Y[2]>>3);
+            W4BYTE(REG_SCL_DMA0_44_L, stSCLDMACfg->u32Base_C[2]>>3);
+            W4BYTE(REG_SCL3_44_L, stSCLDMACfg->u32Base_V[2]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_3)
+        if(stSCLDMACfg->bvFlag.btsBase_3)
         {
-            W4BYTE(REG_SCL_DMA0_3E_L, stSCLDMACfg.u32Base_Y[3]>>3);
-            W4BYTE(REG_SCL_DMA0_46_L, stSCLDMACfg.u32Base_C[3]>>3);
-            W4BYTE(REG_SCL3_46_L, stSCLDMACfg.u32Base_V[3]>>3);
+            W4BYTE(REG_SCL_DMA0_3E_L, stSCLDMACfg->u32Base_Y[3]>>3);
+            W4BYTE(REG_SCL_DMA0_46_L, stSCLDMACfg->u32Base_C[3]>>3);
+            W4BYTE(REG_SCL3_46_L, stSCLDMACfg->u32Base_V[3]>>3);
         }
-
-        W2BYTEMSK(REG_SCL_DMA0_48_L, stSCLDMACfg.u8MaxIdx<<3, BIT4|BIT3);
-        u8420md = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
-                stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
+        if(stSCLDMACfg->enBuffMode == E_SCLDMA_BUF_MD_RING)
+        {
+            W2BYTEMSK(REG_SCL_DMA0_48_L, stSCLDMACfg->u8MaxIdx<<3, BIT4|BIT3);
+        }
+        else
+        {
+            W2BYTEMSK(REG_SCL_DMA0_48_L, 0, BIT4|BIT3);
+        }
+        u8420md = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
+                stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
                                                                 0;
         W2BYTEMSK(REG_SCL_DMA0_4E_L, u8420md, BIT3);   // w_422to420_md[3]
         W2BYTEMSK(REG_SCL_DMA0_4E_L, BIT2, BIT2);
-        W2BYTEMSK(REG_SCL_DMA0_03_L, stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14); // w_422_pack[14]
-        u8DataMd = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
+        W2BYTEMSK(REG_SCL_DMA0_03_L, stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14); // w_422_pack[14]
+        u8DataMd = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
                                                                     0;
         W2BYTEMSK(REG_SCL3_22_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
     }
-    else if(stSCLDMACfg.enRWMode == E_SCLDMA_IMI_W)
+    else if(stSCLDMACfg->enRWMode == E_SCLDMA_IMI_W)
     {
 #if ENABLE_RING_DB
         u32yoffset = 0x20;
         u32coffset = 0x20;
 #else
-        if((stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420)||(stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420))
+        if((stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV420)||(stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420))
         {
-            u32yoffset=(stSCLDMACfg.u16Width*16)/8-1;
-            u32coffset=(stSCLDMACfg.u16Width*8)/8-1;
+            u32yoffset=(stSCLDMACfg->u16Width*16)/8-1;
+            u32coffset=(stSCLDMACfg->u16Width*8)/8-1;
         }
         else
         {
-            u32yoffset=(stSCLDMACfg.u16Width*16)/8-2;
-            u32coffset=(stSCLDMACfg.u16Width*16)/8-2;
+            u32yoffset=(stSCLDMACfg->u16Width*16)/8-2;
+            u32coffset=(stSCLDMACfg->u16Width*16)/8-2;
         }
 #endif
-        if(stSCLDMACfg.bvFlag.btsBase_0)
+        if(stSCLDMACfg->bvFlag.btsBase_0)
         {
-            W4BYTE(REG_SCL_DMA1_38_L, stSCLDMACfg.u32Base_Y[0]>>3);
-            W4BYTE(REG_SCL_DMA1_40_L, stSCLDMACfg.u32Base_C[0]>>3);
-            W4BYTE(REG_SCL3_68_L, stSCLDMACfg.u32Base_V[0]>>3);
+            W4BYTE(REG_SCL_DMA1_38_L, stSCLDMACfg->u32Base_Y[0]>>3);
+            W4BYTE(REG_SCL_DMA1_40_L, stSCLDMACfg->u32Base_C[0]>>3);
+            W4BYTE(REG_SCL3_68_L, stSCLDMACfg->u32Base_V[0]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_1)
+        if(stSCLDMACfg->bvFlag.btsBase_1)
         {
-            W4BYTE(REG_SCL_DMA1_3A_L, stSCLDMACfg.u32Base_Y[1]>>3);
-            W4BYTE(REG_SCL_DMA1_42_L, stSCLDMACfg.u32Base_C[1]>>3);
-            W4BYTE(REG_SCL3_6A_L, stSCLDMACfg.u32Base_V[1]>>3);
+            W4BYTE(REG_SCL_DMA1_3A_L, stSCLDMACfg->u32Base_Y[1]>>3);
+            W4BYTE(REG_SCL_DMA1_42_L, stSCLDMACfg->u32Base_C[1]>>3);
+            W4BYTE(REG_SCL3_6A_L, stSCLDMACfg->u32Base_V[1]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_2)
+        if(stSCLDMACfg->bvFlag.btsBase_2)
         {
-            W4BYTE(REG_SCL_DMA1_3C_L, stSCLDMACfg.u32Base_Y[2]>>3);
-            W4BYTE(REG_SCL_DMA1_44_L, stSCLDMACfg.u32Base_C[2]>>3);
-            W4BYTE(REG_SCL3_6C_L, stSCLDMACfg.u32Base_V[2]>>3);
+            W4BYTE(REG_SCL_DMA1_3C_L, stSCLDMACfg->u32Base_Y[2]>>3);
+            W4BYTE(REG_SCL_DMA1_44_L, stSCLDMACfg->u32Base_C[2]>>3);
+            W4BYTE(REG_SCL3_6C_L, stSCLDMACfg->u32Base_V[2]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_3)
+        if(stSCLDMACfg->bvFlag.btsBase_3)
         {
-            W4BYTE(REG_SCL_DMA1_3E_L, stSCLDMACfg.u32Base_Y[3]>>3);
-            W4BYTE(REG_SCL_DMA1_46_L, stSCLDMACfg.u32Base_C[3]>>3);
-            W4BYTE(REG_SCL3_6E_L, stSCLDMACfg.u32Base_V[3]>>3);
+            W4BYTE(REG_SCL_DMA1_3E_L, stSCLDMACfg->u32Base_Y[3]>>3);
+            W4BYTE(REG_SCL_DMA1_46_L, stSCLDMACfg->u32Base_C[3]>>3);
+            W4BYTE(REG_SCL3_6E_L, stSCLDMACfg->u32Base_V[3]>>3);
         }
-
-        W2BYTEMSK(REG_SCL_DMA1_48_L, stSCLDMACfg.u8MaxIdx<<3, BIT4|BIT3);
-        u8420md = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
-                stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
+        if(stSCLDMACfg->enBuffMode == E_SCLDMA_BUF_MD_RING)
+        {
+            W2BYTEMSK(REG_SCL_DMA1_48_L, stSCLDMACfg->u8MaxIdx<<3, BIT4|BIT3);
+        }
+        else
+        {
+            W2BYTEMSK(REG_SCL_DMA1_48_L, 0, BIT4|BIT3);
+        }
+        u8420md = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
+                stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
                                                                 0;
         W2BYTEMSK(REG_SCL_DMA1_4E_L, u8420md, BIT3);   // w_422to420_md[3]
         W2BYTEMSK(REG_SCL_DMA1_4E_L, BIT2, BIT2);
-        W2BYTEMSK(REG_SCL_DMA1_03_L, stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14); // w_422_pack[14]
-        u8DataMd = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
+        W2BYTEMSK(REG_SCL_DMA1_03_L, stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14); // w_422_pack[14]
+        u8DataMd = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
                                                                     0;
         W2BYTEMSK(REG_SCL3_2C_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
         W4BYTE(REG_SCL_DMA2_40_L, u32yoffset); // imi offset y
@@ -899,31 +1038,31 @@ void Hal_SCLDMA_SetSC1DMAConfig(ST_SCLDMA_RW_CONFIG stSCLDMACfg)
     }
     else
     {
-        HAL_SCLDMA_ERR(printf("%s %d, wrong RWmode: %d\n",  __FUNCTION__, __LINE__, stSCLDMACfg.enRWMode));
+        HAL_SCLDMA_ERR(printf("%s %d, wrong RWmode: %d\n",  __FUNCTION__, __LINE__, stSCLDMACfg->enRWMode));
     }
-    if(Hal_GetHVSPOutputHSize(E_SCLDMA_ID_1_W)==stSCLDMACfg.u16Width ||(Hal_GetHVSPOutputHSize(E_SCLDMA_ID_1_W) == 0))
+    if(Hal_GetHVSPOutputHSize(E_SCLDMA_ID_1_W)==stSCLDMACfg->u16Width ||(Hal_GetHVSPOutputHSize(E_SCLDMA_ID_1_W) == 0))
     {
-        W2BYTEMSK(REG_SCL_DMA0_1A_L, stSCLDMACfg.u16Width, 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA1_4A_L, stSCLDMACfg.u16Width, 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA0_4A_L, stSCLDMACfg.u16Width, 0xFFFF);
-    }
-    else
-    {
-        W2BYTEMSK(REG_SCL_DMA0_1A_L, Hal_GetHVSPOutputHSize(E_SCLDMA_ID_1_W), 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA1_4A_L, Hal_GetHVSPOutputHSize(E_SCLDMA_ID_1_W), 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA0_4A_L, Hal_GetHVSPOutputHSize(E_SCLDMA_ID_1_W), 0xFFFF);
-    }
-    if(Hal_GetHVSPOutputVSize(E_SCLDMA_ID_1_W) == stSCLDMACfg.u16Height ||(Hal_GetHVSPOutputVSize(E_SCLDMA_ID_1_W) == 0))
-    {
-        W2BYTEMSK(REG_SCL_DMA0_1B_L, stSCLDMACfg.u16Height,0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA1_4B_L, stSCLDMACfg.u16Height,0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA0_4B_L, stSCLDMACfg.u16Height,0xFFFF);
+        W2BYTE(REG_SCL_DMA0_1A_L, stSCLDMACfg->u16Width);
+        W2BYTE(REG_SCL_DMA1_4A_L, stSCLDMACfg->u16Width);
+        W2BYTE(REG_SCL_DMA0_4A_L, stSCLDMACfg->u16Width);
     }
     else
     {
-        W2BYTEMSK(REG_SCL_DMA0_1A_L, Hal_GetHVSPOutputVSize(E_SCLDMA_ID_1_W), 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA1_4A_L, Hal_GetHVSPOutputVSize(E_SCLDMA_ID_1_W), 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA0_4A_L, Hal_GetHVSPOutputVSize(E_SCLDMA_ID_1_W), 0xFFFF);
+        W2BYTE(REG_SCL_DMA0_1A_L, Hal_GetHVSPOutputHSize(E_SCLDMA_ID_1_W));
+        W2BYTE(REG_SCL_DMA1_4A_L, Hal_GetHVSPOutputHSize(E_SCLDMA_ID_1_W));
+        W2BYTE(REG_SCL_DMA0_4A_L, Hal_GetHVSPOutputHSize(E_SCLDMA_ID_1_W));
+    }
+    if(Hal_GetHVSPOutputVSize(E_SCLDMA_ID_1_W) == stSCLDMACfg->u16Height ||(Hal_GetHVSPOutputVSize(E_SCLDMA_ID_1_W) == 0))
+    {
+        W2BYTE(REG_SCL_DMA0_1B_L, stSCLDMACfg->u16Height);
+        W2BYTE(REG_SCL_DMA1_4B_L, stSCLDMACfg->u16Height);
+        W2BYTE(REG_SCL_DMA0_4B_L, stSCLDMACfg->u16Height);
+    }
+    else
+    {
+        W2BYTE(REG_SCL_DMA0_1B_L, Hal_GetHVSPOutputVSize(E_SCLDMA_ID_1_W));
+        W2BYTE(REG_SCL_DMA1_4B_L, Hal_GetHVSPOutputVSize(E_SCLDMA_ID_1_W));
+        W2BYTE(REG_SCL_DMA0_4B_L, Hal_GetHVSPOutputVSize(E_SCLDMA_ID_1_W));
     }
 
 }
@@ -943,8 +1082,8 @@ void Hal_SCLDMA_SetIMIClientReset(void)
     W4BYTE(REG_SCL_DMA1_46_L, 0);
 
     W2BYTEMSK(REG_SCL_DMA1_48_L, 0, BIT4|BIT3);
-    W2BYTEMSK(REG_SCL_DMA1_4A_L, 0, 0xFFFF);
-    W2BYTEMSK(REG_SCL_DMA1_4B_L, 0, 0xFFFF);
+    W2BYTE(REG_SCL_DMA1_4A_L, 0);
+    W2BYTE(REG_SCL_DMA1_4B_L, 0);
     W2BYTEMSK(REG_SCL_DMA1_4E_L, 0, BIT3);   // w_422to420_md[3]
     W2BYTEMSK(REG_SCL_DMA1_4E_L, 0, BIT2);
     W2BYTEMSK(REG_SCL_DMA1_03_L, 0, BIT14); // w_422_pack[14]
@@ -1029,7 +1168,7 @@ void Hal_SCLDMA_SetSC2DMAEn(EN_SCLDMA_RW_MODE_TYPE enRWMode, MS_BOOL bEn)
     }
     else if(enRWMode == E_SCLDMA_IMI_W)
     {
-        W2BYTEMSK(REG_SCL_DMA1_03_L, bEn ? BIT15 : 0, BIT15);
+        W2BYTEMSK(REG_SCL_DMA0_05_L, bEn ? BIT15 : 0, BIT15);
     }
     else
     {
@@ -1038,157 +1177,192 @@ void Hal_SCLDMA_SetSC2DMAEn(EN_SCLDMA_RW_MODE_TYPE enRWMode, MS_BOOL bEn)
 
 }
 
-void Hal_SCLDMA_SetSC2DMAConfig(ST_SCLDMA_RW_CONFIG stSCLDMACfg)
+void Hal_SCLDMA_SetSC2DMAConfig(ST_SCLDMA_RW_CONFIG *stSCLDMACfg)
 {
     MS_U32 u32yoffset;
     MS_U32 u32coffset;
     MS_U8 u8420md;
     MS_U8 u8DataMd;
-    if(stSCLDMACfg.enRWMode == E_SCLDMA_FRM_W)
+    if(stSCLDMACfg->enRWMode == E_SCLDMA_FRM_W)
     {
-        if(stSCLDMACfg.bvFlag.btsBase_0)
+        if(stSCLDMACfg->bvFlag.btsBase_0)
         {
-            W4BYTE(REG_SCL_DMA0_50_L, stSCLDMACfg.u32Base_Y[0]>>3);
-            W4BYTE(REG_SCL_DMA0_58_L, stSCLDMACfg.u32Base_C[0]>>3);
-            W4BYTE(REG_SCL3_48_L, stSCLDMACfg.u32Base_V[0]>>3);
+            W4BYTE(REG_SCL_DMA0_50_L, stSCLDMACfg->u32Base_Y[0]>>3);
+            W4BYTE(REG_SCL_DMA0_58_L, stSCLDMACfg->u32Base_C[0]>>3);
+            W4BYTE(REG_SCL3_48_L, stSCLDMACfg->u32Base_V[0]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_1)
+        if(stSCLDMACfg->bvFlag.btsBase_1)
         {
-            W4BYTE(REG_SCL_DMA0_52_L, stSCLDMACfg.u32Base_Y[1]>>3);
-            W4BYTE(REG_SCL_DMA0_5A_L, stSCLDMACfg.u32Base_C[1]>>3);
-            W4BYTE(REG_SCL3_4A_L, stSCLDMACfg.u32Base_V[1]>>3);
+            W4BYTE(REG_SCL_DMA0_52_L, stSCLDMACfg->u32Base_Y[1]>>3);
+            W4BYTE(REG_SCL_DMA0_5A_L, stSCLDMACfg->u32Base_C[1]>>3);
+            W4BYTE(REG_SCL3_4A_L, stSCLDMACfg->u32Base_V[1]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_2)
+        if(stSCLDMACfg->bvFlag.btsBase_2)
         {
-            W4BYTE(REG_SCL_DMA0_54_L, stSCLDMACfg.u32Base_Y[2]>>3);
-            W4BYTE(REG_SCL_DMA0_5C_L, stSCLDMACfg.u32Base_C[2]>>3);
-            W4BYTE(REG_SCL3_4C_L, stSCLDMACfg.u32Base_V[2]>>3);
+            W4BYTE(REG_SCL_DMA0_54_L, stSCLDMACfg->u32Base_Y[2]>>3);
+            W4BYTE(REG_SCL_DMA0_5C_L, stSCLDMACfg->u32Base_C[2]>>3);
+            W4BYTE(REG_SCL3_4C_L, stSCLDMACfg->u32Base_V[2]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_3)
+        if(stSCLDMACfg->bvFlag.btsBase_3)
         {
-            W4BYTE(REG_SCL_DMA0_56_L, stSCLDMACfg.u32Base_Y[3]>>3);
-            W4BYTE(REG_SCL_DMA0_5E_L, stSCLDMACfg.u32Base_C[3]>>3);
-            W4BYTE(REG_SCL3_4E_L, stSCLDMACfg.u32Base_V[3]>>3);
+            W4BYTE(REG_SCL_DMA0_56_L, stSCLDMACfg->u32Base_Y[3]>>3);
+            W4BYTE(REG_SCL_DMA0_5E_L, stSCLDMACfg->u32Base_C[3]>>3);
+            W4BYTE(REG_SCL3_4E_L, stSCLDMACfg->u32Base_V[3]>>3);
         }
-
-        W2BYTEMSK(REG_SCL_DMA0_60_L, stSCLDMACfg.u8MaxIdx<<3, BIT4|BIT3);
-        W2BYTEMSK(REG_SCL_DMA0_62_L, stSCLDMACfg.u16Width, 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA0_63_L, stSCLDMACfg.u16Height,0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA0_66_L, BIT2, BIT2);
-        u8420md = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
-                stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
-                                                                0;
-        W2BYTEMSK(REG_SCL_DMA0_66_L, u8420md, BIT3);
-        W2BYTEMSK(REG_SCL_DMA0_04_L, stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14);
-        u8DataMd = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
-                                                                    0;
-        W2BYTEMSK(REG_SCL3_24_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
-    }
-    else if(stSCLDMACfg.enRWMode == E_SCLDMA_FRM2_W)
-    {
-        if(stSCLDMACfg.bvFlag.btsBase_0)
+        if(stSCLDMACfg->enBuffMode == E_SCLDMA_BUF_MD_RING)
         {
-            W4BYTE(REG_SCL_DMA1_50_L, stSCLDMACfg.u32Base_Y[0]>>3);
-            W4BYTE(REG_SCL_DMA1_58_L, stSCLDMACfg.u32Base_C[0]>>3);
-            W4BYTE(REG_SCL3_70_L, stSCLDMACfg.u32Base_V[0]>>3);
-        }
-        if(stSCLDMACfg.bvFlag.btsBase_1)
-        {
-            W4BYTE(REG_SCL_DMA1_52_L, stSCLDMACfg.u32Base_Y[1]>>3);
-            W4BYTE(REG_SCL_DMA1_5A_L, stSCLDMACfg.u32Base_C[1]>>3);
-            W4BYTE(REG_SCL3_72_L, stSCLDMACfg.u32Base_V[1]>>3);
-        }
-        if(stSCLDMACfg.bvFlag.btsBase_2)
-        {
-            W4BYTE(REG_SCL_DMA1_54_L, stSCLDMACfg.u32Base_Y[2]>>3);
-            W4BYTE(REG_SCL_DMA1_5C_L, stSCLDMACfg.u32Base_C[2]>>3);
-            W4BYTE(REG_SCL3_74_L, stSCLDMACfg.u32Base_V[2]>>3);
-        }
-        if(stSCLDMACfg.bvFlag.btsBase_3)
-        {
-            W4BYTE(REG_SCL_DMA1_56_L, stSCLDMACfg.u32Base_Y[3]>>3);
-            W4BYTE(REG_SCL_DMA1_5E_L, stSCLDMACfg.u32Base_C[3]>>3);
-            W4BYTE(REG_SCL3_76_L, stSCLDMACfg.u32Base_V[3]>>3);
-        }
-
-        W2BYTEMSK(REG_SCL_DMA1_60_L, stSCLDMACfg.u8MaxIdx<<3, BIT4|BIT3);
-        W2BYTEMSK(REG_SCL_DMA1_62_L, stSCLDMACfg.u16Width, 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA1_63_L, stSCLDMACfg.u16Height,0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA1_66_L, BIT2, BIT2);
-        u8420md = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
-                stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
-                                                                0;
-        W2BYTEMSK(REG_SCL_DMA1_66_L, u8420md, BIT3);
-        W2BYTEMSK(REG_SCL_DMA1_04_L, stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14);
-        u8DataMd = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
-                                                                    0;
-        W2BYTEMSK(REG_SCL3_2E_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
-    }
-    else if(stSCLDMACfg.enRWMode == E_SCLDMA_IMI_W)
-    {
-
-        if((stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420)||(stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420))
-        {
-            u32yoffset=(stSCLDMACfg.u16Width*16)/8-1;
-            u32coffset=(stSCLDMACfg.u16Width*8)/8-1;
+            W2BYTEMSK(REG_SCL_DMA0_60_L, stSCLDMACfg->u8MaxIdx<<3, BIT4|BIT3);
         }
         else
         {
-            u32yoffset=(stSCLDMACfg.u16Width*16)/8-2;
-            u32coffset=(stSCLDMACfg.u16Width*16)/8-2;
+            W2BYTEMSK(REG_SCL_DMA0_60_L, 0, BIT4|BIT3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_0)
-        {
-            W4BYTE(REG_SCL_DMA1_38_L, stSCLDMACfg.u32Base_Y[0]>>3);
-            W4BYTE(REG_SCL_DMA1_40_L, stSCLDMACfg.u32Base_C[0]>>3);
-            W4BYTE(REG_SCL3_50_L, stSCLDMACfg.u32Base_V[0]>>3);
-        }
-        if(stSCLDMACfg.bvFlag.btsBase_1)
-        {
-            W4BYTE(REG_SCL_DMA1_3A_L, stSCLDMACfg.u32Base_Y[1]>>3);
-            W4BYTE(REG_SCL_DMA1_42_L, stSCLDMACfg.u32Base_C[1]>>3);
-            W4BYTE(REG_SCL3_52_L, stSCLDMACfg.u32Base_V[1]>>3);
-        }
-        if(stSCLDMACfg.bvFlag.btsBase_2)
-        {
-            W4BYTE(REG_SCL_DMA1_3C_L, stSCLDMACfg.u32Base_Y[2]>>3);
-            W4BYTE(REG_SCL_DMA1_44_L, stSCLDMACfg.u32Base_C[2]>>3);
-            W4BYTE(REG_SCL3_54_L, stSCLDMACfg.u32Base_V[2]>>3);
-        }
-        if(stSCLDMACfg.bvFlag.btsBase_3)
-        {
-            W4BYTE(REG_SCL_DMA1_3E_L, stSCLDMACfg.u32Base_Y[3]>>3);
-            W4BYTE(REG_SCL_DMA1_46_L, stSCLDMACfg.u32Base_C[3]>>3);
-            W4BYTE(REG_SCL3_56_L, stSCLDMACfg.u32Base_V[3]>>3);
-        }
-
-        W2BYTEMSK(REG_SCL_DMA1_48_L, stSCLDMACfg.u8MaxIdx<<3, BIT4|BIT3);
-        W2BYTEMSK(REG_SCL_DMA1_4A_L, stSCLDMACfg.u16Width, 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA1_4B_L, stSCLDMACfg.u16Height,0xFFFF);
-        u8420md = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
-                stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
+        W2BYTEMSK(REG_SCL_DMA0_66_L, BIT2, BIT2);
+        u8420md = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
+                stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
                                                                 0;
-        W2BYTEMSK(REG_SCL_DMA1_4E_L, u8420md, BIT3);   // w_422to420_md[3]
-        W2BYTEMSK(REG_SCL_DMA1_4E_L, BIT2, BIT2);
-        W2BYTEMSK(REG_SCL_DMA1_03_L, stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14); // w_422_pack[14]
-        u8DataMd = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
+        W2BYTEMSK(REG_SCL_DMA0_66_L, u8420md, BIT3);
+        W2BYTEMSK(REG_SCL_DMA0_04_L, stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14);
+        u8DataMd = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
+                                                                    0;
+        W2BYTEMSK(REG_SCL3_24_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
+    }
+    else if(stSCLDMACfg->enRWMode == E_SCLDMA_FRM2_W)
+    {
+        if(stSCLDMACfg->bvFlag.btsBase_0)
+        {
+            W4BYTE(REG_SCL_DMA1_50_L, stSCLDMACfg->u32Base_Y[0]>>3);
+            W4BYTE(REG_SCL_DMA1_58_L, stSCLDMACfg->u32Base_C[0]>>3);
+            W4BYTE(REG_SCL3_70_L, stSCLDMACfg->u32Base_V[0]>>3);
+        }
+        if(stSCLDMACfg->bvFlag.btsBase_1)
+        {
+            W4BYTE(REG_SCL_DMA1_52_L, stSCLDMACfg->u32Base_Y[1]>>3);
+            W4BYTE(REG_SCL_DMA1_5A_L, stSCLDMACfg->u32Base_C[1]>>3);
+            W4BYTE(REG_SCL3_72_L, stSCLDMACfg->u32Base_V[1]>>3);
+        }
+        if(stSCLDMACfg->bvFlag.btsBase_2)
+        {
+            W4BYTE(REG_SCL_DMA1_54_L, stSCLDMACfg->u32Base_Y[2]>>3);
+            W4BYTE(REG_SCL_DMA1_5C_L, stSCLDMACfg->u32Base_C[2]>>3);
+            W4BYTE(REG_SCL3_74_L, stSCLDMACfg->u32Base_V[2]>>3);
+        }
+        if(stSCLDMACfg->bvFlag.btsBase_3)
+        {
+            W4BYTE(REG_SCL_DMA1_56_L, stSCLDMACfg->u32Base_Y[3]>>3);
+            W4BYTE(REG_SCL_DMA1_5E_L, stSCLDMACfg->u32Base_C[3]>>3);
+            W4BYTE(REG_SCL3_76_L, stSCLDMACfg->u32Base_V[3]>>3);
+        }
+        if(stSCLDMACfg->enBuffMode == E_SCLDMA_BUF_MD_RING)
+        {
+            W2BYTEMSK(REG_SCL_DMA1_60_L, stSCLDMACfg->u8MaxIdx<<3, BIT4|BIT3);
+        }
+        else
+        {
+            W2BYTEMSK(REG_SCL_DMA1_60_L, 0, BIT4|BIT3);
+        }
+        W2BYTEMSK(REG_SCL_DMA1_66_L, BIT2, BIT2);
+        u8420md = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
+                stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
+                                                                0;
+        W2BYTEMSK(REG_SCL_DMA1_66_L, u8420md, BIT3);
+        W2BYTEMSK(REG_SCL_DMA1_04_L, stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14);
+        u8DataMd = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
+                                                                    0;
+        W2BYTEMSK(REG_SCL3_2E_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
+    }
+    else if(stSCLDMACfg->enRWMode == E_SCLDMA_IMI_W)
+    {
+
+        if((stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV420)||(stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420))
+        {
+            u32yoffset=(stSCLDMACfg->u16Width*16)/8-1;
+            u32coffset=(stSCLDMACfg->u16Width*8)/8-1;
+        }
+        else
+        {
+            u32yoffset=(stSCLDMACfg->u16Width*16)/8-2;
+            u32coffset=(stSCLDMACfg->u16Width*16)/8-2;
+        }
+        if(stSCLDMACfg->bvFlag.btsBase_0)
+        {
+            W4BYTE(REG_SCL_DMA0_68_L, stSCLDMACfg->u32Base_Y[0]>>3);
+            W4BYTE(REG_SCL_DMA0_70_L, stSCLDMACfg->u32Base_C[0]>>3);
+            W4BYTE(REG_SCL3_50_L, stSCLDMACfg->u32Base_V[0]>>3);
+        }
+        if(stSCLDMACfg->bvFlag.btsBase_1)
+        {
+            W4BYTE(REG_SCL_DMA0_6A_L, stSCLDMACfg->u32Base_Y[1]>>3);
+            W4BYTE(REG_SCL_DMA0_72_L, stSCLDMACfg->u32Base_C[1]>>3);
+            W4BYTE(REG_SCL3_52_L, stSCLDMACfg->u32Base_V[1]>>3);
+        }
+        if(stSCLDMACfg->bvFlag.btsBase_2)
+        {
+            W4BYTE(REG_SCL_DMA0_6C_L, stSCLDMACfg->u32Base_Y[2]>>3);
+            W4BYTE(REG_SCL_DMA0_74_L, stSCLDMACfg->u32Base_C[2]>>3);
+            W4BYTE(REG_SCL3_54_L, stSCLDMACfg->u32Base_V[2]>>3);
+        }
+        if(stSCLDMACfg->bvFlag.btsBase_3)
+        {
+            W4BYTE(REG_SCL_DMA0_6E_L, stSCLDMACfg->u32Base_Y[3]>>3);
+            W4BYTE(REG_SCL_DMA0_76_L, stSCLDMACfg->u32Base_C[3]>>3);
+            W4BYTE(REG_SCL3_56_L, stSCLDMACfg->u32Base_V[3]>>3);
+        }
+        if(stSCLDMACfg->enBuffMode == E_SCLDMA_BUF_MD_RING)
+        {
+            W2BYTEMSK(REG_SCL_DMA0_78_L, stSCLDMACfg->u8MaxIdx<<3, BIT4|BIT3);
+        }
+        else
+        {
+            W2BYTEMSK(REG_SCL_DMA0_78_L, 0, BIT4|BIT3);
+        }
+        u8420md = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
+                stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
+                                                                0;
+        W2BYTEMSK(REG_SCL_DMA0_7E_L, u8420md, BIT3);   // w_422to420_md[3]
+        W2BYTEMSK(REG_SCL_DMA0_7E_L, BIT2, BIT2);
+        W2BYTEMSK(REG_SCL_DMA0_05_L, stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14); // w_422_pack[14]
+        u8DataMd = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
                                                                     0;
         W2BYTEMSK(REG_SCL3_26_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
-        W4BYTE(REG_SCL_DMA2_40_L, u32yoffset); // imi offset y
-        W4BYTE(REG_SCL_DMA2_42_L, u32coffset); // imi offset c
+        W4BYTE(REG_SCL_DMA2_44_L, u32yoffset); // imi offset y
+        W4BYTE(REG_SCL_DMA2_46_L, u32coffset); // imi offset c
         W2BYTEMSK(REG_SCL0_64_L,BIT15, BIT15); //sc2 open
     }
     else
     {
-        HAL_SCLDMA_ERR(printf("%s %d, wrong RWmode: %d\n",  __FUNCTION__, __LINE__, stSCLDMACfg.enRWMode));
+        HAL_SCLDMA_ERR(printf("%s %d, wrong RWmode: %d\n",  __FUNCTION__, __LINE__, stSCLDMACfg->enRWMode));
     }
-
+    if(Hal_GetHVSPOutputHSize(E_SCLDMA_ID_2_W)==stSCLDMACfg->u16Width ||(Hal_GetHVSPOutputHSize(E_SCLDMA_ID_2_W) == 0))
+    {
+        W2BYTE(REG_SCL_DMA0_62_L, stSCLDMACfg->u16Width);
+        W2BYTE(REG_SCL_DMA1_62_L, stSCLDMACfg->u16Width);
+        W2BYTE(REG_SCL_DMA0_7A_L, stSCLDMACfg->u16Width);
+    }
+    else
+    {
+        W2BYTE(REG_SCL_DMA0_62_L, Hal_GetHVSPOutputHSize(E_SCLDMA_ID_2_W));
+        W2BYTE(REG_SCL_DMA1_62_L, Hal_GetHVSPOutputHSize(E_SCLDMA_ID_2_W));
+        W2BYTE(REG_SCL_DMA0_7A_L, Hal_GetHVSPOutputHSize(E_SCLDMA_ID_2_W));
+    }
+    if(Hal_GetHVSPOutputVSize(E_SCLDMA_ID_2_W) == stSCLDMACfg->u16Height ||(Hal_GetHVSPOutputVSize(E_SCLDMA_ID_2_W) == 0))
+    {
+        W2BYTE(REG_SCL_DMA0_63_L, stSCLDMACfg->u16Height);
+        W2BYTE(REG_SCL_DMA1_63_L, stSCLDMACfg->u16Height);
+        W2BYTE(REG_SCL_DMA0_7B_L, stSCLDMACfg->u16Height);
+    }
+    else
+    {
+        W2BYTE(REG_SCL_DMA0_63_L, Hal_GetHVSPOutputVSize(E_SCLDMA_ID_2_W));
+        W2BYTE(REG_SCL_DMA1_63_L, Hal_GetHVSPOutputVSize(E_SCLDMA_ID_2_W));
+        W2BYTE(REG_SCL_DMA0_7B_L, Hal_GetHVSPOutputVSize(E_SCLDMA_ID_2_W));
+    }
 }
 
 
@@ -1209,143 +1383,153 @@ void Hal_SCLDMA_SetSC3DMAEn(EN_SCLDMA_RW_MODE_TYPE enRWMode, MS_BOOL bEn)
 
 }
 
-void Hal_SCLDMA_SetSC3DMAConfig(ST_SCLDMA_RW_CONFIG stSCLDMACfg)
+void Hal_SCLDMA_SetSC3DMAConfig(ST_SCLDMA_RW_CONFIG *stSCLDMACfg)
 {
     MS_U32 u32yoffset;
     MS_U32 u32coffset;
     MS_U8 u8420md;
     MS_U8 u8DataMd;
-    if(stSCLDMACfg.enRWMode == E_SCLDMA_FRM_R)
+    if(stSCLDMACfg->enRWMode == E_SCLDMA_FRM_R)
     {
-        if(stSCLDMACfg.bvFlag.btsBase_0)
+        if(stSCLDMACfg->bvFlag.btsBase_0)
         {
-            W4BYTE(REG_SCL_DMA1_20_L, stSCLDMACfg.u32Base_Y[0]>>3);
-            W4BYTE(REG_SCL_DMA1_28_L, stSCLDMACfg.u32Base_C[0]>>3);
-            W4BYTE(REG_SCL3_60_L, stSCLDMACfg.u32Base_V[0]>>3);
+            W4BYTE(REG_SCL_DMA1_20_L, stSCLDMACfg->u32Base_Y[0]>>3);
+            W4BYTE(REG_SCL_DMA1_28_L, stSCLDMACfg->u32Base_C[0]>>3);
+            W4BYTE(REG_SCL3_60_L, stSCLDMACfg->u32Base_V[0]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_1)
+        if(stSCLDMACfg->bvFlag.btsBase_1)
         {
-            W4BYTE(REG_SCL_DMA1_22_L, stSCLDMACfg.u32Base_Y[1]>>3);
-            W4BYTE(REG_SCL_DMA1_2A_L, stSCLDMACfg.u32Base_C[1]>>3);
-            W4BYTE(REG_SCL3_62_L, stSCLDMACfg.u32Base_V[1]>>3);
+            W4BYTE(REG_SCL_DMA1_22_L, stSCLDMACfg->u32Base_Y[1]>>3);
+            W4BYTE(REG_SCL_DMA1_2A_L, stSCLDMACfg->u32Base_C[1]>>3);
+            W4BYTE(REG_SCL3_62_L, stSCLDMACfg->u32Base_V[1]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_2)
+        if(stSCLDMACfg->bvFlag.btsBase_2)
         {
-            W4BYTE(REG_SCL_DMA1_24_L, stSCLDMACfg.u32Base_Y[2]>>3);
-            W4BYTE(REG_SCL_DMA1_2C_L, stSCLDMACfg.u32Base_C[2]>>3);
-            W4BYTE(REG_SCL3_64_L, stSCLDMACfg.u32Base_V[2]>>3);
+            W4BYTE(REG_SCL_DMA1_24_L, stSCLDMACfg->u32Base_Y[2]>>3);
+            W4BYTE(REG_SCL_DMA1_2C_L, stSCLDMACfg->u32Base_C[2]>>3);
+            W4BYTE(REG_SCL3_64_L, stSCLDMACfg->u32Base_V[2]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_3)
+        if(stSCLDMACfg->bvFlag.btsBase_3)
         {
-            W4BYTE(REG_SCL_DMA1_26_L, stSCLDMACfg.u32Base_Y[3]>>3);
-            W4BYTE(REG_SCL_DMA1_2E_L, stSCLDMACfg.u32Base_C[3]>>3);
-            W4BYTE(REG_SCL3_66_L, stSCLDMACfg.u32Base_V[3]>>3);
+            W4BYTE(REG_SCL_DMA1_26_L, stSCLDMACfg->u32Base_Y[3]>>3);
+            W4BYTE(REG_SCL_DMA1_2E_L, stSCLDMACfg->u32Base_C[3]>>3);
+            W4BYTE(REG_SCL3_66_L, stSCLDMACfg->u32Base_V[3]>>3);
         }
-
-        W2BYTEMSK(REG_SCL_DMA1_30_L, stSCLDMACfg.u8MaxIdx<<3, BIT4|BIT3);
-        W2BYTEMSK(REG_SCL_DMA1_32_L, stSCLDMACfg.u16Width, 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA1_33_L, stSCLDMACfg.u16Height,0xFFFF);
-        u8420md = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420 ? 0 :
-                stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? 0 :
-                                            BIT7;
-        W2BYTEMSK(REG_SCL_DMA1_36_L, u8420md, BIT7);
-        W2BYTEMSK(REG_SCL_DMA1_36_L, 0x06, 0x0F); //422to444_md[1:0], 420to422_md[2], 420to422_md_avg[3]
-        W2BYTEMSK(REG_SCL_DMA1_02_L, stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14);
-        u8DataMd = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
-                                                                    0;
-        W2BYTEMSK(REG_SCL3_2A_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
-    }
-    else if(stSCLDMACfg.enRWMode == E_SCLDMA_FRM_W)
-    {
-        if(stSCLDMACfg.bvFlag.btsBase_0)
+        if(stSCLDMACfg->enBuffMode == E_SCLDMA_BUF_MD_RING)
         {
-            W4BYTE(REG_SCL_DMA1_08_L, stSCLDMACfg.u32Base_Y[0]>>3);
-            W4BYTE(REG_SCL_DMA1_10_L, stSCLDMACfg.u32Base_C[0]>>3);
-            W4BYTE(REG_SCL3_58_L, stSCLDMACfg.u32Base_V[0]>>3);
-        }
-        if(stSCLDMACfg.bvFlag.btsBase_1)
-        {
-            W4BYTE(REG_SCL_DMA1_0A_L, stSCLDMACfg.u32Base_Y[1]>>3);
-            W4BYTE(REG_SCL_DMA1_12_L, stSCLDMACfg.u32Base_C[1]>>3);
-            W4BYTE(REG_SCL3_5A_L, stSCLDMACfg.u32Base_V[1]>>3);
-        }
-        if(stSCLDMACfg.bvFlag.btsBase_2)
-        {
-            W4BYTE(REG_SCL_DMA1_0C_L, stSCLDMACfg.u32Base_Y[2]>>3);
-            W4BYTE(REG_SCL_DMA1_14_L, stSCLDMACfg.u32Base_C[2]>>3);
-            W4BYTE(REG_SCL3_5C_L, stSCLDMACfg.u32Base_V[2]>>3);
-        }
-        if(stSCLDMACfg.bvFlag.btsBase_3)
-        {
-            W4BYTE(REG_SCL_DMA1_0E_L, stSCLDMACfg.u32Base_Y[3]>>3);
-            W4BYTE(REG_SCL_DMA1_16_L, stSCLDMACfg.u32Base_C[3]>>3);
-            W4BYTE(REG_SCL3_5E_L, stSCLDMACfg.u32Base_V[3]>>3);
-        }
-
-        W2BYTEMSK(REG_SCL_DMA1_18_L, stSCLDMACfg.u8MaxIdx<<3, BIT4|BIT3);
-        W2BYTEMSK(REG_SCL_DMA1_1A_L, stSCLDMACfg.u16Width, 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA1_1B_L, stSCLDMACfg.u16Height,0xFFFF);
-        u8420md = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
-                stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
-                                                                0;
-        W2BYTEMSK(REG_SCL_DMA1_1E_L, u8420md, BIT3);
-        W2BYTEMSK(REG_SCL_DMA1_1E_L, BIT2, BIT2);
-        W2BYTEMSK(REG_SCL_DMA1_01_L, stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14);
-        u8DataMd = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
-                                                                    0;
-        W2BYTEMSK(REG_SCL3_28_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
-        Hal_SCLDMA_GetHVSPResolutionForEnsure(stSCLDMACfg.u16Height);
-
-    }
-    else if(stSCLDMACfg.enRWMode == E_SCLDMA_IMI_R)
-    {
-        if((stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420)||(stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420))
-        {
-            u32yoffset=(stSCLDMACfg.u16Width*16)/8-1;
-            u32coffset=(stSCLDMACfg.u16Width*8)/8-1;
+            W2BYTEMSK(REG_SCL_DMA1_30_L, stSCLDMACfg->u8MaxIdx<<3, BIT4|BIT3);
         }
         else
         {
-            u32yoffset=(stSCLDMACfg.u16Width*16)/8-2;
-            u32coffset=(stSCLDMACfg.u16Width*16)/8-2;
+            W2BYTEMSK(REG_SCL_DMA1_30_L, 0, BIT4|BIT3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_0)
+        W2BYTE(REG_SCL_DMA1_32_L, stSCLDMACfg->u16Width );
+        W2BYTE(REG_SCL_DMA1_33_L, stSCLDMACfg->u16Height);
+        u8420md = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422? BIT7 : 0;
+        W2BYTEMSK(REG_SCL_DMA1_36_L, u8420md, BIT7);
+        W2BYTEMSK(REG_SCL_DMA1_36_L, 0x06, 0x0F); //422to444_md[1:0], 420to422_md[2], 420to422_md_avg[3]
+        W2BYTEMSK(REG_SCL_DMA1_02_L, stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14);
+        u8DataMd = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
+                                                                    0;
+        W2BYTEMSK(REG_SCL3_2A_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
+    }
+    else if(stSCLDMACfg->enRWMode == E_SCLDMA_FRM_W)
+    {
+        if(stSCLDMACfg->bvFlag.btsBase_0)
         {
-            W4BYTE(REG_SCL_DMA1_20_L, stSCLDMACfg.u32Base_Y[0]>>3);
-            W4BYTE(REG_SCL_DMA1_28_L, stSCLDMACfg.u32Base_C[0]>>3);
-            W4BYTE(REG_SCL3_30_L, stSCLDMACfg.u32Base_V[0]>>3);
+            W4BYTE(REG_SCL_DMA1_08_L, stSCLDMACfg->u32Base_Y[0]>>3);
+            W4BYTE(REG_SCL_DMA1_10_L, stSCLDMACfg->u32Base_C[0]>>3);
+            W4BYTE(REG_SCL3_58_L, stSCLDMACfg->u32Base_V[0]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_1)
+        if(stSCLDMACfg->bvFlag.btsBase_1)
         {
-            W4BYTE(REG_SCL_DMA1_22_L, stSCLDMACfg.u32Base_Y[1]>>3);
-            W4BYTE(REG_SCL_DMA1_2A_L, stSCLDMACfg.u32Base_C[1]>>3);
-            W4BYTE(REG_SCL3_32_L, stSCLDMACfg.u32Base_V[1]>>3);
+            W4BYTE(REG_SCL_DMA1_0A_L, stSCLDMACfg->u32Base_Y[1]>>3);
+            W4BYTE(REG_SCL_DMA1_12_L, stSCLDMACfg->u32Base_C[1]>>3);
+            W4BYTE(REG_SCL3_5A_L, stSCLDMACfg->u32Base_V[1]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_2)
+        if(stSCLDMACfg->bvFlag.btsBase_2)
         {
-            W4BYTE(REG_SCL_DMA1_24_L, stSCLDMACfg.u32Base_Y[2]>>3);
-            W4BYTE(REG_SCL_DMA1_2C_L, stSCLDMACfg.u32Base_C[2]>>3);
-            W4BYTE(REG_SCL3_34_L, stSCLDMACfg.u32Base_V[2]>>3);
+            W4BYTE(REG_SCL_DMA1_0C_L, stSCLDMACfg->u32Base_Y[2]>>3);
+            W4BYTE(REG_SCL_DMA1_14_L, stSCLDMACfg->u32Base_C[2]>>3);
+            W4BYTE(REG_SCL3_5C_L, stSCLDMACfg->u32Base_V[2]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_3)
+        if(stSCLDMACfg->bvFlag.btsBase_3)
         {
-            W4BYTE(REG_SCL_DMA1_26_L, stSCLDMACfg.u32Base_Y[3]>>3);
-            W4BYTE(REG_SCL_DMA1_2E_L, stSCLDMACfg.u32Base_C[3]>>3);
-            W4BYTE(REG_SCL3_36_L, stSCLDMACfg.u32Base_V[3]>>3);
+            W4BYTE(REG_SCL_DMA1_0E_L, stSCLDMACfg->u32Base_Y[3]>>3);
+            W4BYTE(REG_SCL_DMA1_16_L, stSCLDMACfg->u32Base_C[3]>>3);
+            W4BYTE(REG_SCL3_5E_L, stSCLDMACfg->u32Base_V[3]>>3);
+        }
+        if(stSCLDMACfg->enBuffMode == E_SCLDMA_BUF_MD_RING)
+        {
+            W2BYTEMSK(REG_SCL_DMA1_18_L, stSCLDMACfg->u8MaxIdx<<3, BIT4|BIT3);
+        }
+        else
+        {
+            W2BYTEMSK(REG_SCL_DMA1_18_L, 0, BIT4|BIT3);
+        }
+        W2BYTE(REG_SCL_DMA1_1A_L, stSCLDMACfg->u16Width);
+        W2BYTE(REG_SCL_DMA1_1B_L, stSCLDMACfg->u16Height);
+        u8420md = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV420 ? BIT3 :
+                stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT3 :
+                                                                0;
+        W2BYTEMSK(REG_SCL_DMA1_1E_L, u8420md, BIT3);
+        W2BYTEMSK(REG_SCL_DMA1_1E_L, BIT2, BIT2);
+        W2BYTEMSK(REG_SCL_DMA1_01_L, stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14);
+        u8DataMd = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
+                                                                    0;
+        W2BYTEMSK(REG_SCL3_28_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
+        Hal_SCLDMA_GetHVSPResolutionForEnsure(stSCLDMACfg->u16Height);
+
+    }
+    else if(stSCLDMACfg->enRWMode == E_SCLDMA_IMI_R)
+    {
+        if((stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV420)||(stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420))
+        {
+            u32yoffset=(stSCLDMACfg->u16Width*16)/8-1;
+            u32coffset=(stSCLDMACfg->u16Width*8)/8-1;
+        }
+        else
+        {
+            u32yoffset=(stSCLDMACfg->u16Width*16)/8-2;
+            u32coffset=(stSCLDMACfg->u16Width*16)/8-2;
+        }
+        if(stSCLDMACfg->bvFlag.btsBase_0)
+        {
+            W4BYTE(REG_SCL_DMA1_20_L, stSCLDMACfg->u32Base_Y[0]>>3);
+            W4BYTE(REG_SCL_DMA1_28_L, stSCLDMACfg->u32Base_C[0]>>3);
+            W4BYTE(REG_SCL3_60_L, stSCLDMACfg->u32Base_V[0]>>3);
+        }
+        if(stSCLDMACfg->bvFlag.btsBase_1)
+        {
+            W4BYTE(REG_SCL_DMA1_22_L, stSCLDMACfg->u32Base_Y[1]>>3);
+            W4BYTE(REG_SCL_DMA1_2A_L, stSCLDMACfg->u32Base_C[1]>>3);
+            W4BYTE(REG_SCL3_62_L, stSCLDMACfg->u32Base_V[1]>>3);
+        }
+        if(stSCLDMACfg->bvFlag.btsBase_2)
+        {
+            W4BYTE(REG_SCL_DMA1_24_L, stSCLDMACfg->u32Base_Y[2]>>3);
+            W4BYTE(REG_SCL_DMA1_2C_L, stSCLDMACfg->u32Base_C[2]>>3);
+            W4BYTE(REG_SCL3_64_L, stSCLDMACfg->u32Base_V[1]>>3);
+        }
+        if(stSCLDMACfg->bvFlag.btsBase_3)
+        {
+            W4BYTE(REG_SCL_DMA1_26_L, stSCLDMACfg->u32Base_Y[3]>>3);
+            W4BYTE(REG_SCL_DMA1_2E_L, stSCLDMACfg->u32Base_C[3]>>3);
+            W4BYTE(REG_SCL3_66_L, stSCLDMACfg->u32Base_V[1]>>3);
         }
 
-        W2BYTEMSK(REG_SCL_DMA1_30_L, stSCLDMACfg.u8MaxIdx<<3, BIT4|BIT3);
-        W2BYTEMSK(REG_SCL_DMA1_32_L, stSCLDMACfg.u16Width, 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA1_33_L, stSCLDMACfg.u16Height,0xFFFF);
+        W2BYTEMSK(REG_SCL_DMA1_30_L, stSCLDMACfg->u8MaxIdx<<3, BIT4|BIT3);
+        W2BYTE(REG_SCL_DMA1_32_L, stSCLDMACfg->u16Width);
+        W2BYTE(REG_SCL_DMA1_33_L, stSCLDMACfg->u16Height);
 
-        W2BYTEMSK(REG_SCL_DMA1_36_L, stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV422 ? BIT7 : 0, BIT7);
-        u8DataMd = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
+        W2BYTEMSK(REG_SCL_DMA1_36_L, stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422 ? BIT7 : 0, BIT7);
+        u8DataMd = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
                                                                     0;
         W2BYTEMSK(REG_SCL3_2A_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
         W2BYTEMSK(REG_SCL_DMA1_36_L, 0x06, 0x0F); //422to444_md[1:0], 420to422_md[2], 420to422_md_avg[3]
@@ -1355,7 +1539,7 @@ void Hal_SCLDMA_SetSC3DMAConfig(ST_SCLDMA_RW_CONFIG stSCLDMACfg)
     }
     else
     {
-        HAL_SCLDMA_ERR(printf("%s %d, wrong RWmode: %d\n",  __FUNCTION__, __LINE__, stSCLDMACfg.enRWMode));
+        HAL_SCLDMA_ERR(printf("%s %d, wrong RWmode: %d\n",  __FUNCTION__, __LINE__, stSCLDMACfg->enRWMode));
     }
 
 }
@@ -1374,51 +1558,59 @@ void Hal_SCLDMA_SetDisplayDMAEn(EN_SCLDMA_RW_MODE_TYPE enRWMode, MS_BOOL bEn)
 }
 
 
-void Hal_SCLDMA_SetDisplayDMAConfig(ST_SCLDMA_RW_CONFIG stSCLDMACfg)
+void Hal_SCLDMA_SetDisplayDMAConfig(ST_SCLDMA_RW_CONFIG *stSCLDMACfg)
 {
     MS_U8 u8420md;
     MS_U8 u8DataMd;
-    if(stSCLDMACfg.enRWMode == E_SCLDMA_DBG_R)
+    if(stSCLDMACfg->enRWMode == E_SCLDMA_DBG_R)
     {
-        if(stSCLDMACfg.bvFlag.btsBase_0)
+        if(stSCLDMACfg->bvFlag.btsBase_0)
         {
-            W4BYTE(REG_SCL_DMA0_20_L, stSCLDMACfg.u32Base_Y[0]>>3);
-            W4BYTE(REG_SCL_DMA0_28_L, stSCLDMACfg.u32Base_C[0]>>3);
+            W4BYTE(REG_SCL_DMA0_20_L, stSCLDMACfg->u32Base_Y[0]>>3);
+            W4BYTE(REG_SCL_DMA0_28_L, stSCLDMACfg->u32Base_C[0]>>3);
+            W4BYTE(REG_SCL3_30_L, stSCLDMACfg->u32Base_V[0]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_1)
+        if(stSCLDMACfg->bvFlag.btsBase_1)
         {
-            W4BYTE(REG_SCL_DMA0_22_L, stSCLDMACfg.u32Base_Y[1]>>3);
-            W4BYTE(REG_SCL_DMA0_2A_L, stSCLDMACfg.u32Base_C[1]>>3);
+            W4BYTE(REG_SCL_DMA0_22_L, stSCLDMACfg->u32Base_Y[1]>>3);
+            W4BYTE(REG_SCL_DMA0_2A_L, stSCLDMACfg->u32Base_C[1]>>3);
+            W4BYTE(REG_SCL3_32_L, stSCLDMACfg->u32Base_V[1]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_2)
+        if(stSCLDMACfg->bvFlag.btsBase_2)
         {
-            W4BYTE(REG_SCL_DMA0_24_L, stSCLDMACfg.u32Base_Y[2]>>3);
-            W4BYTE(REG_SCL_DMA0_2C_L, stSCLDMACfg.u32Base_C[2]>>3);
+            W4BYTE(REG_SCL_DMA0_24_L, stSCLDMACfg->u32Base_Y[2]>>3);
+            W4BYTE(REG_SCL_DMA0_2C_L, stSCLDMACfg->u32Base_C[2]>>3);
+            W4BYTE(REG_SCL3_34_L, stSCLDMACfg->u32Base_V[2]>>3);
         }
-        if(stSCLDMACfg.bvFlag.btsBase_3)
+        if(stSCLDMACfg->bvFlag.btsBase_3)
         {
-            W4BYTE(REG_SCL_DMA0_26_L, stSCLDMACfg.u32Base_Y[3]>>3);
-            W4BYTE(REG_SCL_DMA0_2E_L, stSCLDMACfg.u32Base_C[3]>>3);
+            W4BYTE(REG_SCL_DMA0_26_L, stSCLDMACfg->u32Base_Y[3]>>3);
+            W4BYTE(REG_SCL_DMA0_2E_L, stSCLDMACfg->u32Base_C[3]>>3);
+            W4BYTE(REG_SCL3_36_L, stSCLDMACfg->u32Base_V[3]>>3);
         }
-
-        W2BYTEMSK(REG_SCL_DMA0_30_L, stSCLDMACfg.u8MaxIdx<<3, BIT4|BIT3);
-        W2BYTEMSK(REG_SCL_DMA0_32_L, stSCLDMACfg.u16Width, 0xFFFF);
-        W2BYTEMSK(REG_SCL_DMA0_33_L, stSCLDMACfg.u16Height,0xFFFF);
-        u8420md = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV420 ? 0 :
-                stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? 0 :
-                                            BIT7;
-        W2BYTEMSK(REG_SCL_DMA0_36_L, u8420md, BIT7);
+        if(stSCLDMACfg->enBuffMode == E_SCLDMA_BUF_MD_RING)
+        {
+            W2BYTEMSK(REG_SCL_DMA0_30_L, stSCLDMACfg->u8MaxIdx<<3, BIT4|BIT3);
+        }
+        else
+        {
+            W2BYTEMSK(REG_SCL_DMA0_30_L, 0, BIT4|BIT3);
+        }
+        W2BYTE(REG_SCL_DMA0_32_L, stSCLDMACfg->u16Width);
+        W2BYTE(REG_SCL_DMA0_33_L, stSCLDMACfg->u16Height);
+        u8420md = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422? BIT7 : 0;
+         W2BYTEMSK(REG_SCL_DMA0_36_L, u8420md, BIT7);
         W2BYTEMSK(REG_SCL_DMA0_36_L, 0x06, 0x0F); //422to444_md[1:0], 420to422_md[2], 420to422_md_avg[3]
-        W2BYTEMSK(REG_SCL_DMA0_02_L, stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14);
-        u8DataMd = stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
-                    stSCLDMACfg.enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
+        W2BYTEMSK(REG_SCL_DMA0_02_L, stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUV422 ? BIT14 : 0, BIT14);
+        u8DataMd = stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep420 ? BIT0 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YCSep422 ? BIT1 :
+                    stSCLDMACfg->enColor == E_SCLDMA_COLOR_YUVSep422 ? BIT2 :
                                                                     0;
         W2BYTEMSK(REG_SCL3_1E_L, u8DataMd, BIT0|BIT1|BIT2); // w_422_pack[14]
     }
     else
     {
-        HAL_SCLDMA_ERR(printf("%s %d, wrong RWmode: %d\n",  __FUNCTION__, __LINE__, stSCLDMACfg.enRWMode));
+        HAL_SCLDMA_ERR(printf("%s %d, wrong RWmode: %d\n",  __FUNCTION__, __LINE__, stSCLDMACfg->enRWMode));
     }
 }
 
@@ -1643,57 +1835,47 @@ MS_U8 Hal_SCLDMA_GetISPFrameCountReg(void)
 }
 MS_U16 Hal_SCLDMA_GetDMAOutputCount(EN_SCLDMA_CLIENT_TYPE enClientType)
 {
-    MS_U16 u16Idx,u16def;
+    MS_U16 u16Idx;
 
     switch(enClientType)
         {
         case E_SCLDMA_1_FRM_W:
             u16Idx = R2BYTE(REG_SCL_DMA2_10_L);
-            u16def = R2BYTE(REG_SCL_DMA0_1B_L);
             break;
 
         case E_SCLDMA_1_IMI_W:
             u16Idx = R2BYTE(REG_SCL_DMA2_11_L);
-            u16def = R2BYTE(REG_SCL_DMA1_4B_L);
             break;
 
         case E_SCLDMA_1_SNP_W:
             u16Idx = R2BYTE(REG_SCL_DMA2_12_L);
-            u16def = R2BYTE(REG_SCL_DMA0_4B_L);
             break;
 
         case E_SCLDMA_2_FRM_W:
             u16Idx = R2BYTE(REG_SCL_DMA2_13_L);
-            u16def = R2BYTE(REG_SCL_DMA0_63_L);
             break;
 
         case E_SCLDMA_2_FRM2_W:
             u16Idx = R2BYTE(REG_SCL_DMA2_18_L);
-            u16def = R2BYTE(REG_SCL_DMA1_63_L);
             break;
 
         case E_SCLDMA_2_IMI_W:
             u16Idx = R2BYTE(REG_SCL_DMA2_14_L);
-            u16def = R2BYTE(REG_SCL_DMA0_7B_L);
             break;
 
         case E_SCLDMA_3_FRM_R:
             u16Idx = R2BYTE(REG_SCL_DMA2_16_L);
-            u16def = R2BYTE(REG_SCL_DMA1_33_L);
             break;
 
         case E_SCLDMA_3_FRM_W:
             u16Idx = R2BYTE(REG_SCL_DMA2_15_L);
-            u16def = R2BYTE(REG_SCL_DMA1_1B_L);
             break;
 
         case E_SCLDMA_4_FRM_R:
             u16Idx = R2BYTE(REG_SCL_DMA2_17_L);
-            u16def = R2BYTE(REG_SCL_DMA0_33_L);
             break;
         default:
             u16Idx = 0x0;
-            u16def = 0x0;
             break;
         }
     return ((u16Idx));
@@ -1701,7 +1883,7 @@ MS_U16 Hal_SCLDMA_GetDMAOutputCount(EN_SCLDMA_CLIENT_TYPE enClientType)
 }
 MS_U16 Hal_SCLDMA_GetOutputHsize(EN_SCLDMA_CLIENT_TYPE enClientType)
 {
-    MS_U16 u16Idx,u16def;
+    MS_U16 u16def;
 
     switch(enClientType)
         {
@@ -1741,7 +1923,6 @@ MS_U16 Hal_SCLDMA_GetOutputHsize(EN_SCLDMA_CLIENT_TYPE enClientType)
             u16def = R2BYTE(REG_SCL_DMA0_32_L);
             break;
         default:
-            u16Idx = 0x0;
             u16def = 0x0;
             break;
         }
@@ -1750,10 +1931,10 @@ MS_U16 Hal_SCLDMA_GetOutputHsize(EN_SCLDMA_CLIENT_TYPE enClientType)
 }
 MS_U16 Hal_SCLDMA_GetOutputVsize(EN_SCLDMA_CLIENT_TYPE enClientType)
 {
-    MS_U16 u16Idx,u16def;
+    MS_U16 u16def;
 
     switch(enClientType)
-        {
+    {
         case E_SCLDMA_1_FRM_W:
             u16def = R2BYTE(REG_SCL_DMA0_1B_L);
             break;
@@ -1790,10 +1971,8 @@ MS_U16 Hal_SCLDMA_GetOutputVsize(EN_SCLDMA_CLIENT_TYPE enClientType)
             u16def = R2BYTE(REG_SCL_DMA0_33_L);
             break;
         default:
-            u16Idx = 0x0;
-            u16def = 0x0;
-            break;
-        }
+            return 0;
+    }
     return ((u16def));
 
 }

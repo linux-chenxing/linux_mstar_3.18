@@ -74,7 +74,7 @@ void* vcbr_allocate(void)
     vhe_rctl* rqcx;
 
     if (!(rqct = MEM_ALLC(sizeof(vhe_vcbr))))
-        return NULL;
+        return rqct;
 
     MEM_COPY(rqct->name, VCBR_NAME, 5);
     rqct->release = _vcbr_ops_free;

@@ -27,6 +27,11 @@ static JPE_IOC_RET_STATUS_e _DrvJpeCheckCfg(JpeCfg_t *pCfg)
 
     // Alignment check
     align = (pCfg->eRawFormat == JPE_RAW_NV12 || pCfg->eRawFormat == JPE_RAW_NV21) ? 16 : 8;
+    if(pCfg->nWidth % align)
+    {
+        JPE_MSG(JPE_MSG_ERR, "source width is not aligned to %d\n", align);
+        return JPE_IOC_RET_BAD_INBUF;
+    }
     if(pCfg->nHeight % align)
     {
         JPE_MSG(JPE_MSG_ERR, "source height is not aligned to %d\n", align);
@@ -285,7 +290,9 @@ static JPE_IOC_RET_STATUS_e DrvJpeSetQTable(JpeHandle_t *jpeHandle, const u16 *q
     for(i=0; i<size; i++)
     {
         y_table[i] = (u16)(((u32)q_table_y[i] * (u32)q_scale + 50) / 100);
+        y_table[i] = y_table[i] ? y_table[i] : 1;
         c_table[i] = (u16)(((u32)q_table_c[i] * (u32)q_scale + 50) / 100);
+        c_table[i] = c_table[i] ? c_table[i] : 1;
     }
 
     if(HalJpeSetQTable(&jpeHandle->jpeHalHandle,y_table, c_table, size) != 0)

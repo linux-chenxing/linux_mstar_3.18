@@ -157,6 +157,7 @@ MS_BOOL HAL_FSP_ReadID(MS_U8 *pu8Data, MS_U32 u32Size);
 MS_BOOL HAL_FSP_ReadStatusReg(MS_U8 *pu8StatusReg);
 MS_BOOL HAL_FSP_ReadStatusReg2(MS_U8 *pu8StatusReg);
 MS_BOOL HAL_FSP_WriteStatusReg(MS_U16 u16StatusReg);
+MS_BOOL HAL_FSP_WriteExtAddrReg(MS_U8 u8ExtAddrReg);
 MS_BOOL HAL_QPI_Enable(MS_BOOL bEnable);
 MS_BOOL HAL_QPI_RESET(MS_BOOL bEnable);
 

@@ -42,7 +42,7 @@ static void __ops_free(mhve_ops* mops)
 void*
 mvheops_acquire(int id)
 {
-    mhve_ops* mops;
+    mhve_ops* mops = NULL;
     while (NULL != (mops = MEM_ALLC(sizeof(vhe_hndl))))
     {
         vhe_hndl* hndl;
@@ -75,7 +75,7 @@ mvheops_acquire(int id)
         hndl->i_rpbn = 2;
         return mops;
     }
-    return NULL;
+    return mops;
 }
 
 static int _seq_sync(mhve_ops* mops)
@@ -220,7 +220,7 @@ static int _enc_done(mhve_ops* mops)
         mhve_vpb* vpb = &hndl->m_encp;
         rpb_t* rpb = hndl->m_rpbs+idx;
         if (!rpb->b_valid)
-            vpb->i_index = rpb->i_index; 
+            vpb->i_index = rpb->i_index;
         rpb->i_index = -1;
     }
 

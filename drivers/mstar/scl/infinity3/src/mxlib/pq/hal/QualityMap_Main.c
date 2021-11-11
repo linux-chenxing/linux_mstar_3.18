@@ -36,12 +36,12 @@
 
 #if(PQ_ONLY_SUPPORT_BIN == 0)
 
-#include "Infinity_Main.c"                  // table config parameter
-#include "Infinity_Main_1920.c"             // table config parameter
-#include "Infinity_Main_HSPRule.c"          // table config parameter
-#include "Infinity_Main_VSPRule.c"          // table config parameter
-#include "Infinity_Main_GRule.c"            // table config parameter
-#include "Infinity_Main_1920_GRule.c"       // table config parameter
+#include "Infinity3e_Main.c"                  // table config parameter
+#include "Infinity3e_Main_1920.c"             // table config parameter
+#include "Infinity3e_Main_HSPRule.c"          // table config parameter
+#include "Infinity3e_Main_VSPRule.c"          // table config parameter
+#include "Infinity3e_Main_GRule.c"            // table config parameter
+#include "Infinity3e_Main_1920_GRule.c"       // table config parameter
 #endif
 
 #include "QualityMode.h"

@@ -5,7 +5,7 @@
 
 #define		IOCTL_XPM_REGISTER_SOURCE			_IO(XPM_IOCTL_MAGIC, 0x81)
 #define		IOCTL_XPM_DEREGISTER_SOURCE			_IO(XPM_IOCTL_MAGIC, 0x82)
-#define 	IOCTL_XPM_MAXNR    					0xFF
+#define 	IOCTL_XPM_MAXNR    					0x83
 
 
 #endif

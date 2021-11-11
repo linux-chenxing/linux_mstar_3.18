@@ -20,6 +20,15 @@
 #define __HAL_ISP_H__
 #include "ms_platform.h"
 
+/////////////// MIU MenuLoad ///////////
+#define GAMMA_TBL_SIZE                 (256)
+#define ALSC_TBL_SIZE                  (4209)
+#define DEFECTPIX_TBL_SIZE             (512)
+#define FPN_OFFSET_TBL_SIZE            (2816)
+
+#define MLOAD_DMA_SIZE (4096*4)
+extern dma_addr_t mload_dma_addr;
+extern u8  *mload_virt_addr;
 
 typedef enum {
     INT_SR_VREF_RISING      = 0,
@@ -71,23 +80,48 @@ typedef enum {
 
 //Memnuload IQ Table
 typedef enum {
-    IQ_MEM_ALSC_RGAIN       = 0,
-    IQ_MEM_ALSC_GGAIN       = 1,
-    IQ_MEM_ALSC_BGAIN       = 2,
-    IQ_MEM_GAMMA12TO10_RTBL = 3,
-    IQ_MEM_GAMMA12TO10_GTBL = 4,
-    IQ_MEM_GAMMA12TO10_BTBL = 5,
-    IQ_MEM_DEFECT_PIXEL_POS = 6,
-    IQ_MEM_GAMMA10TO12_RTBL = 7,
-    IQ_MEM_GAMMA10TO12_GTBL = 8,
-    IQ_MEM_GAMMA10TO12_BTBL = 9,
-    IQ_MEM_GAMMA_CORR_RTBL  = 10,
-    IQ_MEM_GAMMA_CORR_GTBL  = 11,
-    IQ_MEM_GAMMA_CORR_BTBL  = 12,
+  eMLOAD_ID_ALSC_R_TBL    = 0,
+  eMLOAD_ID_ALSC_G_TBL    = 1,
+  eMLOAD_ID_ALSC_B_TBL    = 2,
 
-    IQ_MEM_NUM = 13,
+  eMLOAD_ID_LN_GMA12TO10_R = 3,
+  eMLOAD_ID_LN_GMA12TO10_G = 4,
+  eMLOAD_ID_LN_GMA12TO10_B = 5,
 
-} IQ_MEM_ID;
+  eMLOAD_ID_DP_TBL=6,
+
+  eMLOAD_ID_LN_GMA10TO10_R = 10,
+  eMLOAD_ID_LN_GMA10TO10_G = 11,
+  eMLOAD_ID_LN_GMA10TO10_B = 12,
+
+  eMLOAD_ID_FPN_OFFSET     = 14,
+
+  eMLOAD_ID_NUM            = 15
+
+} ISP_MLOAD_ID;
+
+typedef struct
+{
+    u16 alsc_r[ALSC_TBL_SIZE] __attribute__((aligned(16)));
+    u16 alsc_g[ALSC_TBL_SIZE] __attribute__((aligned(16)));
+    u16 alsc_b[ALSC_TBL_SIZE] __attribute__((aligned(16)));
+    u16 gamma12to10_r[GAMMA_TBL_SIZE] __attribute__((aligned(16)));
+    u16 gamma12to10_g[GAMMA_TBL_SIZE] __attribute__((aligned(16)));
+    u16 gamma12to10_b[GAMMA_TBL_SIZE] __attribute__((aligned(16)));
+    u16 dpc[DEFECTPIX_TBL_SIZE] __attribute__((aligned(16)));
+    u16 gamma10to10_r[GAMMA_TBL_SIZE] __attribute__((aligned(16)));
+    u16 gamma10to10_g[GAMMA_TBL_SIZE] __attribute__((aligned(16)));
+    u16 gamma10to10_b[GAMMA_TBL_SIZE] __attribute__((aligned(16)));
+    u16 fpn[FPN_OFFSET_TBL_SIZE] __attribute__((aligned(16)));
+    char dummy[16] __attribute__((aligned(16)));
+}__attribute__((aligned(16))) MLoadLayout;
+
+#ifndef member_size
+#define member_size(type, member) sizeof(((type *)0)->member)
+#endif
+#ifndef offsetof
+#define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
+#endif
 
 #define VSYNC_BIT   9
 #define MIPI_BIT    0
@@ -95,13 +129,6 @@ typedef enum {
 #define ISP_CHECKBITS(a, b)   ((a) & ((u32)0x01 << (b)))
 #define ISP_SETBIT(a, b)      (a) |= (((u32)0x01 << (b)))
 #define ISP_CLEARBIT(a, b)    (a) &= (~((u32)0x01 << (b)))
-
-#define IQ_LEN_ALSC_GAIN            (4209)
-#define IQ_LEN_GAMMA_12TO10         (256)
-#define IQ_LEN_DEFECT_PIXEL         (2048)
-#define IQ_LEN_GAMMA_10TO12         (256)
-#define IQ_LEN_GAMMA_CORRECT        (256)
-
 
 void HalInitRegs(void **pRegs);
 void HalISPMaskInt(void);
@@ -140,19 +167,32 @@ void HalISPGetVDOSPitch(volatile int *pPitch);
 void HalISPGetVDOSSize(volatile int *pSize, volatile int Pitch);
 void HalISPGetVDOSData(volatile unsigned long *pAddr, volatile int Size);
 
-void HalISPSetAeBaseAddr(volatile unsigned long Addr);
-void HalISPSetAwbBaseAddr(volatile unsigned long Addr);
-void HalISPSetMotBaseAddr(volatile unsigned long Addr);
+void HalISPSetAeBaseAddr(unsigned long Addr,unsigned int size);
+void HalISPSetAwbBaseAddr(unsigned long Addr,unsigned int size);
+void HalISPSetMotBaseAddr(unsigned long Addr,unsigned int size);
 void HalISPSetDnrFbAddr(unsigned long phys_addr, int id);
+void HalISPSetAfBaseAddr(unsigned long Addr,unsigned int size);
+void HalISPSetHistoBaseAddr(unsigned long Addr,unsigned int size);
+void HalISPSetRgbIRBaseAddr(unsigned long Addr,unsigned int size);
+void HalISPSetDnrUbound(unsigned long Addr);
 
-void HalISPMLoadWriteData(volatile unsigned int Sram_Id,volatile unsigned long Addr);
-void HalISPMLoadWriteAllTable(volatile unsigned long Addr, volatile unsigned long *offset);
-void HalISPMLoadReadData(volatile unsigned int Sram_Id, volatile unsigned short Offset, volatile unsigned short *Data);
+void HalISPMLoadWriteData(ISP_MLOAD_ID Sram_Id,volatile unsigned long Addr, size_t size);
+void HalISPMLoadWriteAllTable(volatile unsigned long Addr);
+void HalISPMLoadReadData(ISP_MLOAD_ID Sram_Id, volatile unsigned short *table, size_t size);
 u8 HalISPGetFrameDoneCount(void);
 void IspReset(void);
+void IspDisable(void);
 void IspInputEnable(u32 enable);
 void IspAsyncEnable(u32 enable);
 void HalISPSetOBC(int u4OBC_a, int u4OBC_b);
+void HalIspSetAEDgain(u32 enable,u32 gain);
+void HalISPSetYUVCCM(const s16 *ccm_coff);
+void HalISPGetImageSize(u32* width,u32* height);
+void HalISPGetAeBlkSize(u32* x,u32* y);
+u32 HalISPGetRotEn(void);
+u32 HalISPWdmaTrigger(isp_ioctl_trigger_wdma_attr wdma_attr);
+u32 HalISPVDOSInit(void);
+
 //// CSI ////
 typedef enum
 {
@@ -198,4 +238,6 @@ void HalCsi_MaskErrorInt(void* handle,u32 mask);
 void HalCsi_ClearErrorInt(void* handle, u32 clear);
 void HalCsi_ErrIntMaskSet(void* handle,u32 mask);
 u32 HalCsi_ErrIntMaskGet(void* handle);
+u8 * mloadInit(size_t mloadLayoutSize);
+void mloadDeInit(void *dmaBuf, size_t mloadLayoutSize);
 #endif //__HAL_ISP_H__

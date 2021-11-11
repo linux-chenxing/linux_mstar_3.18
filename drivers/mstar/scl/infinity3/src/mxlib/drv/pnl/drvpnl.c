@@ -110,6 +110,7 @@
 #include "drvpnl.h"
 #include "mdrv_scl_dbg.h"
 #include "drvsclirq_st.h"
+#include "drvsclirq.h"
 
 //-------------------------------------------------------------------------------------------------
 //  Defines & Macro
@@ -120,7 +121,7 @@
 #define DISLPLLCLK  0 //close lpll clk
 #define FACTOR 10*1000000
 #define LVDS_MPLL_CLOCK_MHZ 432 //ToDo
-#define PNL_CAL_LPLL_DCLK(Vtt,Htt,Freq)   ((Vtt) * (Htt) * (Freq))
+#define PNL_CAL_LPLL_DCLK(Vtt,Htt,Freq)   ((MS_U64)((Vtt) * (Htt) * (Freq)))
 #define PNL_CAL_DCLK_FACKTOR(Lpll_Gain)   ((MS_U64)LVDS_MPLL_CLOCK_MHZ * (MS_U64)524288 * (MS_U64)(Lpll_Gain))
 #define PNL_CAL_LPLL_SET(DclkFacktor,Dclk_x10,Lpll_Div)      (((DclkFacktor) * (FACTOR)) + (((MS_U64)(Dclk_x10) * (MS_U64)(Lpll_Div)) >> 1))
 //-------------------------------------------------------------------------------------------------
@@ -128,11 +129,23 @@
 //-------------------------------------------------------------------------------------------------
 MS_S32 _PNL_Mutex = -1;
 MS_BOOL gPnlOpen;
-MS_U32 gu32Dclk;
+MS_U64 gu64Dclk;
 
 //-------------------------------------------------------------------------------------------------
 //  Functions
 //-------------------------------------------------------------------------------------------------
+void Drv_PNL_Exit(unsigned char bCloseISR)
+{
+    if(_PNL_Mutex != -1)
+    {
+        MsOS_DeleteMutex(_PNL_Mutex);
+        _PNL_Mutex = -1;
+    }
+    if(bCloseISR)
+    {
+        Drv_SCLIRQ_Exit();
+    }
+}
 MS_BOOL Drv_PNL_Init(ST_PNL_INIT_CONFIG *pCfg)
 {
     char word[] = {"_PNL_Mutex"};
@@ -179,15 +192,12 @@ void Drv_PNL_Resume(void)
 {
     Hal_PNL_Set_Init_Y2R();
 }
-MS_U32 Drv_PNL_GetLPLLDclk(void)
+MS_U64 Drv_PNL_GetLPLLDclk(void)
 {
-    return gu32Dclk;
+    return gu64Dclk;
 }
 MS_BOOL Drv_PNL_Set_Timing_Config(ST_PNL_TIMING_CONFIG *pCfg)
 {
-    MS_U16 u16LpllIdx = 0xFF;
-    MS_U32 u32Lpll_Gain, u32Lpll_Div, u32Dclk;
-    MS_U64 u64Dclk_x10, u64DclkFacktor, u64LpllSet;
     SCL_DBG(SCL_DBG_LV_PNL(), "[DRVPNL]%s, V:[%d %d %d %d], H:[%d %d %d %d]\n "
         , __FUNCTION__, pCfg->u16Vsync_St, pCfg->u16Vsync_End, pCfg->u16Vde_St, pCfg->u16Vde_End,
         pCfg->u16Hsync_St, pCfg->u16Hsync_End, pCfg->u16Hde_St, pCfg->u16Hde_End);
@@ -196,35 +206,7 @@ MS_BOOL Drv_PNL_Set_Timing_Config(ST_PNL_TIMING_CONFIG *pCfg)
 
 
     // LPLL setting
-    u64Dclk_x10 = PNL_CAL_LPLL_DCLK(pCfg->u16Vtt,pCfg->u16Htt,(pCfg->u16VFreqx10));
-    u32Dclk = PNL_CAL_LPLL_DCLK(pCfg->u16Vtt,pCfg->u16Htt,(pCfg->u16VFreqx10/10));
-    SCL_DBG(SCL_DBG_LV_PNL(), "[DRVPNL]%sDCLK:%ld\n ", __FUNCTION__, u32Dclk);
-    gu32Dclk = u32Dclk;
-    u16LpllIdx = Hal_PNL_Get_Lpll_Idx(u32Dclk);
-    if(u16LpllIdx == 0xFF)
-    {
-        DRV_PNL_ERR(printf("[DRVPNL]%s:: LPLL Clk is out of range\n", __FUNCTION__));
-        return FALSE;
-    }
-
-    u32Lpll_Gain = Hal_PNL_Get_Lpll_Gain(u16LpllIdx);
-    u32Lpll_Div  = Hal_PNL_Get_Lpll_Div(u16LpllIdx);
-
-    u64DclkFacktor = PNL_CAL_DCLK_FACKTOR(u32Lpll_Gain);
-    u64LpllSet = PNL_CAL_LPLL_SET(u64DclkFacktor,u64Dclk_x10,u32Lpll_Div);
-
-    do_div(u64LpllSet, u64Dclk_x10);
-    do_div(u64LpllSet, u32Lpll_Div);
-    SCL_DBG(SCL_DBG_LV_PNL(), "[DRVPNL]%s::LpllIdx=%d, Gain:%d, Div:%d, LpllSet=%x\n "
-        ,__FUNCTION__, (int)u16LpllIdx, (int)u32Lpll_Gain, (int)u32Lpll_Div, (int)u64LpllSet);
-
-    Hal_PNL_Dump_Lpll_Setting(u16LpllIdx);
-    Hal_PNL_Set_Lpll_Set((MS_U32)u64LpllSet);
-    if(!gbclkforcemode)
-    {
-        Hal_PNL_Set_OpenLpll_CLK(ENLPLLCLK);
-        gPnlOpen = 1;
-    }
+    Drv_PNL_Set_LPLL_Config(pCfg);
     //Tgen setting
     Hal_PNL_Set_VSync_St(pCfg->u16Vsync_St);
     Hal_PNL_Set_VSync_End(pCfg->u16Vsync_End);
@@ -242,7 +224,53 @@ MS_BOOL Drv_PNL_Set_Timing_Config(ST_PNL_TIMING_CONFIG *pCfg)
     Hal_PNL_Set_Hde_End(pCfg->u16Hde_End);
     Hal_PNL_Set_Htt(pCfg->u16Htt);
     Hal_PNL_Set_FrameColr_En(0);
-    Hal_PNL_Set_Chiptop();
+    Hal_PNL_Set_Chiptop(1);
+
+    return TRUE;
+}
+
+MS_BOOL Drv_PNL_Set_LPLL_Config(ST_PNL_TIMING_CONFIG *pCfg)
+{
+    MS_U16 u16LpllIdx;
+    MS_U32 u32Lpll_Gain, u32Lpll_Div;
+    MS_U64 u64Dclk_x10, u64DclkFacktor, u64LpllSet,u64Dclk;
+    // LPLL setting
+    u64Dclk_x10 = PNL_CAL_LPLL_DCLK((MS_U64)pCfg->u16Vtt,(MS_U64)pCfg->u16Htt,(MS_U64)(pCfg->u16VFreqx10));
+    u64Dclk = PNL_CAL_LPLL_DCLK((MS_U64)pCfg->u16Vtt,(MS_U64)pCfg->u16Htt,(MS_U64)(pCfg->u16VFreqx10/10));
+    SCL_DBG(SCL_DBG_LV_PNL(), "[DRVPNL]%sDCLK:%lld\n ", __FUNCTION__, u64Dclk);
+    gu64Dclk = u64Dclk;
+    u16LpllIdx = Hal_PNL_Get_Lpll_Idx(u64Dclk);
+    if(u16LpllIdx == 0xFF)
+    {
+        DRV_PNL_ERR(printf("[DRVPNL]%s:: LPLL Clk is out of range\n", __FUNCTION__));
+        return FALSE;
+    }
+
+    u32Lpll_Gain = Hal_PNL_Get_Lpll_Gain(u16LpllIdx);
+    u32Lpll_Div  = Hal_PNL_Get_Lpll_Div(u16LpllIdx);
+
+    u64DclkFacktor = PNL_CAL_DCLK_FACKTOR(u32Lpll_Gain);
+    u64LpllSet = PNL_CAL_LPLL_SET(u64DclkFacktor,u64Dclk_x10,u32Lpll_Div);
+
+    if(u64Dclk_x10>1  && u64LpllSet>1)
+    {
+        do_div(u64LpllSet, u64Dclk_x10);
+    }
+
+    if(u32Lpll_Div >1 && u64LpllSet>1)
+    {
+        do_div(u64LpllSet, u32Lpll_Div);
+    }
+    SCL_DBG(SCL_DBG_LV_PNL(), "[DRVPNL]%s::LpllIdx=%d, Gain:%d, Div:%d, LpllSet=%x\n "
+        ,__FUNCTION__, (int)u16LpllIdx, (int)u32Lpll_Gain, (int)u32Lpll_Div, (int)u64LpllSet);
+
+    Hal_PNL_Dump_Lpll_Setting(u16LpllIdx);
+    Hal_PNL_Set_Lpll_Set((MS_U32)u64LpllSet);
+    if(!gbclkforcemode)
+    {
+        Hal_PNL_Set_OpenLpll_CLK(ENLPLLCLK);
+        gPnlOpen = 1;
+    }
 
     return TRUE;
 }

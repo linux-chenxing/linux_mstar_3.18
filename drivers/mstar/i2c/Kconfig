@@ -12,3 +12,8 @@ config MS_I2C_INFINITY
     tristate "I2C driver support for iNfinity"
     depends on MS_I2C        
     depends on ARCH_INFINITY    	
+
+config MS_I2C_INFINITY3
+    tristate "I2C driver support for iNfinity3"
+    depends on MS_I2C
+    depends on ARCH_INFINITY3

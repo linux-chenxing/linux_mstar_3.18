@@ -1367,9 +1367,6 @@ MODULE_LICENSE ("GPL");
 #include "ehci-mstar.c"
 #define	PLATFORM_DRIVER		ehci_hcd_mstar_driver
 #define	SECOND_PLATFORM_DRIVER	second_ehci_hcd_mstar_driver
-#define	THIRD_PLATFORM_DRIVER	third_ehci_hcd_mstar_driver
-#define	FOURTH_PLATFORM_DRIVER	fourth_ehci_hcd_mstar_driver
-#define	FIFTH_PLATFORM_DRIVER	fifth_ehci_hcd_mstar_driver
 #endif
 
 static int __init ehci_hcd_init(void)
@@ -1379,6 +1376,9 @@ static int __init ehci_hcd_init(void)
 	if (usb_disabled())
 		return -ENODEV;
 
+#if (MP_USB_MSTAR==1)
+	ehci_init_driver((struct hc_driver*)&ehci_mstar_hc_driver, NULL);
+#endif
 	printk(KERN_INFO "%s: " DRIVER_DESC "\n", hcd_name);
 	set_bit(USB_EHCI_LOADED, &usb_hcds_loaded);
 	if (test_bit(USB_UHCI_LOADED, &usb_hcds_loaded) ||
@@ -1400,11 +1400,37 @@ static int __init ehci_hcd_init(void)
 #endif
 
 #ifdef PLATFORM_DRIVER
+#if (MP_USB_MSTAR==1)
+	printk("Mstar_ehc_init version:%s\n", EHCI_MSTAR_VERSION);
+	#if !defined(DISABLE_SECOND_EHC)
+	retval = platform_driver_register(&SECOND_PLATFORM_DRIVER);
+	if (retval < 0)
+		goto clean0;
+	#endif
+	retval = platform_driver_register(&PLATFORM_DRIVER);
+	if (retval < 0)
+		goto clean0;
+	#ifdef ENABLE_THIRD_EHC
+	retval = platform_driver_register(&THIRD_PLATFORM_DRIVER);
+	if (retval < 0)
+		goto clean0;
+	#endif
+	#ifdef ENABLE_FOURTH_EHC
+	retval = platform_driver_register(&FOURTH_PLATFORM_DRIVER);
+	if (retval < 0)
+		goto clean0;
+	#endif
+	#ifdef ENABLE_FIFTH_EHC
+	retval = platform_driver_register(&FIFTH_PLATFORM_DRIVER);
+	if (retval < 0)
+		goto clean0;
+	#endif
+#else
 	retval = platform_driver_register(&PLATFORM_DRIVER);
 	if (retval < 0)
 		goto clean0;
 #endif
-
+#endif
 #ifdef PS3_SYSTEM_BUS_DRIVER
 	retval = ps3_ehci_driver_register(&PS3_SYSTEM_BUS_DRIVER);
 	if (retval < 0)
@@ -1439,6 +1465,7 @@ clean2:
 #ifdef PLATFORM_DRIVER
 	platform_driver_unregister(&PLATFORM_DRIVER);
 clean0:
+	printk("[USB]error\n");
 #endif
 #ifdef CONFIG_DYNAMIC_DEBUG
 	debugfs_remove(ehci_debug_root);
@@ -1449,180 +1476,7 @@ err_debug:
 	return retval;
 }
 
-#if (MP_USB_MSTAR==1)
-static int __init second_ehci_hcd_init(void)
-{
-	int retval = 0;
-
-	pr_debug("%s: block sizes: qh %Zd qtd %Zd itd %Zd sitd %Zd\n",
-		 hcd_name,
-		 sizeof(struct ehci_qh), sizeof(struct ehci_qtd),
-		 sizeof(struct ehci_itd), sizeof(struct ehci_sitd));
-
-#ifdef PLATFORM_DRIVER
-	retval = platform_driver_register(&SECOND_PLATFORM_DRIVER);
-	if (retval < 0)
-		goto clean0;
-#endif
-
-#ifdef PCI_DRIVER
-	retval = pci_register_driver(&PCI_DRIVER);
-	if (retval < 0)
-		goto clean1;
-#endif
-
-#ifdef PS3_SYSTEM_BUS_DRIVER
-	retval = ps3_ehci_driver_register(&PS3_SYSTEM_BUS_DRIVER);
-	if (retval < 0)
-		goto clean2;
-#endif
-
-#ifdef OF_PLATFORM_DRIVER
-	retval = of_register_platform_driver(&OF_PLATFORM_DRIVER);
-	if (retval < 0)
-		goto clean3;
-#endif
-	return retval;
-
-#ifdef OF_PLATFORM_DRIVER
-	/* of_unregister_platform_driver(&OF_PLATFORM_DRIVER); */
-clean3:
-#endif
-#ifdef PS3_SYSTEM_BUS_DRIVER
-	ps3_ehci_driver_unregister(&PS3_SYSTEM_BUS_DRIVER);
-clean2:
-#endif
-#ifdef PCI_DRIVER
-	pci_unregister_driver(&PCI_DRIVER);
-clean1:
-#endif
-#ifdef PLATFORM_DRIVER
-	platform_driver_unregister(&SECOND_PLATFORM_DRIVER);
-clean0:
-#endif
-#ifdef DEBUG
-	debugfs_remove(ehci_debug_root);
-	ehci_debug_root = NULL;
-#endif
-	return retval;
-}
-
-#ifdef ENABLE_THIRD_EHC
-static int __init third_ehci_hcd_init(void)
-{
-	int retval = 0;
-
-	pr_debug("%s: block sizes: qh %Zd qtd %Zd itd %Zd sitd %Zd\n",
-		 hcd_name,
-		 sizeof(struct ehci_qh), sizeof(struct ehci_qtd),
-		 sizeof(struct ehci_itd), sizeof(struct ehci_sitd));
-
-#ifdef PLATFORM_DRIVER
-	retval = platform_driver_register(&THIRD_PLATFORM_DRIVER);
-	if (retval < 0)
-		goto clean0;
-#endif
-
-	return retval;
-
-clean0:
-#ifdef DEBUG
-	debugfs_remove(ehci_debug_root);
-	ehci_debug_root = NULL;
-#endif
-	return retval;
-}
-#endif
-
-#ifdef ENABLE_FOURTH_EHC
-static int __init fourth_ehci_hcd_init(void)
-{
-	int retval = 0;
-
-	pr_debug("%s: block sizes: qh %Zd qtd %Zd itd %Zd sitd %Zd\n",
-		 hcd_name,
-		 sizeof(struct ehci_qh), sizeof(struct ehci_qtd),
-		 sizeof(struct ehci_itd), sizeof(struct ehci_sitd));
-
-#ifdef PLATFORM_DRIVER
-	retval = platform_driver_register(&FOURTH_PLATFORM_DRIVER);
-	if (retval < 0)
-		goto clean0;
-#endif
-
-	return retval;
-
-clean0:
-#ifdef DEBUG
-	debugfs_remove(ehci_debug_root);
-	ehci_debug_root = NULL;
-#endif
-	return retval;
-}
-#endif
-
-#ifdef ENABLE_FIFTH_EHC
-static int __init fifth_ehci_hcd_init(void)
-{
-	int retval = 0;
-
-	pr_debug("%s: block sizes: qh %Zd qtd %Zd itd %Zd sitd %Zd\n",
-		 hcd_name,
-		 sizeof(struct ehci_qh), sizeof(struct ehci_qtd),
-		 sizeof(struct ehci_itd), sizeof(struct ehci_sitd));
-
-#ifdef PLATFORM_DRIVER
-	retval = platform_driver_register(&FIFTH_PLATFORM_DRIVER);
-	if (retval < 0)
-		goto clean0;
-#endif
-
-	return retval;
-
-clean0:
-#ifdef DEBUG
-	debugfs_remove(ehci_debug_root);
-	ehci_debug_root = NULL;
-#endif
-	return retval;
-}
-#endif
-
-static int __init all_ehci_hcd_init(void)
-{
-	int retval = 0;
-	
-	printk("Mstar_ehc_init version:%s\n", EHCI_MSTAR_VERSION);
-
-
-	retval = second_ehci_hcd_init();
-	if (retval < 0)
-		return retval;
-
-	retval = ehci_hcd_init();
-	if (retval < 0)
-		return retval;
-
-#ifdef ENABLE_THIRD_EHC
-	retval = third_ehci_hcd_init();
-	if (retval < 0)
-		return retval;
-#endif
-#ifdef ENABLE_FOURTH_EHC
-	retval = fourth_ehci_hcd_init();
-	if (retval < 0)
-		return retval;
-#endif
-#ifdef ENABLE_FIFTH_EHC
-	retval = fifth_ehci_hcd_init();
-	if (retval < 0)
-		return retval;
-#endif
-	return retval;
-}
-#endif
-
-#if (MP_USB_MSTAR==1)
+#if 0//(MP_USB_MSTAR==1)
 module_init(all_ehci_hcd_init);
 #else
 module_init(ehci_hcd_init);
@@ -1637,7 +1491,23 @@ static void __exit ehci_hcd_cleanup(void)
 	platform_driver_unregister(&OF_PLATFORM_DRIVER);
 #endif
 #ifdef PLATFORM_DRIVER
+#if (MP_USB_MSTAR==1)
 	platform_driver_unregister(&PLATFORM_DRIVER);
+	#if !defined(DISABLE_SECOND_EHC)
+	platform_driver_unregister(&SECOND_PLATFORM_DRIVER);
+	#endif
+	#ifdef ENABLE_THIRD_EHC
+	platform_driver_unregister(&THIRD_PLATFORM_DRIVER);
+	#endif
+	#ifdef ENABLE_FOURTH_EHC
+	platform_driver_unregister(&FOURTH_PLATFORM_DRIVER);
+	#endif
+	#ifdef ENABLE_FIFTH_EHC
+	platform_driver_unregister(&FIFTH_PLATFORM_DRIVER);
+	#endif
+#else
+	platform_driver_unregister(&PLATFORM_DRIVER);
+#endif
 #endif
 #ifdef PS3_SYSTEM_BUS_DRIVER
 	ps3_ehci_driver_unregister(&PS3_SYSTEM_BUS_DRIVER);
@@ -1647,70 +1517,8 @@ static void __exit ehci_hcd_cleanup(void)
 #endif
 	clear_bit(USB_EHCI_LOADED, &usb_hcds_loaded);
 }
-#if (MP_USB_MSTAR==1)
-static void __exit second_ehci_hcd_cleanup(void)
-{
-#ifdef OF_PLATFORM_DRIVER
-	of_unregister_platform_driver(&OF_PLATFORM_DRIVER);
-#endif
-#ifdef PLATFORM_DRIVER
-	platform_driver_unregister(&SECOND_PLATFORM_DRIVER);
-#endif
-#ifdef PCI_DRIVER
-	pci_unregister_driver(&PCI_DRIVER);
-#endif
-#ifdef PS3_SYSTEM_BUS_DRIVER
-	ps3_ehci_driver_unregister(&PS3_SYSTEM_BUS_DRIVER);
-#endif
-#ifdef DEBUG
-	debugfs_remove(ehci_debug_root);
-#endif
-}
 
-#ifdef ENABLE_THIRD_EHC
-static void __exit third_ehci_hcd_cleanup(void)
-{
-#ifdef PLATFORM_DRIVER
-	platform_driver_unregister(&THIRD_PLATFORM_DRIVER);
-#endif
-}
-#endif
-
-#ifdef ENABLE_FOURTH_EHC
-static void __exit fourth_ehci_hcd_cleanup(void)
-{
-#ifdef PLATFORM_DRIVER
-	platform_driver_unregister(&FOURTH_PLATFORM_DRIVER);
-#endif
-}
-#endif
-
-#ifdef ENABLE_FIFTH_EHC
-static void __exit fifth_ehci_hcd_cleanup(void)
-{
-#ifdef PLATFORM_DRIVER
-	platform_driver_unregister(&FIFTH_PLATFORM_DRIVER);
-#endif
-}
-#endif
-
-static void __exit all_ehci_hcd_cleanup(void)
-{
-	ehci_hcd_cleanup();
-	second_ehci_hcd_cleanup();
-#ifdef ENABLE_THIRD_EHC
-	third_ehci_hcd_cleanup();
-#endif
-#ifdef ENABLE_FOURTH_EHC
-	fourth_ehci_hcd_cleanup();
-#endif
-#ifdef ENABLE_FIFTH_EHC
-	fifth_ehci_hcd_cleanup();
-#endif
-}
-#endif
-
-#if (MP_USB_MSTAR==1)
+#if 0//(MP_USB_MSTAR==1)
 module_exit(all_ehci_hcd_cleanup);
 #else
 module_exit(ehci_hcd_cleanup);

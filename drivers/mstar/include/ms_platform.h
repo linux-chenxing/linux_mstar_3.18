@@ -107,16 +107,10 @@ typedef enum
     MS_STORAGE_UNKNOWN =0x00,
     MS_STORAGE_NOR,
     MS_STORAGE_NAND,
+    MS_STORAGE_EMMC,
+    MS_STORAGE_SPINAND_ECC,
+    MS_STORAGE_SPINAND_NOECC,
 } MS_STORAGE_TYPE;
-
-typedef enum
-{
-    MS_PACKAGE_UNKNOWN =0x00,
-    MS_PACKAGE_BGA,
-    MS_PACKAGE_QFP,
-    MS_PACKAGE_BGA_256M,
-    MS_PACKAGE_QFN,
-} MS_PACKAGE_TYPE;
 
 extern void     Chip_Flush_MIU_Pipe(void);
 extern  void    Chip_Flush_Memory(void);
@@ -142,8 +136,8 @@ extern unsigned long long Chip_Get_RIU_Phys(void);
 extern int Chip_Get_RIU_Size(void);
 extern int Chip_Function_Set(int function_id, int param);
 
-extern MS_STORAGE_TYPE Chip_Get_Storage_Type(void);
-extern MS_PACKAGE_TYPE Chip_Get_Package_Type(void);
+extern int Chip_Get_Storage_Type(void);
+extern int Chip_Get_Package_Type(void);
 extern u64 Chip_Get_US_Ticks(void);
 
 typedef enum

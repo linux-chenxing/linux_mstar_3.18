@@ -71,7 +71,7 @@ static MS_U8 _u8CSRAM4Table=0xFF;
 static MS_BOOL _bcheckReg    = 0 ;
 static MS_BOOL _bcheckPQsize = 0 ;
 #if (ENABLE_PQ_CMDQ)
-#define CMDQ_MAX_CMD_SIZE 256
+#define CMDQ_MAX_CMD_SIZE 512
 static MS_BOOL _bCMDQ_En = 0;
 static MS_BOOL _bfire_En = 0;
 static MS_U8   _u8CMDQ_FmCnt = 0;
@@ -79,7 +79,7 @@ static MS_U32 _u32CMDQ_Cmd[CMDQ_MAX_CMD_SIZE];
 static MS_U16 _u16CMDQ_Msk[CMDQ_MAX_CMD_SIZE];
 static MS_U16 _u16CMDQ_Val[CMDQ_MAX_CMD_SIZE];
 static MS_U16 _u16CMDQCmdCnt = 0;
-
+static MS_U8 gu8debugflag = 0;
 #define PQ_REG_CMDQ_Write(u32Reg, u16Value, u16Mask) \
     do{                                            \
         _u32CMDQ_Cmd[_u16CMDQCmdCnt] = u32Reg;  \
@@ -389,19 +389,22 @@ static void _MDrv_PQ_DumpCombRegTable(EN_IP_Info* pIP_Info)
 static void _MDrv_PQ_CMDQ_Fire(MS_U8 u8FmCnt)
 {
     MS_U16 i;
-
+    MS_CMDQ_CMDReg stCfg;
     for(i=0; i<_u16CMDQCmdCnt; i++)
     {
-        Drv_CMDQ_AssignFrameWriteCmd( _u32CMDQ_Cmd[i], _u16CMDQ_Val[i], _u16CMDQ_Msk[i], u8FmCnt);
+        Drv_CMDQ_FillCmd(&stCfg, _u32CMDQ_Cmd[i], _u16CMDQ_Val[i], _u16CMDQ_Msk[i]);
+        Drv_CMDQ_WriteCmd(EN_CMDQ_TYPE_IP0, &stCfg, 0);
         SCL_DBG(SCL_DBG_LV_DRVCMDQ()&EN_DBGMG_CMDQEVEL_NORMAL, "Cmdq:: ADD:%04lX, VAL:%02X, MSK:%02X, FMCnt:%02X\n"
             ,_u32CMDQ_Cmd[i], _u16CMDQ_Val[i],_u16CMDQ_Msk[i], u8FmCnt);
     }
 
     _u16CMDQCmdCnt = 0;
     if(_bfire_En)
-    Drv_CMDQ_Fire(EN_CMDQ_TYPE_IP0,TRUE);
+    {
+        Drv_CMDQ_Fire(EN_CMDQ_TYPE_IP0,TRUE);
+        Drv_CMDQ_SetEventForFire();
+    }
 }
-
 
 static void _MDrv_PQ_DumpSclaerRegTableByData(EN_IP_Info* pIP_Info, PQ_DATA_INFO *pData)
 {
@@ -413,7 +416,7 @@ static void _MDrv_PQ_DumpSclaerRegTableByData(EN_IP_Info* pIP_Info, PQ_DATA_INFO
 
 
     SC_BK_STORE_MUTEX;
-    SCL_DBG(SCL_DBG_LV_DRVPQ(), "[PQ]%s %d:: CmdqEn:%d, CmdqFmCnt=%d\n"
+    SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "[PQ]%s %d:: CmdqEn:%d, CmdqFmCnt=%d\n"
         , __FUNCTION__, __LINE__, _bCMDQ_En, _u8CMDQ_FmCnt);
     if (pIP_Info->u8TabIdx >= pIP_Info->u8TabNums)
     {
@@ -442,13 +445,13 @@ static void _MDrv_PQ_DumpSclaerRegTableByData(EN_IP_Info* pIP_Info, PQ_DATA_INFO
     #else
         if (u8CurBank != SC_BK_CURRENT)
         {
-            SCL_DBG(SCL_DBG_LV_DRVPQ(), "<<bankswitch=%02x>>\r\n",u8CurBank);
+            SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "<<bankswitch=%02x>>\r\n",u8CurBank);
             SC_BK_SWITCH(u8CurBank);
         }
 
         u32Addr =  BK_SCALER_BASE | (u32Addr & 0x00FF);
     #endif
-    SCL_DBG(SCL_DBG_LV_DRVPQ(), "BK =%04X, addr=%02X, msk=%02X, value=%02X\r\n"
+    SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "BK =%04X, addr=%02X, msk=%02X, value=%02X\r\n"
         ,(MS_U16)((u32Addr&0xFFFF00)>>8), (MS_U16)(u32Addr&0xFF), (MS_U16)u8Mask, (MS_U16)u8Value);
     #if (ENABLE_PQ_CMDQ)
 
@@ -464,15 +467,17 @@ static void _MDrv_PQ_DumpSclaerRegTableByData(EN_IP_Info* pIP_Info, PQ_DATA_INFO
             u8Value_CMDQ=PQ_REG_FUNC_READ(u32Addr);
             if((u8Value_CMDQ&u8Mask)!=(u8Value&u8Mask))
             {
-                (printf("BK =%04X, addr=%02X, msk=%02X, value=%02X ckvalue=%02X\r\n",(MS_U16)((u32Addr&0xFFFF00)>>8), (MS_U16)(u32Addr&0xFF), (MS_U16)u8Mask, (MS_U16)(u8Value&u8Mask), (MS_U16)(u8Value_CMDQ)));
+                PQ_REG_FUNC(u32Addr, u8Value, u8Mask);
+                (SCL_DBGERR("BK =%04X, addr=%02X, msk=%02X, value=%02X ckvalue=%02X\r\n",(MS_U16)((u32Addr&0xFFFF00)>>8), (MS_U16)(u32Addr&0xFF), (MS_U16)u8Mask, (MS_U16)(u8Value&u8Mask), (MS_U16)(u8Value_CMDQ)));
             }
             else if(((u8Value)==(0xFF))&&((u8Value_CMDQ&u8Mask)!=u8Mask))
             {
-                (printf("BK =%04X, addr=%02X, msk=%02X, value=%02X ckvalue=%02X\r\n",(MS_U16)((u32Addr&0xFFFF00)>>8), (MS_U16)(u32Addr&0xFF), (MS_U16)u8Mask, (MS_U16)(u8Value&u8Mask), (MS_U16)(u8Value_CMDQ)));
+                PQ_REG_FUNC(u32Addr, u8Value, u8Mask);
+                (SCL_DBGERR("BK =%04X, addr=%02X, msk=%02X, value=%02X ckvalue=%02X\r\n",(MS_U16)((u32Addr&0xFFFF00)>>8), (MS_U16)(u32Addr&0xFF), (MS_U16)u8Mask, (MS_U16)(u8Value&u8Mask), (MS_U16)(u8Value_CMDQ)));
             }
             else
             {
-                SCL_DBG(SCL_DBG_LV_DRVPQ(), "pass BK =%04X, addr=%02X value=%02X ckvalue=%02X\n"
+                SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "pass BK =%04X, addr=%02X value=%02X ckvalue=%02X\n"
                     ,(MS_U16)((u32Addr&0xFFFF00)>>8), (MS_U16)(u32Addr&0xFF), (MS_U16)(u8Value&u8Mask), (MS_U16)(u8Value_CMDQ&u8Mask));
             }
             pIP_Info->pIPTable+=(REG_ADDR_SIZE+REG_MASK_SIZE+pIP_Info->u8TabNums); // next
@@ -482,7 +487,8 @@ static void _MDrv_PQ_DumpSclaerRegTableByData(EN_IP_Info* pIP_Info, PQ_DATA_INFO
                 u8MaskL = pIP_Info->pIPTable[2];
                 if(u8MaskL==0xFF)
                 {
-                    (printf("[warning HL]BK =%04X, addr=%02X\r\n",(MS_U16)((u32Addr&0xFFFF00)>>8),(MS_U16)(u32Addr&0xFF) ));
+                    SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "[warning HL]BK =%04X, addr=%02X\r\n"
+                        ,(MS_U16)((u32Addr&0xFFFF00)>>8),(MS_U16)(u32Addr&0xFF));
                 }
             }
             pIP_Info->pIPTable-=(REG_ADDR_SIZE+REG_MASK_SIZE+pIP_Info->u8TabNums); // roll back
@@ -495,7 +501,7 @@ static void _MDrv_PQ_DumpSclaerRegTableByData(EN_IP_Info* pIP_Info, PQ_DATA_INFO
             }
             else if((u8Value!=0 && u8Value!=0xFF) &&(~u8Mask & u8Value))
             {
-                SCL_DBG(SCL_DBG_LV_DRVPQ(), "[PQ-minor]BK =%04X, addr=%02X, msk=%02X, value=%02X ,msk&val=%02X \r\n"
+                SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "[PQ-minor]BK =%04X, addr=%02X, msk=%02X, value=%02X ,msk&val=%02X \r\n"
                     ,(MS_U16)((u32Addr&0xFFFF00)>>8), (MS_U16)(u32Addr&0xFF), (MS_U16)u8Mask,(MS_U16)(u8Value) ,(MS_U16)(u8Value&u8Mask));
             }
         }
@@ -537,7 +543,9 @@ static void _MDrv_PQ_DumpScalerRegTable(EN_IP_Info* pIP_Info)
     MS_U32 u32Addr;
     MS_U8 u8Mask;
     MS_U8 u8Value;
-    MS_U8 u8CurBank = 0xff;
+#if (!SCALER_REGISTER_SPREAD)
+    MS_U8 u8CurBank;
+#endif
 
 #ifdef MSOS_TYPE_LINUX
     #if(ENABLE_PQ_MLOAD)
@@ -569,8 +577,9 @@ static void _MDrv_PQ_DumpScalerRegTable(EN_IP_Info* pIP_Info)
 
         if (u32Addr == _END_OF_TBL_) // check end of table
             break;
-
+#if (!SCALER_REGISTER_SPREAD)
         u8CurBank = (MS_U8)(u32Addr >> 8);
+#endif
         PQ_DUMP_DBG(printf("XC bk =%x, addr=%x, msk=%x, value=%x\r\n", (MS_U16)((u32Addr&0xFF00)>>8), (MS_U16)(u32Addr&0xFF), (MS_U16)u8Mask, (MS_U16)u8Value));
 #if(ENABLE_PQ_MLOAD)
         if(_bMLoadEn)
@@ -799,7 +808,7 @@ static void _MDrv_PQ_DumpTable(EN_IP_Info* pIP_Info)
         break;
 
     case PQ_TABTYPE_C_SRAM4:
-        if (_u8SRAM4Table != pIP_Info->u8TabIdx)
+        if (_u8CSRAM4Table != pIP_Info->u8TabIdx)
         {
             PQ_DUMP_FILTER_DBG(printf("old  Csram4: %u, new  Csram4: %u\r\n",
                 (MS_U16)_u8CSRAM4Table, (MS_U16)pIP_Info->u8TabIdx));
@@ -1062,7 +1071,7 @@ static MS_U8 _MDrv_PQ_GetGRule_TableIndex(MS_U8 u8GRuleType, MS_U8 u8PQSrcType, 
 
 static void _MDrv_PQ_Set_CmdqCfg(PQ_CMDQ_CONFIG CmdqCfg)
 {
-    SCL_DBG(SCL_DBG_LV_DRVPQ(), "[PQ]%s %d:: En=%d, FmCnt=%d\n",__FUNCTION__, __LINE__, CmdqCfg.bEnFmCnt, CmdqCfg.u8FmCnt);
+    SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "[PQ]%s %d:: En=%d, FmCnt=%d\n",__FUNCTION__, __LINE__, CmdqCfg.bEnFmCnt, CmdqCfg.u8FmCnt);
 #if (ENABLE_PQ_CMDQ)
     _bCMDQ_En = CmdqCfg.bEnFmCnt;
     _u8CMDQ_FmCnt = CmdqCfg.bEnFmCnt ? CmdqCfg.u8FmCnt : 0;
@@ -1070,10 +1079,33 @@ static void _MDrv_PQ_Set_CmdqCfg(PQ_CMDQ_CONFIG CmdqCfg)
     _u16CMDQCmdCnt = 0;
 #endif
 }
+static MS_U16 _MDrv_PQ_GetIPRegCount(MS_U16 u16PQSrcType,MS_U8 u8PQIPIdx)
+{
+    EN_IP_Info ip_Info;
+    MS_U8 u8TabIdx;
+    MS_U32 u32Addr;
+    MS_U16 u16DataIdx = 0;
 
+    u8TabIdx = (MS_U8)_MDrv_PQ_GetTableIndex(u16PQSrcType, u8PQIPIdx);
+
+    ip_Info = _MDrv_PQ_GetTable(u8TabIdx, u8PQIPIdx);
+    SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "[PQ]%s %d::SrcType=%d, IPIdx=%d, TabType=%d\r\n"
+        ,__FUNCTION__, __LINE__, u16PQSrcType, u8PQIPIdx, ip_Info.u8TabType);
+    while (1)
+    {
+        u32Addr = (ip_Info.pIPTable[0]<<8) + ip_Info.pIPTable[1];
+        if(u32Addr == _END_OF_TBL_) // check end of table
+        {
+            break;
+        }
+        ip_Info.pIPTable+=(REG_ADDR_SIZE+REG_MASK_SIZE+ip_Info.u8TabNums); // next
+        u16DataIdx++;
+    }
+    return u16DataIdx;
+}
 static void _MDrv_PQ_Check_Type(PQ_CHECK_TYPE EnCheck)
 {
-    SCL_DBG(SCL_DBG_LV_DRVPQ(), "[PQ]%s %d:: En=%d\n", __FUNCTION__, __LINE__, EnCheck);
+    SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "[PQ]%s %d:: En=%d\n", __FUNCTION__, __LINE__, EnCheck);
     if(EnCheck == PQ_CHECK_REG)
     {
         _bcheckReg = 1;
@@ -1089,6 +1121,39 @@ static void _MDrv_PQ_Check_Type(PQ_CHECK_TYPE EnCheck)
     }
 }
 
+static void _MDrv_PQ_SetPQDebugFlag(MS_U8 u8PQIPIdx)
+{
+    switch (u8PQIPIdx)
+    {
+        case PQ_IP_MCNR_Main ... PQ_IP_NLM_Main:
+        case PQ_IP_XNR_Main:
+            gu8debugflag = EN_DBGMG_PQLEVEL_BEFORECROP;
+            break;
+
+        case PQ_IP_ColorEng_422to444_Main ... PQ_IP_ColorEng_444to422_Main:
+            gu8debugflag = EN_DBGMG_PQLEVEL_COLORENG;
+            break;
+        case PQ_IP_VIP_HLPF_Main ... PQ_IP_VIP_UVC_Main:
+        case PQ_IP_VIP_ACK_Main ... PQ_IP_VIP_YCbCr_Clip_Main:
+            gu8debugflag = EN_DBGMG_PQLEVEL_VIPY;
+            break;
+        case PQ_IP_VIP_FCC_full_range_Main ... PQ_IP_VIP_IBC_SETTING_Main:
+            gu8debugflag = EN_DBGMG_PQLEVEL_VIPC;
+            break;
+
+        case PQ_IP_YEE_Main ... PQ_IP_UV_ADJUST_Main:
+            gu8debugflag = EN_DBGMG_PQLEVEL_AIP;
+            break;
+
+        case PQ_IP_YC10_UVM10_Main ... PQ_IP_YUV_Gamma_Main:
+            gu8debugflag = EN_DBGMG_PQLEVEL_AIPPOST;
+            break;
+        default:
+            gu8debugflag = EN_DBGMG_PQLEVEL_ELSE;
+            break;
+    }
+
+}
 
 static void _MDrv_PQ_LoadTableByData(MS_U16 u16PQSrcType, MS_U8 u8PQIPIdx, PQ_DATA_INFO *pData)
 {
@@ -1096,9 +1161,9 @@ static void _MDrv_PQ_LoadTableByData(MS_U16 u16PQSrcType, MS_U8 u8PQIPIdx, PQ_DA
     MS_U8 u8TabIdx;
 
     u8TabIdx = (MS_U8)_MDrv_PQ_GetTableIndex(u16PQSrcType, u8PQIPIdx);
-
+    _MDrv_PQ_SetPQDebugFlag(u8PQIPIdx);
     ip_Info = _MDrv_PQ_GetTable(u8TabIdx, u8PQIPIdx);
-    SCL_DBG(SCL_DBG_LV_DRVPQ(), "[PQ]%s %d::SrcType=%d, IPIdx=%d, TabType=%d\r\n"
+    SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "[PQ]%s %d::SrcType=%d, IPIdx=%d, TabType=%d\r\n"
         ,__FUNCTION__, __LINE__, u16PQSrcType, u8PQIPIdx, ip_Info.u8TabType);
 
 
@@ -1119,7 +1184,7 @@ static void _MDrv_PQ_LoadTableBySrcType(MS_U16 u16PQSrcType, MS_U8 u8PQIPIdx)
 {
     EN_IP_Info ip_Info;
     MS_U8 QMIPtype_size,i;
-    MS_U8 u8TabIdx;
+    MS_U8 u8TabIdx = 0;
     //XC_ApiStatusEx stXCStatusEx; Ryan
 
     if (u8PQIPIdx==PQ_IP_ALL)
@@ -1139,6 +1204,9 @@ static void _MDrv_PQ_LoadTableBySrcType(MS_U16 u16PQSrcType, MS_U8 u8PQIPIdx)
     for(i=0; i<QMIPtype_size; i++, u8PQIPIdx++)
     {
         if (_PQTableInfo.pSkipRuleIP[u8PQIPIdx]) {
+
+            SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "[PQ]SrcType=%u, IPIdx=%u, TabIdx=%u\r\n"
+                ,(MS_U16)u16PQSrcType, (MS_U16)u8PQIPIdx, (MS_U16)u8TabIdx);
             PQ_DBG(printf("skip ip idx:%u\r\n", u8PQIPIdx));
             continue;
         }
@@ -1161,12 +1229,14 @@ static void _MDrv_PQ_LoadTableBySrcType(MS_U16 u16PQSrcType, MS_U8 u8PQIPIdx)
         #endif
 
         u8TabIdx = (MS_U8)_MDrv_PQ_GetTableIndex(u16PQSrcType, u8PQIPIdx);
-        SCL_DBG(SCL_DBG_LV_DRVPQ(), "[PQ]SrcType=%u, IPIdx=%u, TabIdx=%u\r\n"
+        SCL_DBG(SCL_DBG_LV_DRVPQ() &gu8debugflag, "[PQ]SrcType=%u, IPIdx=%u, TabIdx=%u\r\n"
             ,(MS_U16)u16PQSrcType, (MS_U16)u8PQIPIdx, (MS_U16)u8TabIdx);
 
         ip_Info = _MDrv_PQ_GetTable(u8TabIdx, u8PQIPIdx);
-
-        _MDrv_PQ_DumpTable(&ip_Info);
+        if(ip_Info.u8TabType == PQ_TABTYPE_SCALER)//paul
+        {
+            _MDrv_PQ_DumpTable(&ip_Info);
+        }
 #if(ENABLE_PQ_LOAD_TABLE_INFO)
         _MDrv_PQ_Set_LoadTableInfo_IP_Tab(u8PQIPIdx, u8TabIdx);
 #endif

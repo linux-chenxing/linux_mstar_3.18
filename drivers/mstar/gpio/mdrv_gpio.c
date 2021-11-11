@@ -107,22 +107,9 @@ void MDrv_GPIO_Init(void)
 {
 	MHal_GPIO_Init();
 }
-
 EXPORT_SYMBOL(MDrv_GPIO_Init);
 
-
 //-------------------------------------------------------------------------------------------------
-/// select one pad to set
-/// @param  u8IndexGPIO              \b IN:  pad index
-/// @return None
-/// @note
-//-------------------------------------------------------------------------------------------------
-void MDrv_GPIO_WriteRegBit(U32 u32Reg, U8 u8Enable, U8 u8BitMsk)
-{
-    MHal_GPIO_WriteRegBit(u32Reg,u8Enable,u8BitMsk);
-}
-EXPORT_SYMBOL(MDrv_GPIO_WriteRegBit);
-
 /// select one pad to set
 /// @param  u8IndexGPIO              \b IN:  pad index
 /// @return None
@@ -241,6 +228,14 @@ void MDrv_Enable_GPIO_INT(U8 u8IndexGPIO)
     MHal_Enable_GPIO_INT(u8IndexGPIO);
 }
 EXPORT_SYMBOL(MDrv_Enable_GPIO_INT);
+
+int MDrv_GPIO_To_Irq(U8 u8IndexGPIO)
+{
+    return MHal_GPIO_To_Irq(u8IndexGPIO);
+}
+EXPORT_SYMBOL(MDrv_GPIO_To_Irq);
+
+
 
 //-------------------------------------------------------------------------------------------------
 /// set GPIO int polarity for selected one pad

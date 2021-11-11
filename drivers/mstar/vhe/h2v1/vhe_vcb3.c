@@ -57,7 +57,7 @@ void* vcb3_allocate(void)
     vhe_rctl* rqcx;
 
     if (!(rqct = MEM_ALLC(sizeof(vhe_vcb3))))
-        return NULL;
+        return rqct;
 
     MEM_COPY(rqct->name, VCB3_NAME, 5);
     rqct->release = _vcb3_ops_free;
@@ -243,7 +243,7 @@ static int vcb3_seq_conf(rqct_ops* rqct)
     vcb3->i_smooth = rqcx->i_period;
     vcb3->i_frmbit = (int)div_s64((int64)vcb3->i_btrate*vcb3->d_fmrate,vcb3->n_fmrate);
     vcb3->i_pixbit = (int)div_s64((int64)vcb3->i_frmbit*BPP_FAC,vcb3->i_pixels);
-    bits = vcb3->i_frmbit * rqcx->i_period; 
+    bits = vcb3->i_frmbit * rqcx->i_period;
     vcb3->i_gopbit = bits;
     bits = bits/4;
     vcb3->i_radius = bits;

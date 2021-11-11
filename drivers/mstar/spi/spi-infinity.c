@@ -167,8 +167,8 @@ static struct mutex		hal_mspi_lock;
     #define MSPI0_MODE_MASK 0x03
 #define MSPI1_MODE          0x0C //bit4~bit5
     #define MSPI1_MODE_MASK 0x30
-
-
+#define EJTAG_MODE          0xF
+    #define EJTAG_MODE_MASK 0x03
 //-------------------------------------------------------------------------------------------------
 //  Local Defines
 //-------------------------------------------------------------------------------------------------
@@ -329,6 +329,7 @@ struct mstar_spi {
     char *VirtClkBaseAddr;
     char *VirtChiptopBaseAddr;
     char u8channel;
+    int u32spi_mode;
 };
 
 static struct spi_board_info mstar_info = {
@@ -407,9 +408,9 @@ void HAL_MSPI_Init(struct mstar_spi *bs,MSPI_CH eChannel,u8 u8Mode)
     u16 TempData;
     //init  MSP
     //DEBUG_MSPI(E_MSPI_DBGLV_INFO,printk("HAL_MSPI_Init\n"));
-    mspi_dbgmsg("HAL_MSPI_Init\n");
+    mspi_dbgmsg("HAL_MSPI_Init : Channel=%d spi mode=%d\n",eChannel,u8Mode);
     mutex_init(&hal_mspi_lock);
-    if(eChannel > E_MSPI1|| u8Mode > 3)
+    if(eChannel > E_MSPI1 || u8Mode > 3 || u8Mode < 1)
     {
         return;
     }
@@ -430,6 +431,12 @@ void HAL_MSPI_Init(struct mstar_spi *bs,MSPI_CH eChannel,u8 u8Mode)
         TempData &= ~(MSPI0_MODE_MASK);
         TempData |= u8Mode;
         CHIPTOP_WRITE(MSPI0_MODE,TempData);
+
+        //Disable jtag mode   // IO PAD conflict turn off jtag
+        TempData = CHIPTOP_READ(EJTAG_MODE);
+        TempData &= ~(EJTAG_MODE_MASK);
+        TempData |= 0x0;
+        CHIPTOP_WRITE(EJTAG_MODE,TempData);
     }
     else if (eChannel == E_MSPI1)
     {
@@ -1149,7 +1156,7 @@ void mspi_config(struct mstar_spi *bs,u8 u8Channel)
     stDCConfig.u8TRW = 0;
 
     memset(&stFrameConfig,0x07,sizeof(MSPI_FrameConfig));
-    MDrv_MSPI_Init(bs,u8Channel,1);
+    MDrv_MSPI_Init(bs,u8Channel,bs->u32spi_mode);
     MDrv_MSPI_DCConfig(bs,u8Channel, &stDCConfig);
     MDrv_MSPI_SetMode(bs,u8Channel, mspimode);
     MDrv_MSPI_FRAMEConfig(bs,u8Channel,&stFrameConfig);
@@ -1403,6 +1410,9 @@ static int mstar_spi_probe(struct platform_device *pdev)
     bs->VirtClkBaseAddr = (char*)ioremap(BANK_TO_ADDR32(u4spi_bank[2])+u4IO_PHY_BASE, BANK_SIZE);
     bs->VirtChiptopBaseAddr =(char*)ioremap(BANK_TO_ADDR32(u4spi_bank[3])+u4IO_PHY_BASE, BANK_SIZE);
     bs->u8channel = E_MSPI0;
+
+    of_property_read_u32(pdev->dev.of_node, "spi0_mode", &bs->u32spi_mode);
+
 	/* initialise the hardware */
     mspi_config(bs,0);
 
@@ -1413,6 +1423,9 @@ static int mstar_spi_probe(struct platform_device *pdev)
     bs->VirtClkBaseAddr = (char*)ioremap(BANK_TO_ADDR32(u4spi_bank[2])+u4IO_PHY_BASE, BANK_SIZE);
     bs->VirtChiptopBaseAddr =(char*)ioremap(BANK_TO_ADDR32(u4spi_bank[3])+u4IO_PHY_BASE, BANK_SIZE);
     bs->u8channel = E_MSPI1;
+
+    of_property_read_u32(pdev->dev.of_node, "spi1_mode", &bs->u32spi_mode);
+
 	/* initialise the hardware */
     mspi_config(bs,1);
 #endif

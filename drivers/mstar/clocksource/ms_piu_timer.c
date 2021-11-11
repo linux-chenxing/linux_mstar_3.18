@@ -98,7 +98,7 @@ static cycle_t timer_read(struct clocksource *cs)
 {
 
 	struct ms_piu_timer_clocksource *ms_cs=to_ms_clocksource(cs);
-
+#if 0
 	unsigned int high=INREG16(ms_cs->timer.base+(0x5<<2));
 	unsigned int low0=INREG16(ms_cs->timer.base+(0x4<<2));
 	unsigned int low1=INREG16(ms_cs->timer.base+(0x4<<2));
@@ -106,8 +106,12 @@ static cycle_t timer_read(struct clocksource *cs)
 	{
 		high=INREG16(ms_cs->timer.base+(0x5<<2));
 	}
-
-	return ((high<<16)+low1);
+#else
+    //hardware capture
+    unsigned int low0=INREG16(ms_cs->timer.base+(0x4<<2));
+    unsigned int high=INREG16(ms_cs->timer.base+(0x5<<2));
+#endif
+	return ((high&0xffff)<<16) + (low0&0xffff) ;
 
 }
 

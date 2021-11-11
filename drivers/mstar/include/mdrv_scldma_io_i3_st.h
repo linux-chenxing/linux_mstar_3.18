@@ -185,7 +185,7 @@ typedef struct
     EN_IOCTL_SCLDMA_MEM_TYPE   enMemType; ///< memory type
     unsigned char   u8ActiveBuffer;       ///< ID of ActiveBuffer
     unsigned char   u8ISPcount;           ///< ISP counter
-    unsigned long   u32FRMDoneTime;       ///< Time of FRMDone
+    unsigned long long   u64FRMDoneTime;       ///< Time of FRMDone
     // VerChk_Version & VerChk_Size must be the latest 2 parameter and
     // the order can't be changed
     unsigned int   VerChk_Size; ///< VerChk Size
